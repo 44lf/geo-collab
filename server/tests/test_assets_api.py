@@ -1,0 +1,59 @@
+import base64
+
+from server.app.models import Asset  # noqa: F401
+from server.tests.utils import build_test_app
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X8pJ8AAAAASUVORK5CYII="
+)
+
+
+def test_upload_asset_records_metadata_and_serves_file(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    try:
+        response = client.post(
+            "/api/assets",
+            files={"file": ("cover.png", PNG_1X1, "image/png")},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["filename"] == "cover.png"
+        assert payload["ext"] == ".png"
+        assert payload["mime_type"] == "image/png"
+        assert payload["size"] == len(PNG_1X1)
+        assert payload["width"] == 1
+        assert payload["height"] == 1
+        assert payload["sha256"]
+        assert payload["storage_key"].startswith("assets/")
+        assert payload["url"] == f"/api/assets/{payload['id']}"
+        assert (test_app.data_dir / payload["storage_key"]).exists()
+
+        meta_response = client.get(f"/api/assets/{payload['id']}/meta")
+        assert meta_response.status_code == 200
+        assert meta_response.json()["sha256"] == payload["sha256"]
+
+        file_response = client.get(f"/api/assets/{payload['id']}")
+        assert file_response.status_code == 200
+        assert file_response.content == PNG_1X1
+        assert file_response.headers["content-type"].startswith("image/png")
+    finally:
+        test_app.cleanup()
+
+
+def test_upload_empty_asset_is_rejected(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    try:
+        response = client.post(
+            "/api/assets",
+            files={"file": ("empty.png", b"", "image/png")},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Uploaded file is empty"
+    finally:
+        test_app.cleanup()
