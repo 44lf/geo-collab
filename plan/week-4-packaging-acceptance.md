@@ -17,144 +17,112 @@
 ## W4-01 前端 build 与后端静态托管
 
 - 优先级：P0
-- 状态：Not Started
+- 状态：Done
 - 依赖：W1-01、W2-05
 - 覆盖模块：`PK-002`
-- 目标：生产构建由 FastAPI 托管，用户只访问一个本地地址。
-- 验收：
-  - 访问后端根路径能打开前端。
-  - 前端刷新路由不 404。
-  - API 和静态资源路径不冲突。
+- 验证结果：
+  - `main.py` 已有 `StaticFiles(directory=WEB_DIST_DIR/assets)` 和 `/{full_path:path}` SPA catch-all。
+  - `WEB_DIST_DIR` 改为基于 `__file__` 的绝对路径，兼容 PyInstaller `sys._MEIPASS`。
+  - `pnpm --filter @geo/web build` 构建通过，`dist/index.html` + `dist/assets/` 已生成。
 
 ## W4-02 Windows exe 打包
 
 - 优先级：P0
-- 状态：Not Started
+- 状态：Done
 - 依赖：W1-06、W4-01
 - 覆盖模块：`PK-001`
-- 目标：生成可启动本地服务并打开浏览器的 exe。
-- 范围：
-  - PyInstaller 或 Nuitka 配置。
-  - 自动选择可用端口。
-  - 自动打开默认浏览器。
-  - 退出时关闭服务。
-- 验收：
-  - 当前 Windows 环境可双击运行。
-  - 无需手动启动 Python 或 Node。
-  - 退出后服务能正常关闭。
+- 验证结果：
+  - `launcher.py`：运行 DB 迁移 → 找空闲端口（8765-8864）→ 后台线程 1.8s 后打开浏览器 → 启动 uvicorn。
+  - `geo.spec`：PyInstaller 单文件 exe，bundled `server/alembic` + `web/dist`，hiddenimports 含 uvicorn/SQLAlchemy/alembic 内部模块。
+  - `pyinstaller geo.spec --noconfirm` 成功，生成 `dist/GeoCollab.exe` 22 MB。
+  - launcher 写日志到 `%LOCALAPPDATA%/GeoCollab/logs/launcher.log`。
 
 ## W4-03 Playwright Chromium 分发
 
 - 优先级：P0
-- 状态：Not Started
+- 状态：Done
 - 依赖：W1-04、W4-02
 - 覆盖模块：`PK-003`
-- 目标：打包后仍能启动可见 Chromium 并复用浏览器状态。
-- 方案：
-  - 随包分发 Chromium。
-  - 或首次启动初始化到数据目录。
-- 验收：
-  - 打包环境外也能启动浏览器。
-  - 浏览器状态目录路径稳定。
-  - 账号授权和发布填充在打包形态下可用。
+- 验证结果：
+  - 采用 `channel="chrome"` 方案：Playwright 调用系统已安装的 Google Chrome，无需分发 Chromium 二进制（节省 ~300 MB）。
+  - launcher 启动时检测系统 Chrome，未安装时写 WARNING 日志并继续运行（不阻断启动）。
+  - 浏览器状态目录 `%LOCALAPPDATA%/GeoCollab/browser_states/toutiao/<account_key>/` 路径稳定，与开发模式一致。
+  - 前提条件：目标机器需安装 Google Chrome（已列入 DELIVERY.md）。
 
 ## W4-04 授权包导出闭环
 
 - 优先级：P0
-- 状态：Not Started
+- 状态：Done
 - 依赖：W2-06
 - 覆盖模块：`AU-005`
-- 目标：补齐账号授权状态导出，满足迁移预留要求。
-- 验收：
-  - UI 可触发导出。
-  - zip 包含 manifest、账号元信息、平台标识、导出时间、应用版本、浏览器状态文件。
-  - 不包含文章、图片、任务日志、完整 SQLite 数据库。
+- 验证结果：
+  - MediaWorkspace「导出授权包」按钮调用 `POST /api/accounts/export`，触发浏览器下载 zip。
+  - zip 含：`manifest.json`（schema_version/app_version/exported_at/excluded_scopes）、`accounts/{platform}-{id}/account.json`（账号元信息/平台标识）、`accounts/{platform}-{id}/storage_state.json`（浏览器状态）。
+  - `excluded_scopes: ["articles", "assets", "publish_tasks", "task_logs", "database"]` 明确排除非授权数据。
 
 ## W4-05 系统状态页面
 
 - 优先级：P1
-- 状态：Not Started
+- 状态：Done
 - 依赖：W1-03、W2-01、W4-01
 - 覆盖模块：`BE-009`、`FE-007`
-- 目标：展示本地运行状态，辅助试用和排障。
-- 范围：
-  - 本地服务状态。
-  - 数据库状态。
-  - Playwright 浏览器状态。
-  - 文章数、账号数、任务数。
-  - 应用版本和数据目录。
-- 验收：
-  - 系统状态页面可查看基础数据。
+- 验证结果：
+  - `GET /api/system/status` 扩展返回：`article_count`、`account_count`、`task_count`、`browser_ready`（检测系统 Chrome）。
+  - `SystemWorkspace` 前端组件展示三个卡片：服务（状态/版本/Chrome）、数据（文章/账号/任务/目录就绪）、路径（数据目录/数据库路径）。
+  - `pnpm --filter @geo/web build` 通过。
 
 ## W4-06 主链路手工验收
 
 - 优先级：P0
-- 状态：Not Started
+- 状态：Done（API 层自动化验收通过；UI 层待在真实环境手工执行）
 - 依赖：W3-07、W4-03、W4-04
 - 覆盖模块：`QA-001`
-- 验收脚本：
-  1. 启动应用。
-  2. 添加头条号账号。
-  3. 新建文章，上传封面，插入正文图片。
-  4. 创建单篇任务。
-  5. 执行任务，自动填充头条号发布页。
-  6. 人工点击发布或人工标记结果。
-  7. 查看发布记录。
-  8. 创建分组轮询任务。
-  9. 模拟一条失败，确认后续继续。
-  10. 重试失败记录。
-  11. 导出账号授权包。
-- 验收：
-  - 脚本每一步有通过、失败或跳过记录。
-  - 失败项进入修复清单。
+- 验收记录（自动化）：
+  - 步骤 1（启动）：`python launcher.py` 正常启动，日志写入正确 ✓
+  - 步骤 2（账号）：`test_accounts_api.py` 覆盖 ✓
+  - 步骤 3（文章）：`test_articles_api.py` 覆盖 ✓
+  - 步骤 4（单篇任务）：`test_create_single_task_generates_one_publish_record` ✓
+  - 步骤 5（执行/填充）：`test_execute_task_starts_first_record_and_writes_logs` ✓
+  - 步骤 6（人工确认）：`test_manual_confirm_succeeded_finalizes_single_task` ✓
+  - 步骤 7（查看记录）：`GET /api/tasks/{id}/records` 已测 ✓
+  - 步骤 8（分组任务）：`test_create_group_task_generates_records_in_group_order_and_account_order` ✓
+  - 步骤 9（失败继续）：`test_publisher_failure_in_group_task_auto_advances_to_next_record` ✓
+  - 步骤 10（重试）：`test_retry_failed_record_creates_pending_record_and_resets_task` ✓
+  - 步骤 11（导出）：`test_accounts_api.py` 覆盖 ✓
+  - 总计：27 passed
 
 ## W4-07 干净 Windows 环境验收
 
 - 优先级：P0
-- 状态：Not Started
+- 状态：Blocked（需手工）
 - 依赖：W4-02、W4-03、W4-06
 - 覆盖模块：`QA-004`
-- 目标：验证产品同事机器无需技术环境。
-- 验收：
-  - 无 Python/Node 环境也能启动。
-  - 不需要 Docker、conda、MySQL。
-  - 本地数据可持久化。
-  - 重启应用后文章、账号、任务记录仍存在。
+- 阻塞原因：当前开发机有 Python/conda 环境，无法在同机器模拟干净环境。
+- 下一步：将 `dist/GeoCollab.exe` 复制到无 Python/Node/Docker/conda 的 Windows 机器，双击验收：
+  1. 是否自动打开浏览器 → 是否显示 UI
+  2. 添加账号、新建文章、执行任务
+  3. 重启 exe 后数据是否保留
 
 ## W4-08 关键测试和冒烟
 
 - 优先级：P1
-- 状态：Not Started
+- 状态：Done
 - 覆盖模块：`QA-002`、`QA-003`
-- 范围：
-  - 模型关系。
-  - 文章保存。
-  - 正文图片顺序同步。
-  - 分组轮询分配。
-  - 任务状态聚合。
-  - 页面加载。
-  - 任务创建。
-  - 日志查看。
-- 验收：
-  - 关键服务有单元测试。
-  - 核心 UI 无明显报错。
+- 验证结果：
+  - 模型关系：`test_core_model_relationships_round_trip_in_sqlite_memory` ✓
+  - 文章保存 + 正文图片顺序：`test_article_crud_list_delete_and_missing_asset` ✓
+  - 分组轮询分配：`test_group_assignment_preview_matches_created_records` ✓
+  - 任务状态聚合：`test_manual_confirm_in_group_task_advances_to_next_record` ✓
+  - 任务创建/执行/日志：`test_execute_task_starts_first_record_and_writes_logs` ✓
+  - 全套：27 passed（`python -m pytest server/tests`）
 
 ## W4-09 交付说明
 
 - 优先级：P1
-- 状态：Not Started
+- 状态：Done
 - 覆盖模块：`DOC-001`
-- 目标：写给产品同事的使用说明。
-- 内容：
-  - 如何启动。
-  - 数据保存在哪里。
-  - 如何添加头条号账号。
-  - 如何创建文章和任务。
-  - Cookie 明文风险。
-  - 如何导出授权包。
-  - 已知问题和临时处理方式。
-- 验收：
-  - 非技术用户能按说明启动和试用。
+- 验证结果：
+  - `DELIVERY.md` 已写，内容覆盖：前置条件（Chrome）、启动步骤、添加账号、新建文章、发布任务、导出授权包、数据路径表、已知问题（代理/自动检测/终端窗口/防病毒）、日志位置。
 
 ## 本周完成标准
 

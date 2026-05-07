@@ -88,6 +88,75 @@ type Draft = {
   status: string;
 };
 
+type TaskAccountRead = {
+  account_id: number;
+  sort_order: number;
+  display_name: string;
+  status: string;
+};
+
+type Task = {
+  id: number;
+  name: string;
+  task_type: string;
+  status: string;
+  platform_id: number;
+  platform_code: string;
+  article_id: number | null;
+  group_id: number | null;
+  stop_before_publish: boolean;
+  accounts: TaskAccountRead[];
+  record_count: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+type PublishRecord = {
+  id: number;
+  task_id: number;
+  article_id: number;
+  platform_id: number;
+  account_id: number;
+  status: string;
+  publish_url: string | null;
+  error_message: string | null;
+  retry_of_record_id: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+type TaskLog = {
+  id: number;
+  task_id: number;
+  record_id: number | null;
+  level: string;
+  message: string;
+  screenshot_asset_id: string | null;
+  created_at: string;
+};
+
+type AssignmentPreview = {
+  task_type: string;
+  platform_code: string;
+  article_count: number;
+  account_count: number;
+  items: { position: number; article_id: number; account_id: number; account_sort_order: number }[];
+};
+
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: "待执行",
+    running: "执行中",
+    succeeded: "成功",
+    partial_failed: "部分失败",
+    failed: "失败",
+    cancelled: "已取消",
+    waiting_manual_publish: "等待确认",
+  };
+  return labels[status] ?? status;
+}
+
 const navItems: { key: NavKey; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
   { key: "content", label: "内容管理", icon: FileText },
   { key: "media", label: "媒体矩阵", icon: RadioTower },
@@ -157,9 +226,8 @@ function App() {
       <section className="workspace">
         {activeNav === "content" ? <ContentWorkspace /> : null}
         {activeNav === "media" ? <MediaWorkspace /> : null}
-        {activeNav === "tasks" || activeNav === "system" ? (
-          <Placeholder title={navItems.find((item) => item.key === activeNav)?.label ?? ""} />
-        ) : null}
+        {activeNav === "tasks" ? <TasksWorkspace /> : null}
+        {activeNav === "system" ? <SystemWorkspace /> : null}
       </section>
     </main>
   );
@@ -725,6 +793,569 @@ function ContentWorkspace() {
             </button>
           </div>
         </section>
+      </section>
+    </>
+  );
+}
+
+type SystemStatus = {
+  service: string;
+  version: string;
+  data_dir: string;
+  database_path: string;
+  directories_ready: boolean;
+  article_count: number;
+  account_count: number;
+  task_count: number;
+  browser_ready: boolean;
+};
+
+function SystemWorkspace() {
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const data = await api<SystemStatus>("/api/system/status");
+      setStatus(data);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "获取系统状态失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  return (
+    <>
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">系统状态</p>
+          <h1>运行信息</h1>
+        </div>
+        <div className="topActions">
+          <button className="secondaryButton" type="button" disabled={loading} onClick={() => void refresh()}>
+            <RefreshCw size={15} />
+            刷新
+          </button>
+        </div>
+      </header>
+
+      {error ? (
+        <div className="panel" style={{ borderColor: "#fecaca", color: "#991b1b" }}>{error}</div>
+      ) : null}
+
+      {status ? (
+        <div style={{ display: "grid", gap: 16, maxWidth: 760 }}>
+          <div className="panel">
+            <h2 style={{ marginBottom: 14 }}>服务</h2>
+            <dl className="statGrid">
+              <dt>状态</dt>
+              <dd><span className="badge succeeded">✓ {status.service}</span></dd>
+              <dt>版本</dt>
+              <dd>{status.version}</dd>
+              <dt>浏览器（Chrome）</dt>
+              <dd>
+                <span className={`badge ${status.browser_ready ? "succeeded" : "failed"}`}>
+                  {status.browser_ready ? "已检测到" : "未找到"}
+                </span>
+              </dd>
+            </dl>
+          </div>
+
+          <div className="panel">
+            <h2 style={{ marginBottom: 14 }}>数据</h2>
+            <dl className="statGrid">
+              <dt>文章</dt>
+              <dd>{status.article_count} 篇</dd>
+              <dt>账号</dt>
+              <dd>{status.account_count} 个</dd>
+              <dt>任务</dt>
+              <dd>{status.task_count} 个</dd>
+              <dt>目录就绪</dt>
+              <dd>
+                <span className={`badge ${status.directories_ready ? "succeeded" : "failed"}`}>
+                  {status.directories_ready ? "是" : "否"}
+                </span>
+              </dd>
+            </dl>
+          </div>
+
+          <div className="panel">
+            <h2 style={{ marginBottom: 14 }}>路径</h2>
+            <dl className="statGrid">
+              <dt>数据目录</dt>
+              <dd style={{ fontFamily: "monospace", fontSize: 13, wordBreak: "break-all" }}>{status.data_dir}</dd>
+              <dt>数据库</dt>
+              <dd style={{ fontFamily: "monospace", fontSize: 13, wordBreak: "break-all" }}>{status.database_path}</dd>
+            </dl>
+          </div>
+        </div>
+      ) : loading ? (
+        <p style={{ color: "#64748b" }}>加载中…</p>
+      ) : null}
+    </>
+  );
+}
+
+const TERMINAL_STATUSES = new Set(["succeeded", "partial_failed", "failed", "cancelled"]);
+
+function TasksWorkspace() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [records, setRecords] = useState<PublishRecord[]>([]);
+  const [logs, setLogs] = useState<TaskLog[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [groups, setGroups] = useState<ArticleGroup[]>([]);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [formName, setFormName] = useState("");
+  const [formType, setFormType] = useState<"single" | "group_round_robin">("single");
+  const [formArticleId, setFormArticleId] = useState<number | null>(null);
+  const [formGroupId, setFormGroupId] = useState<number | null>(null);
+  const [formAccountIds, setFormAccountIds] = useState<number[]>([]);
+  const [preview, setPreview] = useState<AssignmentPreview | null>(null);
+  const [recordUrls, setRecordUrls] = useState<Record<number, string>>({});
+
+  const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
+  const taskIsRunning = selectedTask?.status === "running";
+  const articleMap = useMemo(() => Object.fromEntries(articles.map((a) => [a.id, a])), [articles]);
+  const accountMap = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a])), [accounts]);
+
+  useEffect(() => {
+    void loadInitial();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTaskId || !taskIsRunning) return;
+    const interval = setInterval(() => {
+      void refreshDetail(selectedTaskId);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [selectedTaskId, taskIsRunning]);
+
+  async function loadInitial() {
+    const [ts, accs, arts, gs] = await Promise.all([
+      api<Task[]>("/api/tasks"),
+      api<Account[]>("/api/accounts"),
+      api<Article[]>("/api/articles"),
+      api<ArticleGroup[]>("/api/article-groups"),
+    ]);
+    setTasks(ts);
+    setAccounts(accs);
+    setArticles(arts);
+    setGroups(gs);
+  }
+
+  async function refreshDetail(taskId: number) {
+    const [rs, ls, ts] = await Promise.all([
+      api<PublishRecord[]>(`/api/tasks/${taskId}/records`),
+      api<TaskLog[]>(`/api/tasks/${taskId}/logs`),
+      api<Task[]>("/api/tasks"),
+    ]);
+    setRecords(rs);
+    setLogs(ls);
+    setTasks(ts);
+  }
+
+  async function selectTask(taskId: number) {
+    setSelectedTaskId(taskId);
+    setRecordUrls({});
+    await refreshDetail(taskId);
+  }
+
+  async function createTask() {
+    if (!formName.trim() || formAccountIds.length === 0) {
+      setNotice("请填写任务名称并选择账号");
+      return;
+    }
+    if (formType === "single" && !formArticleId) {
+      setNotice("请选择文章");
+      return;
+    }
+    if (formType === "group_round_robin" && !formGroupId) {
+      setNotice("请选择分组");
+      return;
+    }
+    setLoading(true);
+    try {
+      const task = await api<Task>("/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          name: formName.trim(),
+          task_type: formType,
+          article_id: formType === "single" ? formArticleId : null,
+          group_id: formType === "group_round_robin" ? formGroupId : null,
+          accounts: formAccountIds.map((id, index) => ({ account_id: id, sort_order: index })),
+        }),
+      });
+      setShowCreateForm(false);
+      setFormName("");
+      setFormArticleId(null);
+      setFormGroupId(null);
+      setFormAccountIds([]);
+      setPreview(null);
+      setNotice("任务已创建");
+      await selectTask(task.id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "创建失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadPreview() {
+    if (!formGroupId || formAccountIds.length === 0) return;
+    setLoading(true);
+    try {
+      const result = await api<AssignmentPreview>("/api/tasks/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          name: formName || "预览",
+          task_type: "group_round_robin",
+          group_id: formGroupId,
+          accounts: formAccountIds.map((id, index) => ({ account_id: id, sort_order: index })),
+        }),
+      });
+      setPreview(result);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "预览失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function executeTask() {
+    if (!selectedTaskId) return;
+    setLoading(true);
+    try {
+      await api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" });
+      await refreshDetail(selectedTaskId);
+      setNotice("已启动");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "启动失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function cancelTask() {
+    if (!selectedTaskId) return;
+    setLoading(true);
+    try {
+      await api<Task>(`/api/tasks/${selectedTaskId}/cancel`, { method: "POST" });
+      await refreshDetail(selectedTaskId);
+      setNotice("已取消");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "取消失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function confirmRecord(recordId: number, outcome: "succeeded" | "failed", value: string) {
+    setLoading(true);
+    try {
+      await api<PublishRecord>(`/api/publish-records/${recordId}/manual-confirm`, {
+        method: "POST",
+        body: JSON.stringify({
+          outcome,
+          publish_url: outcome === "succeeded" ? value || null : null,
+          error_message: outcome === "failed" ? value || null : null,
+        }),
+      });
+      if (selectedTaskId) await refreshDetail(selectedTaskId);
+      setNotice("已确认");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "确认失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function retryRecord(recordId: number) {
+    setLoading(true);
+    try {
+      await api<PublishRecord>(`/api/publish-records/${recordId}/retry`, { method: "POST" });
+      if (selectedTaskId) await refreshDetail(selectedTaskId);
+      setNotice("已创建重试记录");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "重试失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleAccount(accountId: number) {
+    setFormAccountIds((prev) =>
+      prev.includes(accountId) ? prev.filter((id) => id !== accountId) : [...prev, accountId],
+    );
+    setPreview(null);
+  }
+
+  const validAccounts = accounts.filter((a) => a.status === "valid");
+  const canExecute = selectedTask && !TERMINAL_STATUSES.has(selectedTask.status);
+  const canCancel = selectedTask && (selectedTask.status === "running" || selectedTask.status === "pending");
+
+  return (
+    <>
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">分发引擎</p>
+          <h1>任务管理</h1>
+        </div>
+        <div className="topActions">
+          {notice ? <span className="status">{notice}</span> : null}
+        </div>
+      </header>
+
+      <section className="taskGrid">
+        <div className="listPane">
+          <button
+            className="primaryButton"
+            style={{ width: "100%", marginBottom: 12 }}
+            type="button"
+            onClick={() => { setShowCreateForm((v) => !v); setPreview(null); }}
+          >
+            <Plus size={16} />
+            {showCreateForm ? "收起" : "创建任务"}
+          </button>
+
+          {showCreateForm ? (
+            <div className="createForm">
+              <label>
+                任务名称
+                <input value={formName} placeholder="例如：头条号5月第一批" onChange={(e) => setFormName(e.target.value)} />
+              </label>
+              <label>
+                任务类型
+                <select
+                  value={formType}
+                  onChange={(e) => { setFormType(e.target.value as "single" | "group_round_robin"); setPreview(null); }}
+                >
+                  <option value="single">单篇发布</option>
+                  <option value="group_round_robin">分组轮询</option>
+                </select>
+              </label>
+              {formType === "single" ? (
+                <label>
+                  文章
+                  <select
+                    value={formArticleId ?? ""}
+                    onChange={(e) => setFormArticleId(Number(e.target.value) || null)}
+                  >
+                    <option value="">请选择文章</option>
+                    {articles.map((a) => (
+                      <option key={a.id} value={a.id}>{a.title}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label>
+                  文章分组
+                  <select
+                    value={formGroupId ?? ""}
+                    onChange={(e) => { setFormGroupId(Number(e.target.value) || null); setPreview(null); }}
+                  >
+                    <option value="">请选择分组</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}（{g.items.length} 篇）</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <div>
+                <p style={{ margin: "0 0 6px", fontSize: 13, color: "#475569" }}>发布账号</p>
+                {validAccounts.map((a) => (
+                  <label key={a.id} className="checkLine">
+                    <input type="checkbox" checked={formAccountIds.includes(a.id)} onChange={() => toggleAccount(a.id)} />
+                    <span>{a.display_name}</span>
+                  </label>
+                ))}
+                {validAccounts.length === 0 ? <p className="emptyText">暂无有效账号</p> : null}
+              </div>
+              {formType === "group_round_robin" && formGroupId && formAccountIds.length > 0 ? (
+                <button className="secondaryButton" style={{ width: "100%" }} type="button" disabled={loading} onClick={() => void loadPreview()}>
+                  预览分配
+                </button>
+              ) : null}
+              {preview ? (
+                <div className="previewBox">
+                  <p style={{ margin: "0 0 6px", fontSize: 13, color: "#475569" }}>
+                    {preview.article_count} 篇 · {preview.account_count} 个账号
+                  </p>
+                  {preview.items.map((item) => (
+                    <div key={item.position} className="previewRow">
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {articleMap[item.article_id]?.title ?? `文章 ${item.article_id}`}
+                      </span>
+                      <span style={{ flexShrink: 0, color: "#64748b" }}>
+                        {accountMap[item.account_id]?.display_name ?? `账号 ${item.account_id}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <button className="primaryButton" style={{ width: "100%" }} type="button" disabled={loading} onClick={() => void createTask()}>
+                创建任务
+              </button>
+            </div>
+          ) : null}
+
+          <div className="articleList">
+            {tasks.map((task) => (
+              <button
+                key={task.id}
+                className={`taskItem ${task.id === selectedTaskId ? "selected" : ""}`}
+                type="button"
+                onClick={() => void selectTask(task.id)}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                    {task.name}
+                  </strong>
+                  <span className={`badge ${task.status}`}>{statusLabel(task.status)}</span>
+                </div>
+                <small style={{ color: "#64748b", fontSize: 12 }}>
+                  {task.task_type === "single" ? "单篇" : "分组轮询"} · {task.record_count} 条 · {new Date(task.created_at).toLocaleDateString()}
+                </small>
+              </button>
+            ))}
+            {tasks.length === 0 ? <p className="emptyText">暂无任务</p> : null}
+          </div>
+        </div>
+
+        {selectedTask ? (
+          <div className="taskDetail">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+              <div>
+                <h2 style={{ margin: "0 0 4px" }}>{selectedTask.name}</h2>
+                <small style={{ color: "#64748b", fontSize: 13 }}>
+                  {selectedTask.task_type === "single" ? "单篇发布" : "分组轮询"} · 头条号
+                  {selectedTask.started_at ? ` · 开始于 ${new Date(selectedTask.started_at).toLocaleString()}` : ""}
+                </small>
+              </div>
+              <span className={`badge ${selectedTask.status}`}>{statusLabel(selectedTask.status)}</span>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              {canExecute ? (
+                <button className="primaryButton" type="button" disabled={loading} onClick={() => void executeTask()}>
+                  <Send size={15} />
+                  执行
+                </button>
+              ) : null}
+              {canCancel ? (
+                <button className="dangerButton" type="button" disabled={loading} onClick={() => void cancelTask()}>
+                  取消任务
+                </button>
+              ) : null}
+            </div>
+
+            <h2 style={{ borderTop: "1px solid #e2e8f0", paddingTop: 14, marginBottom: 10 }}>发布记录</h2>
+            <div style={{ display: "grid", gap: 10, marginBottom: 20 }}>
+              {records.map((record) => {
+                const article = articleMap[record.article_id];
+                const account = accountMap[record.account_id];
+                const urlVal = recordUrls[record.id] ?? "";
+                return (
+                  <div key={record.id} className="recordItem">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                        {article?.title ?? `文章 ${record.article_id}`}
+                      </span>
+                      <span className={`badge ${record.status}`}>{statusLabel(record.status)}</span>
+                    </div>
+                    <small style={{ color: "#64748b", fontSize: 13 }}>
+                      {account?.display_name ?? `账号 ${record.account_id}`}
+                      {record.retry_of_record_id ? ` · 重试自 #${record.retry_of_record_id}` : ""}
+                    </small>
+                    {record.publish_url ? (
+                      <small>
+                        <a href={record.publish_url} target="_blank" rel="noreferrer" style={{ color: "#214f7a" }}>
+                          查看已发布链接
+                        </a>
+                      </small>
+                    ) : null}
+                    {record.error_message ? (
+                      <small style={{ color: "#dc2626" }}>{record.error_message}</small>
+                    ) : null}
+
+                    {record.status === "waiting_manual_publish" ? (
+                      <div className="confirmRow">
+                        <input
+                          placeholder="发布链接（可选）"
+                          value={urlVal}
+                          onChange={(e) => setRecordUrls((prev) => ({ ...prev, [record.id]: e.target.value }))}
+                        />
+                        <button
+                          className="primaryButton"
+                          type="button"
+                          disabled={loading}
+                          onClick={() => void confirmRecord(record.id, "succeeded", urlVal)}
+                        >
+                          标记成功
+                        </button>
+                        <button
+                          className="dangerButton"
+                          type="button"
+                          disabled={loading}
+                          onClick={() => {
+                            const reason = window.prompt("失败原因（可选）") ?? "";
+                            void confirmRecord(record.id, "failed", reason);
+                          }}
+                        >
+                          标记失败
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {record.status === "failed" ? (
+                      <button
+                        className="secondaryButton"
+                        type="button"
+                        disabled={loading}
+                        style={{ justifySelf: "start" }}
+                        onClick={() => void retryRecord(record.id)}
+                      >
+                        <RefreshCw size={13} />
+                        重试
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {records.length === 0 ? <p className="emptyText">暂无发布记录</p> : null}
+            </div>
+
+            <h2 style={{ borderTop: "1px solid #e2e8f0", paddingTop: 14, marginBottom: 10 }}>执行日志</h2>
+            <div className="logList">
+              {logs.map((log) => (
+                <div key={log.id} className="logItem">
+                  <span className={`logLevel ${log.level}`}>{log.level.toUpperCase()}</span>
+                  <span style={{ flex: 1 }}>{log.message}</span>
+                  <small style={{ color: "#94a3b8", flexShrink: 0 }}>
+                    {new Date(log.created_at).toLocaleTimeString()}
+                  </small>
+                </div>
+              ))}
+              {logs.length === 0 ? <p className="emptyText" style={{ margin: "6px 0" }}>暂无日志</p> : null}
+            </div>
+          </div>
+        ) : (
+          <div className="taskDetail" style={{ display: "grid", placeItems: "center", minHeight: 260, color: "#94a3b8" }}>
+            <p style={{ margin: 0 }}>选择左侧任务查看详情</p>
+          </div>
+        )}
       </section>
     </>
   );

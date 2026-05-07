@@ -1,12 +1,38 @@
-from fastapi import APIRouter
+import shutil
+from pathlib import Path
 
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from server.app.db.session import get_db
+from server.app.models import Account, Article, PublishTask
 from server.app.schemas.system import SystemStatus
 from server.app.services.system_status import get_system_status
 
 router = APIRouter()
 
+_CHROME_CANDIDATES = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    "chrome",
+    "google-chrome",
+]
+
+
+def _browser_ready() -> bool:
+    return any(Path(c).exists() or shutil.which(c) for c in _CHROME_CANDIDATES)
+
 
 @router.get("/status", response_model=SystemStatus)
-def read_system_status() -> SystemStatus:
-    return get_system_status()
-
+def read_system_status(db: Session = Depends(get_db)) -> SystemStatus:
+    base = get_system_status()
+    data = base.model_dump()
+    try:
+        data["article_count"] = db.scalar(select(func.count()).select_from(Article)) or 0
+        data["account_count"] = db.scalar(select(func.count()).select_from(Account)) or 0
+        data["task_count"] = db.scalar(select(func.count()).select_from(PublishTask)) or 0
+    except Exception:
+        data["article_count"] = data["account_count"] = data["task_count"] = -1
+    data["browser_ready"] = _browser_ready()
+    return SystemStatus(**data)

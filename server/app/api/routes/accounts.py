@@ -26,7 +26,8 @@ def read_accounts(db: Session = Depends(get_db)) -> list[AccountRead]:
 @router.post("/toutiao/login", response_model=AccountRead)
 def login_toutiao_account(payload: ToutiaoLoginRequest, db: Session = Depends(get_db)) -> AccountRead:
     try:
-        account = login_toutiao(db, payload)
+        account = login_
+        toutiao(db, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return to_account_read(account)

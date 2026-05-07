@@ -559,6 +559,166 @@ h2 {
   background: #fff1f2;
 }
 
+.statGrid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 10px 20px;
+  margin: 0;
+}
+
+.statGrid dt {
+  color: #64748b;
+  font-size: 13px;
+  align-self: center;
+}
+
+.statGrid dd {
+  margin: 0;
+  align-self: center;
+}
+
+.taskGrid {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.taskItem {
+  display: block;
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: left;
+  color: #1f2937;
+  background: #ffffff;
+}
+
+.taskItem.selected {
+  border-color: #88a9c7;
+  background: #f2f7fb;
+}
+
+.taskDetail {
+  min-width: 0;
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.createForm {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 14px;
+  background: #f8fafc;
+}
+
+.createForm label {
+  display: grid;
+  gap: 5px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.createForm input,
+.createForm select {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #1f2937;
+  background: #ffffff;
+}
+
+.previewBox {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.previewRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid #f1f5f9;
+  color: #475569;
+}
+
+.previewRow:last-child {
+  border-bottom: 0;
+}
+
+.recordItem {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.logList {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.logItem {
+  display: flex;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 13px;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+
+.logItem:last-child {
+  border-bottom: 0;
+}
+
+.logLevel {
+  width: 38px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.logLevel.info { color: #0369a1; }
+.logLevel.warn { color: #d97706; }
+.logLevel.error { color: #dc2626; }
+
+.badge.running { border-color: #93c5fd; color: #1d4ed8; background: #eff6ff; }
+.badge.pending { border-color: #e2e8f0; color: #64748b; background: #f8fafc; }
+.badge.succeeded { border-color: #86efac; color: #166534; background: #f0fdf4; }
+.badge.failed { border-color: #fecaca; color: #991b1b; background: #fff1f2; }
+.badge.cancelled { border-color: #e2e8f0; color: #94a3b8; background: #f8fafc; }
+.badge.waiting_manual_publish { border-color: #fde68a; color: #92400e; background: #fffbeb; }
+.badge.partial_failed { border-color: #fed7aa; color: #9a3412; background: #fff7ed; }
+
+.confirmRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.confirmRow input {
+  flex: 1;
+  min-width: 140px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
 @media (max-width: 980px) {
   .shell {
     grid-template-columns: 1fr;
@@ -571,6 +731,7 @@ h2 {
 
   .contentGrid,
   .mediaGrid,
+  .taskGrid,
   .formRow.split {
     grid-template-columns: 1fr;
   }
