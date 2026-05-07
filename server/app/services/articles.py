@@ -199,7 +199,7 @@ def delete_article(db: Session, article: Article) -> None:
 
 
 # 将 ORM Article 转为响应体
-def to_article_read(article: Article) -> ArticleRead:
+def to_article_read(article: Article, published_count: int = 0) -> ArticleRead:
     body_assets = sorted(article.body_assets, key=lambda item: item.position)
     return ArticleRead(
         id=article.id,
@@ -211,6 +211,7 @@ def to_article_read(article: Article) -> ArticleRead:
         plain_text=article.plain_text,
         word_count=article.word_count,
         status=article.status,
+        published_count=published_count,
         body_assets=[
             ArticleBodyAssetRead(
                 asset_id=item.asset_id,

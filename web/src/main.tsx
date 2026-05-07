@@ -3,6 +3,18 @@ import { createRoot } from "react-dom/client";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
+const CustomImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      assetId: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("data-asset-id"),
+        renderHTML: (attrs) => (attrs.assetId ? { "data-asset-id": attrs.assetId } : {}),
+      },
+    };
+  },
+});
 import Link from "@tiptap/extension-link";
 import {
   Bold,
@@ -60,6 +72,7 @@ type Article = {
   word_count: number;
   status: string;
   body_assets: ArticleBodyAsset[];
+  published_count: number;
   updated_at: string;
 };
 
@@ -266,6 +279,8 @@ function MediaWorkspace() {
   const [accountKey, setAccountKey] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   async function refreshAccounts() {
     const data = await api<Account[]>("/api/accounts");
@@ -368,6 +383,24 @@ function MediaWorkspace() {
     }
   }
 
+  async function renameAccount(accountId: number) {
+    if (!renameValue.trim()) return;
+    setLoading(true);
+    try {
+      await api<Account>(`/api/accounts/${accountId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ display_name: renameValue.trim() }),
+      });
+      await refreshAccounts();
+      setRenamingId(null);
+      setNotice("已重命名");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "重命名失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function exportAuthPackage() {
     setLoading(true);
     try {
@@ -459,10 +492,30 @@ function MediaWorkspace() {
         <section className="accountList">
           {accounts.map((account) => (
             <article className="accountCard" key={account.id}>
-              <div>
-                <strong>{account.display_name}</strong>
-                <span>{account.platform_name}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {renamingId === account.id ? (
+                  <>
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      style={{ flex: 1, fontSize: 14, fontWeight: 600 }}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void renameAccount(account.id);
+                        if (e.key === "Escape") setRenamingId(null);
+                      }}
+                    />
+                    <button type="button" disabled={loading} onClick={() => void renameAccount(account.id)}>确定</button>
+                    <button type="button" onClick={() => setRenamingId(null)}>取消</button>
+                  </>
+                ) : (
+                  <>
+                    <strong style={{ flex: 1 }}>{account.display_name}</strong>
+                    <button type="button" style={{ fontSize: 12, padding: "2px 6px" }} onClick={() => { setRenamingId(account.id); setRenameValue(account.display_name); }}>改名</button>
+                  </>
+                )}
               </div>
+              <span>{account.platform_name}</span>
               <span className={`badge ${account.status}`}>{account.status}</span>
               <small>{account.state_path}</small>
               <div className="accountCardActions">
@@ -504,7 +557,7 @@ function ContentWorkspace() {
     extensions: [
       StarterKit,
       Link.configure({ openOnClick: false }),
-      Image.configure({ allowBase64: false }),
+      CustomImage.configure({ allowBase64: false }),
     ],
     content: emptyDoc,
     editorProps: {
@@ -789,7 +842,10 @@ function ContentWorkspace() {
                     <button type="button" onClick={() => loadArticle(article)}>
                       <strong>{article.title}</strong>
                       <span>{article.author || "未填写作者"}</span>
-                      <small>{new Date(article.updated_at).toLocaleString()}</small>
+                      <small>
+                        {new Date(article.updated_at).toLocaleString()}
+                        {article.published_count > 0 ? <span style={{ color: "#16a34a", marginLeft: 6 }}>· 已发布 {article.published_count} 次</span> : null}
+                      </small>
                     </button>
                   </article>
                 );
@@ -842,7 +898,10 @@ function ContentWorkspace() {
                           <button type="button" onClick={() => loadArticle(article)}>
                             <strong>{article.title}</strong>
                             <span>{article.author || "未填写作者"}</span>
-                            <small>{new Date(article.updated_at).toLocaleString()}</small>
+                            <small>
+                              {new Date(article.updated_at).toLocaleString()}
+                              {article.published_count > 0 ? <span style={{ color: "#16a34a", marginLeft: 6 }}>· 已发布 {article.published_count} 次</span> : null}
+                            </small>
                           </button>
                         </article>
                       ))}
@@ -857,6 +916,9 @@ function ContentWorkspace() {
 
           <section className="groupBox">
             <h2>文章分组</h2>
+            <p style={{ fontSize: 12, color: "#64748b", margin: "0 0 8px" }}>
+              {editingGroupId ? "勾选左侧文章后点「更新」可增减分组内文章" : "勾选左侧文章后填写名称，点「创建」"}
+            </p>
             <div className="groupCreate">
               <input value={groupName} placeholder="分组名称" onChange={(event) => setGroupName(event.target.value)} />
               <button type="button" onClick={saveGroupFromSelection}>

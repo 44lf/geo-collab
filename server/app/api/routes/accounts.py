@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from server.app.db.session import get_db
-from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, AccountRead, ToutiaoLoginRequest
+from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, AccountRead, AccountRenameRequest, ToutiaoLoginRequest
 from server.app.services.accounts import (
     check_account,
     delete_account,
@@ -12,6 +12,7 @@ from server.app.services.accounts import (
     import_accounts_auth_package,
     list_accounts,
     login_toutiao,
+    rename_account,
     relogin_account,
     to_account_read,
 )
@@ -80,6 +81,15 @@ def relogin_existing_account(
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
     return to_account_read(relogin_account(db, account, payload or AccountCheckRequest()))
+
+
+# 重命名账号显示名称
+@router.patch("/{account_id}", response_model=AccountRead)
+def rename_existing_account(account_id: int, payload: AccountRenameRequest, db: Session = Depends(get_db)) -> AccountRead:
+    account = get_account(db, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return to_account_read(rename_account(db, account, payload.display_name))
 
 
 # 删除指定账号

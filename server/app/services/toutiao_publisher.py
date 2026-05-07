@@ -64,9 +64,9 @@ class ToutiaoPublisher:
         try:
             # 导航到发布页面，依次执行各步骤
             page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
-            # 等标题输入框出现（替代固定等待，通常 2–4s 即可就绪）
+            # 等标题输入框出现，慢机器给 20 秒；超时后 _fill_title 内部会再重试
             try:
-                page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=self.wait_ms)
+                page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=20000)
             except Exception:
                 pass
             self._ensure_publish_page(page)
@@ -108,14 +108,24 @@ class ToutiaoPublisher:
 
     def _fill_title(self, page: Any, title: str) -> None:
         """填充文章标题（最多 30 字）。"""
-        field = page.get_by_role("textbox", name="请输入文章标题")
+        # 主选择器：aria role（慢机器给足 20 秒）
         try:
+            field = page.get_by_role("textbox", name="请输入文章标题")
+            field.wait_for(state="visible", timeout=20000)
+            field.click()
+            field.fill(title[:30])
+            return
+        except Exception:
+            logger.warning("Title field not found via textbox role, trying CSS fallback", exc_info=True)
+        # 兜底：placeholder 包含"标题"的 input
+        try:
+            field = page.locator("input[placeholder*='标题']").first
             field.wait_for(state="visible", timeout=5000)
             field.click()
             field.fill(title[:30])
             return
         except Exception:
-            logger.warning("Title field not found via textbox role, raising error", exc_info=True)
+            logger.warning("Title field not found via CSS fallback", exc_info=True)
         raise ToutiaoPublishError("Toutiao title field not found")
 
     def _fill_body(self, page: Any, body: str) -> None:

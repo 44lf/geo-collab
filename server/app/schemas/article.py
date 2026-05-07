@@ -56,6 +56,7 @@ class ArticleRead(BaseModel):
     word_count: int
     status: str
     body_assets: list[ArticleBodyAssetRead]
+    published_count: int = 0  # 成功发布次数
     created_at: datetime
     updated_at: datetime
 

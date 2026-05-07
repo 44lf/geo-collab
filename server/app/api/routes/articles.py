@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from server.app.db.session import get_db
+from server.app.models import PublishRecord
 from server.app.schemas.article import ArticleCoverUpdate, ArticleCreate, ArticleRead, ArticleUpdate
 from server.app.services.articles import (
     create_article,
@@ -19,7 +21,17 @@ router = APIRouter()
 # 获取文章列表，支持按标题/作者搜索
 @router.get("", response_model=list[ArticleRead])
 def read_articles(q: str | None = Query(default=None), db: Session = Depends(get_db)) -> list[ArticleRead]:
-    return [to_article_read(article) for article in list_articles(db, q)]
+    articles = list_articles(db, q)
+    if not articles:
+        return []
+    article_ids = [a.id for a in articles]
+    rows = db.execute(
+        select(PublishRecord.article_id, func.count().label("cnt"))
+        .where(PublishRecord.article_id.in_(article_ids), PublishRecord.status == "succeeded")
+        .group_by(PublishRecord.article_id)
+    ).all()
+    count_map = {row.article_id: row.cnt for row in rows}
+    return [to_article_read(a, count_map.get(a.id, 0)) for a in articles]
 
 
 # 创建新文章

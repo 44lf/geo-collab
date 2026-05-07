@@ -38,6 +38,11 @@ class AccountCheckRequest(BaseModel):
     use_browser: bool = True
 
 
+# 账号重命名请求
+class AccountRenameRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=200)
+
+
 # 导出账号授权包请求
 class AccountExportRequest(BaseModel):
     account_ids: list[int] | None = None  # 为空则导出所有

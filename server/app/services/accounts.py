@@ -255,6 +255,14 @@ def relogin_account(db: Session, account: Account, payload: AccountCheckRequest)
     return login_toutiao(db, request)
 
 
+# 重命名账号显示名称
+def rename_account(db: Session, account: Account, display_name: str) -> Account:
+    account.display_name = display_name.strip()
+    account.updated_at = utcnow()
+    db.commit()
+    return get_account(db, account.id) or account
+
+
 # 删除账号（先清除关联记录，避免 NOT NULL FK 约束阻塞）
 def delete_account(db: Session, account: Account) -> None:
     account_id = account.id
