@@ -27,19 +27,12 @@ def read_tasks(db: Session = Depends(get_db)) -> list[TaskRead]:
 
 @router.post("", response_model=TaskRead)
 def create_task_endpoint(payload: TaskCreate, db: Session = Depends(get_db)) -> TaskRead:
-    try:
-        task = create_task(db, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_task_read(task)
+    return to_task_read(create_task(db, payload))
 
 
 @router.post("/preview", response_model=TaskAssignmentPreviewRead)
 def preview_task_assignment_endpoint(payload: TaskCreate, db: Session = Depends(get_db)) -> TaskAssignmentPreviewRead:
-    try:
-        return preview_task_assignment(db, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return preview_task_assignment(db, payload)
 
 
 @router.post("/{task_id}/execute", response_model=TaskRead)
@@ -47,11 +40,7 @@ def execute_existing_task(task_id: int, db: Session = Depends(get_db)) -> TaskRe
     task = get_task(db, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    try:
-        executed = execute_task(db, task)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_task_read(executed)
+    return to_task_read(execute_task(db, task))
 
 
 @router.post("/{task_id}/cancel", response_model=TaskRead)

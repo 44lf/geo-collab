@@ -25,11 +25,7 @@ def read_accounts(db: Session = Depends(get_db)) -> list[AccountRead]:
 
 @router.post("/toutiao/login", response_model=AccountRead)
 def login_toutiao_account(payload: ToutiaoLoginRequest, db: Session = Depends(get_db)) -> AccountRead:
-    try:
-        account = login_toutiao(db, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_account_read(account)
+    return to_account_read(login_toutiao(db, payload))
 
 
 @router.post("/export")
@@ -50,11 +46,7 @@ def check_existing_account(
     account = get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    try:
-        checked = check_account(db, account, payload or AccountCheckRequest())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_account_read(checked)
+    return to_account_read(check_account(db, account, payload or AccountCheckRequest()))
 
 
 @router.post("/{account_id}/relogin", response_model=AccountRead)
@@ -66,11 +58,7 @@ def relogin_existing_account(
     account = get_account(db, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    try:
-        relogged = relogin_account(db, account, payload or AccountCheckRequest())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_account_read(relogged)
+    return to_account_read(relogin_account(db, account, payload or AccountCheckRequest()))
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

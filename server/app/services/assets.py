@@ -79,10 +79,7 @@ def resolve_asset_path(asset: Asset) -> Path:
     return path
 
 
-def store_bytes(db: Session, data: bytes, filename: str, content_type: str) -> StoredAsset:
-    if not data:
-        raise ValueError("Stored file is empty")
-
+def _create_asset(db: Session, data: bytes, filename: str, content_type: str) -> StoredAsset:
     now = utcnow()
     asset_id = uuid.uuid4().hex
     ext = normalize_ext(filename, content_type, data)
@@ -109,36 +106,19 @@ def store_bytes(db: Session, data: bytes, filename: str, content_type: str) -> S
     return StoredAsset(asset=asset, path=path)
 
 
+def store_bytes(db: Session, data: bytes, filename: str, content_type: str) -> StoredAsset:
+    if not data:
+        raise ValueError("Stored file is empty")
+    return _create_asset(db, data, filename, content_type)
+
+
 async def store_upload(db: Session, upload: UploadFile) -> StoredAsset:
     data = await upload.read()
     if not data:
         raise ValueError("Uploaded file is empty")
-
-    now = utcnow()
-    asset_id = uuid.uuid4().hex
-    filename = upload.filename or f"{asset_id}.bin"
+    filename = upload.filename or f"{uuid.uuid4().hex}.bin"
     content_type = upload.content_type or "application/octet-stream"
-    ext = normalize_ext(filename, content_type, data)
-    sha256 = hashlib.sha256(data).hexdigest()
-    width, height = guess_image_size(data)
-
-    storage_key = Path("assets") / f"{now:%Y}" / f"{now:%m}" / f"{asset_id}{ext}"
-    path = get_data_dir() / storage_key
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-
-    asset = Asset(
-        id=asset_id,
-        filename=filename,
-        ext=ext,
-        mime_type=content_type,
-        size=len(data),
-        sha256=sha256,
-        storage_key=storage_key.as_posix(),
-        width=width,
-        height=height,
-    )
-    db.add(asset)
+    stored = _create_asset(db, data, filename, content_type)
     db.commit()
-    db.refresh(asset)
-    return StoredAsset(asset=asset, path=path)
+    db.refresh(stored.asset)
+    return stored

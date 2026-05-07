@@ -76,9 +76,5 @@ def update_group_items(
     group = get_group(db, group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Article group not found")
-    try:
-        updated = replace_group_items(db, group, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_group_read(updated)
+    return to_group_read(replace_group_items(db, group, payload))
 

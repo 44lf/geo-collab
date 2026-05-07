@@ -1,9 +1,9 @@
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from server.app.api.routes.accounts import router as accounts_router
@@ -32,6 +32,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    @app.exception_handler(ValueError)
+    async def _value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
     app.include_router(accounts_router, prefix="/api/accounts", tags=["accounts"])
     app.include_router(article_groups_router, prefix="/api/article-groups", tags=["article-groups"])
     app.include_router(articles_router, prefix="/api/articles", tags=["articles"])

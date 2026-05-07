@@ -23,11 +23,7 @@ def read_articles(q: str | None = Query(default=None), db: Session = Depends(get
 
 @router.post("", response_model=ArticleRead)
 def create_article_endpoint(payload: ArticleCreate, db: Session = Depends(get_db)) -> ArticleRead:
-    try:
-        article = create_article(db, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_article_read(article)
+    return to_article_read(create_article(db, payload))
 
 
 @router.get("/{article_id}", response_model=ArticleRead)
@@ -43,11 +39,7 @@ def update_article_endpoint(article_id: int, payload: ArticleUpdate, db: Session
     article = get_article(db, article_id)
     if article is None:
         raise HTTPException(status_code=404, detail="Article not found")
-    try:
-        updated = update_article(db, article, payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_article_read(updated)
+    return to_article_read(update_article(db, article, payload))
 
 
 @router.delete("/{article_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -64,9 +56,5 @@ def update_article_cover(article_id: int, payload: ArticleCoverUpdate, db: Sessi
     article = get_article(db, article_id)
     if article is None:
         raise HTTPException(status_code=404, detail="Article not found")
-    try:
-        updated = set_article_cover(db, article, payload.cover_asset_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return to_article_read(updated)
+    return to_article_read(set_article_cover(db, article, payload.cover_asset_id))
 

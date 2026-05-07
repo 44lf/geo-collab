@@ -28,10 +28,7 @@ def to_asset_read(asset: Asset) -> AssetRead:
 
 @router.post("", response_model=AssetRead)
 async def upload_asset(file: UploadFile = File(...), db: Session = Depends(get_db)) -> AssetRead:
-    try:
-        stored = await store_upload(db, file)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    stored = await store_upload(db, file)
     return to_asset_read(stored.asset)
 
 
