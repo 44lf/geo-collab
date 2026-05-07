@@ -64,7 +64,11 @@ class ToutiaoPublisher:
         try:
             # 导航到发布页面，依次执行各步骤
             page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(self.wait_ms)
+            # 等标题输入框出现（替代固定等待，通常 2–4s 即可就绪）
+            try:
+                page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=self.wait_ms)
+            except Exception:
+                pass
             self._ensure_publish_page(page)
             self._close_ai_drawer(page)
             self._fill_title(page, article.title)
@@ -121,7 +125,7 @@ class ToutiaoPublisher:
             para = page.get_by_role("paragraph").first
             para.scroll_into_view_if_needed()
             para.click()
-            page.keyboard.type(clean_body)
+            page.evaluate("(text) => document.execCommand('insertText', false, text)", clean_body)
             return
         except Exception:
             logger.warning("Body fill via paragraph role failed, trying contenteditable fallback", exc_info=True)
@@ -135,7 +139,7 @@ class ToutiaoPublisher:
                     continue
                 field.scroll_into_view_if_needed()
                 field.click()
-                page.keyboard.type(clean_body)
+                page.evaluate("(text) => document.execCommand('insertText', false, text)", clean_body)
                 return
             except Exception:
                 logger.warning("Failed to fill body via contenteditable fallback", exc_info=True)
@@ -184,11 +188,6 @@ class ToutiaoPublisher:
     def _click_publish_and_wait(self, page: Any, stop_before_publish: bool = False) -> str:
         """两步发布：先点"预览并发布"，再点"确认发布"。"""
         before_url = page.url
-
-        try:
-            page.wait_for_load_state("networkidle", timeout=8000)
-        except Exception:
-            logger.warning("networkidle wait failed before publish click", exc_info=True)
 
         # 第一步：点击"预览并发布"
         try:

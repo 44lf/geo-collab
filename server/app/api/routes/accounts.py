@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from server.app.services.accounts import (
     delete_account,
     export_accounts_auth_package,
     get_account,
+    import_accounts_auth_package,
     list_accounts,
     login_toutiao,
     relogin_account,
@@ -37,7 +38,22 @@ def export_accounts(payload: AccountExportRequest | None = None, db: Session = D
         export_path = export_accounts_auth_package(db, payload or AccountExportRequest())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return FileResponse(export_path, media_type="application/zip", filename=export_path.name)
+    return FileResponse(
+        export_path,
+        media_type="application/zip",
+        filename=export_path.name,
+        headers={"X-Export-Path": str(export_path)},
+    )
+
+
+# 导入账号授权包
+@router.post("/import")
+async def import_accounts(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict:
+    zip_bytes = await file.read()
+    try:
+        return import_accounts_auth_package(db, zip_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # 校验指定账号的登录状态

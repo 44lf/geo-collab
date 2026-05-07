@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import re
 import tempfile
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 import zipfile
@@ -305,6 +307,71 @@ def export_accounts_auth_package(db: Session, payload: AccountExportRequest) -> 
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
     return export_path
+
+
+# 导入账号授权包（ZIP 格式），返回新增和跳过的账号名称列表
+def import_accounts_auth_package(db: Session, zip_bytes: bytes) -> dict[str, list[str]]:
+    ensure_data_dirs()
+    imported: list[str] = []
+    skipped: list[str] = []
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        try:
+            manifest = json.loads(archive.read("manifest.json"))
+        except Exception as exc:
+            raise ValueError("无效的授权包：无法读取 manifest.json") from exc
+
+        for entry in manifest.get("accounts", []):
+            state_path_rel: str = entry.get("state_path", "")
+            display_name: str = entry.get("display_name", "未知账号")
+
+            if not state_path_rel:
+                skipped.append(f"{display_name}（缺少 state_path）")
+                continue
+
+            # 去重：state_path 已存在则跳过
+            existing = db.execute(
+                select(Account).where(Account.state_path == state_path_rel)
+            ).scalar_one_or_none()
+            if existing is not None:
+                skipped.append(display_name)
+                continue
+
+            # 写入 storage_state.json
+            account_dir_in_zip = f"accounts/{entry.get('platform_code', 'toutiao')}-{entry['id']}"
+            archive_state_path = f"{account_dir_in_zip}/storage_state.json"
+            if archive_state_path not in archive.namelist():
+                skipped.append(f"{display_name}（ZIP 中缺少 storage_state.json）")
+                continue
+
+            try:
+                account_key = account_key_from_state_path(state_path_rel)
+            except ValueError:
+                skipped.append(f"{display_name}（state_path 格式无效）")
+                continue
+
+            dest = state_path_for_key(account_key)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(archive.read(archive_state_path))
+
+            platform = get_or_create_toutiao_platform(db)
+            now = utcnow()
+            last_login_raw = entry.get("last_login_at")
+            account = Account(
+                platform=platform,
+                display_name=display_name,
+                platform_user_id=entry.get("platform_user_id"),
+                status=entry.get("status", "unknown"),
+                state_path=state_path_rel,
+                note=entry.get("note"),
+                last_login_at=datetime.fromisoformat(last_login_raw) if last_login_raw else None,
+                last_checked_at=now,
+            )
+            db.add(account)
+            imported.append(display_name)
+
+    db.commit()
+    return {"imported": imported, "skipped": skipped}
 
 
 # 生成导出文件路径（优先数据目录，兜底系统临时目录）

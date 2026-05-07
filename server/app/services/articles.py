@@ -4,11 +4,11 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
-from server.app.models import Article, ArticleBodyAsset, Asset
+from server.app.models import Article, ArticleBodyAsset, ArticleGroupItem, Asset, PublishRecord, TaskLog
 from server.app.schemas.article import ArticleBodyAssetRead, ArticleCreate, ArticleRead, ArticleUpdate
 
 VALID_ARTICLE_STATUSES = {"draft", "ready", "archived"}
@@ -184,8 +184,16 @@ def set_article_cover(db: Session, article: Article, cover_asset_id: str | None)
     return get_article(db, article.id) or article
 
 
-# 删除文章
+# 删除文章（先清除分组关联和发布记录，避免 NOT NULL FK 约束阻塞）
 def delete_article(db: Session, article: Article) -> None:
+    article_id = article.id
+    db.execute(sa_delete(ArticleGroupItem).where(ArticleGroupItem.article_id == article_id))
+    record_ids = list(
+        db.execute(select(PublishRecord.id).where(PublishRecord.article_id == article_id)).scalars()
+    )
+    if record_ids:
+        db.execute(sa_delete(TaskLog).where(TaskLog.record_id.in_(record_ids)))
+        db.execute(sa_delete(PublishRecord).where(PublishRecord.id.in_(record_ids)))
     db.delete(article)
     db.commit()
 

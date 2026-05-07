@@ -347,6 +347,27 @@ function MediaWorkspace() {
     }
   }
 
+  async function importAuthPackage(file: File) {
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/accounts/import", { method: "POST", body: formData });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || `${response.status}`);
+      }
+      const result = await response.json() as { imported: string[]; skipped: string[] };
+      await refreshAccounts();
+      const msg = `导入完成：${result.imported.length} 个新增${result.skipped.length ? `，${result.skipped.length} 个已存在跳过` : ""}`;
+      setNotice(msg);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "导入失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function exportAuthPackage() {
     setLoading(true);
     try {
@@ -360,6 +381,7 @@ function MediaWorkspace() {
         throw new Error(payload.detail || `${response.status} ${response.statusText}`);
       }
 
+      const exportPath = response.headers.get("x-export-path") ?? "";
       const blob = await response.blob();
       const disposition = response.headers.get("content-disposition") ?? "";
       const match = disposition.match(/filename="?([^"]+)"?/);
@@ -372,7 +394,7 @@ function MediaWorkspace() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      setNotice("授权包已导出");
+      setNotice(exportPath ? `已导出：${exportPath}` : "授权包已导出");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "导出授权包失败");
     } finally {
@@ -389,6 +411,21 @@ function MediaWorkspace() {
         </div>
         <div className="topActions">
           {notice ? <span className="status">{notice}</span> : null}
+          <label className="secondaryButton" style={{ cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.5 : 1 }}>
+            <Upload size={16} />
+            导入授权包
+            <input
+              type="file"
+              accept=".zip"
+              style={{ display: "none" }}
+              disabled={loading}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void importAuthPackage(file);
+                e.target.value = "";
+              }}
+            />
+          </label>
           <button className="secondaryButton" disabled={loading || accounts.length === 0} type="button" onClick={() => void exportAuthPackage()}>
             <Download size={16} />
             导出授权包
@@ -710,9 +747,17 @@ function ContentWorkspace() {
         </div>
         <div className="topActions">
           {notice ? <span className="status">{notice}</span> : null}
-          <button className="primaryButton" disabled={loading} type="button" onClick={resetDraft}>
+          <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => void deleteCurrentArticle()}>
+            <Trash2 size={16} />
+            删除
+          </button>
+          <button className="primaryButton" disabled={loading} type="button" onClick={() => void saveArticle()}>
+            <Save size={16} />
+            保存
+          </button>
+          <button className="secondaryButton" disabled={loading} type="button" onClick={resetDraft}>
             <Plus size={16} />
-            新建图文
+            新建
           </button>
         </div>
       </header>
@@ -868,16 +913,6 @@ function ContentWorkspace() {
             <EditorContent editor={editor} />
           </div>
 
-          <div className="bottomActions">
-            <button className="primaryButton" disabled={loading} type="button" onClick={() => void saveArticle()}>
-              <Save size={16} />
-              保存
-            </button>
-            <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => void deleteCurrentArticle()}>
-              <Trash2 size={16} />
-              删除
-            </button>
-          </div>
         </section>
       </section>
     </>
