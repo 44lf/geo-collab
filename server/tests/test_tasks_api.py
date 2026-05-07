@@ -12,7 +12,7 @@ class FakePublisher:
         )
         self.error = error
 
-    def publish_article(self, article, account):
+    def publish_article(self, article, account, stop_before_publish=False):
         if self.error is not None:
             raise self.error
         return self.result
@@ -61,6 +61,7 @@ def test_create_single_task_generates_one_publish_record(monkeypatch):
                 "task_type": "single",
                 "article_id": article_id,
                 "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
             },
         )
 
@@ -138,6 +139,7 @@ def test_create_group_task_generates_records_in_group_order_and_account_order(mo
                     {"account_id": account_2, "sort_order": 20},
                     {"account_id": account_1, "sort_order": 10},
                 ],
+                "stop_before_publish": False,
             },
         )
 
@@ -202,7 +204,7 @@ def test_group_assignment_preview_matches_created_records(monkeypatch):
             (article_4, account_1),
         ]
 
-        created = client.post("/api/tasks", json=payload)
+        created = client.post("/api/tasks", json={**payload, "stop_before_publish": False})
         assert created.status_code == 200
         records = client.get(f"/api/tasks/{created.json()['id']}/records").json()
         assert [(record["article_id"], record["account_id"]) for record in records] == [
@@ -272,6 +274,7 @@ def test_execute_single_task_auto_succeeds(monkeypatch):
                 "task_type": "single",
                 "article_id": article_id,
                 "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
             },
         ).json()
 
@@ -325,10 +328,12 @@ def test_execute_group_task_auto_completes_all_records(monkeypatch):
                 "task_type": "group_round_robin",
                 "group_id": group["id"],
                 "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
             },
         ).json()
 
         executed = client.post(f"/api/tasks/{task['id']}/execute")
+
         assert executed.status_code == 200
         assert executed.json()["status"] == "succeeded"
 
@@ -353,6 +358,7 @@ def test_cancel_pending_task_before_execute(monkeypatch):
                 "task_type": "single",
                 "article_id": article_id,
                 "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
             },
         ).json()
 
@@ -385,6 +391,7 @@ def test_execute_task_records_publisher_failure_with_screenshot(monkeypatch):
                 "task_type": "single",
                 "article_id": article_id,
                 "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
             },
         ).json()
 
@@ -436,6 +443,7 @@ def test_publisher_failure_in_group_task_auto_advances_to_next_record(monkeypatc
                 "task_type": "group_round_robin",
                 "group_id": group["id"],
                 "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
             },
         ).json()
 
@@ -468,6 +476,7 @@ def test_retry_failed_record_creates_pending_record_and_resets_task(monkeypatch)
                 "task_type": "single",
                 "article_id": article_id,
                 "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
             },
         ).json()
         client.post(f"/api/tasks/{task['id']}/execute")

@@ -1,2 +1,2 @@
-"""Core configuration and runtime helpers."""
+"""核心模块 — 配置、路径、时间等基础工具"""
 

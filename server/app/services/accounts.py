@@ -22,6 +22,7 @@ TOUTIAO_HOME = "https://mp.toutiao.com"
 LOGIN_HINTS = ("login", "passport", "sso", "验证码", "扫码", "登录")
 
 
+# 浏览器检查结果
 @dataclass(frozen=True)
 class BrowserCheckResult:
     logged_in: bool
@@ -29,28 +30,34 @@ class BrowserCheckResult:
     title: str
 
 
+# 规范化账号本地标识：只保留字母数字和下划线
 def normalize_account_key(account_key: str | None) -> str:
     raw = account_key or uuid.uuid4().hex
     value = re.sub(r"[^a-zA-Z0-9_-]+", "-", raw).strip("-")
     return value or uuid.uuid4().hex
 
 
+# 账号的浏览器状态目录（含 profile 和 storage_state.json）
 def state_dir_for_key(account_key: str) -> Path:
     return get_data_dir() / "browser_states" / "toutiao" / account_key
 
 
+# Playwright storage_state.json 的完整路径
 def state_path_for_key(account_key: str) -> Path:
     return state_dir_for_key(account_key) / "storage_state.json"
 
 
+# Playwright 持久化浏览器配置目录
 def profile_dir_for_key(account_key: str) -> Path:
     return state_dir_for_key(account_key) / "profile"
 
 
+# 将绝对路径转为相对 data_dir 的 POSIX 路径（用于数据库存储）
 def relative_to_data_dir(path: Path) -> str:
     return path.resolve().relative_to(get_data_dir().resolve()).as_posix()
 
 
+# 从 storage_state_path 中提取 account_key
 def account_key_from_state_path(state_path: str) -> str:
     parts = Path(state_path).parts
     try:
@@ -60,6 +67,7 @@ def account_key_from_state_path(state_path: str) -> str:
         raise ValueError("Invalid toutiao state path") from None
 
 
+# 获取或创建头条号平台记录
 def get_or_create_toutiao_platform(db: Session) -> Platform:
     platform = db.execute(select(Platform).where(Platform.code == "toutiao")).scalar_one_or_none()
     if platform is not None:
@@ -72,6 +80,7 @@ def get_or_create_toutiao_platform(db: Session) -> Platform:
     return platform
 
 
+# Playwright 浏览器启动参数
 def launch_options(channel: str, executable_path: str | None) -> dict[str, Any]:
     options: dict[str, Any] = {
         "headless": False,
@@ -84,6 +93,7 @@ def launch_options(channel: str, executable_path: str | None) -> dict[str, Any]:
     return options
 
 
+# 根据页面文字判断是否已登录
 def detect_login_state_text(url: str, title: str, body: str) -> bool:
     haystack = f"{url}\n{title}\n{body}"
     if any(hint in haystack for hint in LOGIN_HINTS):
@@ -91,6 +101,7 @@ def detect_login_state_text(url: str, title: str, body: str) -> bool:
     return "mp.toutiao.com" in url and ("profile_v4" in url or "头条号" in title)
 
 
+# 使用 Playwright 检查账号登录状态（打开浏览器访问头条号）
 def run_toutiao_browser_check(
     account_key: str,
     channel: str,
@@ -109,6 +120,7 @@ def run_toutiao_browser_check(
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(TOUTIAO_HOME, wait_until="domcontentloaded")
 
+        # 轮询等待页面加载完毕或超时
         deadline = wait_seconds * 1000
         elapsed = 0
         logged_in = False
@@ -124,21 +136,25 @@ def run_toutiao_browser_check(
             if logged_in:
                 break
 
+        # 保存登录状态到 storage_state.json
         context.storage_state(path=str(state_path_for_key(account_key)))
         context.close()
         return BrowserCheckResult(logged_in=logged_in, url=url, title=title)
 
 
+# 获取所有账号列表
 def list_accounts(db: Session) -> list[Account]:
     stmt = select(Account).options(selectinload(Account.platform)).order_by(Account.updated_at.desc())
     return list(db.execute(stmt).scalars().all())
 
 
+# 获取单个账号
 def get_account(db: Session, account_id: int) -> Account | None:
     stmt = select(Account).where(Account.id == account_id).options(selectinload(Account.platform))
     return db.execute(stmt).scalar_one_or_none()
 
 
+# 添加头条号账号
 def login_toutiao(db: Session, payload: ToutiaoLoginRequest) -> Account:
     platform = get_or_create_toutiao_platform(db)
     account_key = normalize_account_key(payload.account_key)
@@ -147,6 +163,7 @@ def login_toutiao(db: Session, payload: ToutiaoLoginRequest) -> Account:
 
     status = "unknown"
     if payload.use_browser:
+        # 打开浏览器让用户交互登录
         result = run_toutiao_browser_check(
             account_key=account_key,
             channel=payload.channel,
@@ -155,6 +172,7 @@ def login_toutiao(db: Session, payload: ToutiaoLoginRequest) -> Account:
         )
         status = "valid" if result.logged_in else "unknown"
     elif state_path.exists():
+        # 复用已保存的 storage_state
         status = "valid"
     else:
         raise ValueError(f"Storage state not found: {state_path}")
@@ -189,6 +207,7 @@ def login_toutiao(db: Session, payload: ToutiaoLoginRequest) -> Account:
     return get_account(db, account.id) or account
 
 
+# 检查账号登录状态
 def check_account(db: Session, account: Account, payload: AccountCheckRequest) -> Account:
     now = utcnow()
     account_key = account_key_from_state_path(account.state_path)
@@ -210,6 +229,7 @@ def check_account(db: Session, account: Account, payload: AccountCheckRequest) -
     return get_account(db, account.id) or account
 
 
+# 重新登录账号（本质是重新调用 login_toutiao）
 def relogin_account(db: Session, account: Account, payload: AccountCheckRequest) -> Account:
     account_key = account_key_from_state_path(account.state_path)
     request = ToutiaoLoginRequest(
@@ -224,11 +244,13 @@ def relogin_account(db: Session, account: Account, payload: AccountCheckRequest)
     return login_toutiao(db, request)
 
 
+# 删除账号
 def delete_account(db: Session, account: Account) -> None:
     db.delete(account)
     db.commit()
 
 
+# 导出账号授权包（ZIP 格式，含 storage_state.json）
 def export_accounts_auth_package(db: Session, payload: AccountExportRequest) -> Path:
     ensure_data_dirs()
     accounts = _accounts_for_export(db, payload.account_ids)
@@ -268,6 +290,7 @@ def export_accounts_auth_package(db: Session, payload: AccountExportRequest) -> 
     return export_path
 
 
+# 生成导出文件路径（优先数据目录，兜底系统临时目录）
 def _new_export_path(now) -> Path:
     filename = f"geo-auth-export-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}.zip"
     export_dir = get_data_dir() / "exports"
@@ -284,6 +307,7 @@ def _new_export_path(now) -> Path:
         return fallback_dir / filename
 
 
+# 获取要导出的账号列表
 def _accounts_for_export(db: Session, account_ids: list[int] | None) -> list[Account]:
     stmt = select(Account).options(selectinload(Account.platform))
     if account_ids:
@@ -300,6 +324,7 @@ def _accounts_for_export(db: Session, account_ids: list[int] | None) -> list[Acc
     return accounts
 
 
+# 校验并解析 data_dir 下的相对路径
 def _resolve_data_file(relative_path: str) -> Path:
     data_dir = get_data_dir().resolve()
     path = (data_dir / relative_path).resolve()
@@ -308,6 +333,7 @@ def _resolve_data_file(relative_path: str) -> Path:
     return path
 
 
+# 构造账号导出 JSON 载荷
 def _account_export_payload(account: Account) -> dict[str, Any]:
     return {
         "id": account.id,
@@ -325,6 +351,7 @@ def _account_export_payload(account: Account) -> dict[str, Any]:
     }
 
 
+# 将 ORM Account 转为响应体
 def to_account_read(account: Account) -> AccountRead:
     return AccountRead(
         id=account.id,

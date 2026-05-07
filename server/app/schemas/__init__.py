@@ -1,2 +1,2 @@
-"""Pydantic schemas."""
+"""Pydantic 数据模型 — 请求/响应校验"""
 

@@ -1,3 +1,4 @@
+# 所有 ORM 模型的统一导出入口
 from server.app.models.account import Account
 from server.app.models.article import Article, ArticleBodyAsset
 from server.app.models.article_group import ArticleGroup, ArticleGroupItem

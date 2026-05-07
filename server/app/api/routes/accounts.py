@@ -18,16 +18,19 @@ from server.app.services.accounts import (
 router = APIRouter()
 
 
+# 获取所有账号列表
 @router.get("", response_model=list[AccountRead])
 def read_accounts(db: Session = Depends(get_db)) -> list[AccountRead]:
     return [to_account_read(account) for account in list_accounts(db)]
 
 
+# 添加头条号账号（可选择打开浏览器交互登录或复用已保存状态）
 @router.post("/toutiao/login", response_model=AccountRead)
 def login_toutiao_account(payload: ToutiaoLoginRequest, db: Session = Depends(get_db)) -> AccountRead:
     return to_account_read(login_toutiao(db, payload))
 
 
+# 导出账号授权包（含 Playwright storage_state 的 ZIP）
 @router.post("/export")
 def export_accounts(payload: AccountExportRequest | None = None, db: Session = Depends(get_db)) -> FileResponse:
     try:
@@ -37,6 +40,7 @@ def export_accounts(payload: AccountExportRequest | None = None, db: Session = D
     return FileResponse(export_path, media_type="application/zip", filename=export_path.name)
 
 
+# 校验指定账号的登录状态
 @router.post("/{account_id}/check", response_model=AccountRead)
 def check_existing_account(
     account_id: int,
@@ -49,6 +53,7 @@ def check_existing_account(
     return to_account_read(check_account(db, account, payload or AccountCheckRequest()))
 
 
+# 重新登录指定账号（重新打开浏览器）
 @router.post("/{account_id}/relogin", response_model=AccountRead)
 def relogin_existing_account(
     account_id: int,
@@ -61,6 +66,7 @@ def relogin_existing_account(
     return to_account_read(relogin_account(db, account, payload or AccountCheckRequest()))
 
 
+# 删除指定账号
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_existing_account(account_id: int, db: Session = Depends(get_db)) -> Response:
     account = get_account(db, account_id)

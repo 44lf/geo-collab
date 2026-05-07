@@ -7,16 +7,17 @@ from server.app.core.time import utcnow
 from server.app.db.base import Base
 
 
+# 资源文件：上传的图片（封面/正文），以 SHA256 前缀为 ID
 class Asset(Base):
     __tablename__ = "assets"
 
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # uuid 作为主键
     filename: Mapped[str] = mapped_column(String(500))
     ext: Mapped[str] = mapped_column(String(30))
     mime_type: Mapped[str] = mapped_column(String(100), index=True)
     size: Mapped[int] = mapped_column(Integer)
-    sha256: Mapped[str] = mapped_column(String(64), index=True)
-    storage_key: Mapped[str] = mapped_column(String(1000), unique=True)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)  # 文件内容哈希，用于去重
+    storage_key: Mapped[str] = mapped_column(String(1000), unique=True)  # 相对 data_dir 的存储路径
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

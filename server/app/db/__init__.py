@@ -1,2 +1,2 @@
-"""Database package."""
+"""数据库包 — SQLite 引擎、会话管理、基类"""
 

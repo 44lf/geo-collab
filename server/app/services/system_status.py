@@ -3,6 +3,7 @@ from server.app.core.paths import DATA_SUBDIRS, ensure_data_dirs, get_data_dir, 
 from server.app.schemas.system import SystemStatus
 
 
+# 获取系统基础状态（目录、版本等），不依赖数据库
 def get_system_status() -> SystemStatus:
     settings = get_settings()
     data_dir = ensure_data_dirs()

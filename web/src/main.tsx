@@ -186,7 +186,7 @@ function assetSrc(assetId: string | null): string | null {
 }
 
 function countWords(text: string): number {
-  return text.replace(/\s+/g, "").length;
+  return text.split(/\s+/).filter(Boolean).length;
 }
 
 function makeEmptyDraft(): Draft {

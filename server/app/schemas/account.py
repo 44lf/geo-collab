@@ -3,31 +3,34 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+# 账号响应体
 class AccountRead(BaseModel):
     id: int
     platform_code: str
     platform_name: str
     display_name: str
     platform_user_id: str | None
-    status: str
+    status: str  # valid / expired / unknown
     last_checked_at: datetime | None
     last_login_at: datetime | None
-    state_path: str
+    state_path: str  # Playwright storage_state.json 路径
     note: str | None
     created_at: datetime
     updated_at: datetime
 
 
+# 头条号登录/添加请求
 class ToutiaoLoginRequest(BaseModel):
     display_name: str = Field(default="头条号账号", min_length=1, max_length=200)
-    account_key: str | None = Field(default=None, max_length=120)
+    account_key: str | None = Field(default=None, max_length=120)  # 本地存储目录标识
     channel: str = "chrome"
     executable_path: str | None = None
-    wait_seconds: int = Field(default=180, ge=5, le=600)
-    use_browser: bool = True
+    wait_seconds: int = Field(default=180, ge=5, le=600)  # 等待登录完成的超时时间（秒）
+    use_browser: bool = True  # True=打开浏览器交互登录，False=复用已有状态
     note: str | None = None
 
 
+# 账号校验请求
 class AccountCheckRequest(BaseModel):
     channel: str = "chrome"
     executable_path: str | None = None
@@ -35,5 +38,6 @@ class AccountCheckRequest(BaseModel):
     use_browser: bool = True
 
 
+# 导出账号授权包请求
 class AccountExportRequest(BaseModel):
-    account_ids: list[int] | None = None
+    account_ids: list[int] | None = None  # 为空则导出所有

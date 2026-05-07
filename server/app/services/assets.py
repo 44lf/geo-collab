@@ -14,12 +14,14 @@ from server.app.core.time import utcnow
 from server.app.models import Asset
 
 
+# 存储结果：资源和其文件路径
 @dataclass(frozen=True)
 class StoredAsset:
     asset: Asset
     path: Path
 
 
+# 从图片文件头字节猜测图片宽高（仅支持 PNG 和 JPEG）
 def guess_image_size(data: bytes) -> tuple[int | None, int | None]:
     if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
         width, height = struct.unpack(">II", data[16:24])
@@ -47,6 +49,7 @@ def guess_image_size(data: bytes) -> tuple[int | None, int | None]:
     return None, None
 
 
+# 根据文件名后缀和文件头字节推断扩展名
 def normalize_ext(filename: str, content_type: str | None, data: bytes) -> str:
     suffix = Path(filename).suffix.lower()
     if suffix:
@@ -67,10 +70,12 @@ def normalize_ext(filename: str, content_type: str | None, data: bytes) -> str:
     return ".bin"
 
 
+# 构造资源文件的 API 访问 URL
 def asset_url(asset_id: str) -> str:
     return f"/api/assets/{asset_id}"
 
 
+# 解析资源文件在磁盘上的绝对路径，含安全校验（防止路径穿越）
 def resolve_asset_path(asset: Asset) -> Path:
     data_dir = get_data_dir().resolve()
     path = (data_dir / asset.storage_key).resolve()
@@ -79,6 +84,7 @@ def resolve_asset_path(asset: Asset) -> Path:
     return path
 
 
+# 内部方法：将二进制数据创建为 Asset 并写入磁盘
 def _create_asset(db: Session, data: bytes, filename: str, content_type: str) -> StoredAsset:
     now = utcnow()
     asset_id = uuid.uuid4().hex
@@ -106,12 +112,14 @@ def _create_asset(db: Session, data: bytes, filename: str, content_type: str) ->
     return StoredAsset(asset=asset, path=path)
 
 
+# 从内存中的字节数据存储文件（用于任务失败截图）
 def store_bytes(db: Session, data: bytes, filename: str, content_type: str) -> StoredAsset:
     if not data:
         raise ValueError("Stored file is empty")
     return _create_asset(db, data, filename, content_type)
 
 
+# 处理 HTTP 文件上传请求
 async def store_upload(db: Session, upload: UploadFile) -> StoredAsset:
     data = await upload.read()
     if not data:

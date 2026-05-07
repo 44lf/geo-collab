@@ -14,12 +14,14 @@ from server.app.schemas.article import ArticleBodyAssetRead, ArticleCreate, Arti
 VALID_ARTICLE_STATUSES = {"draft", "ready", "archived"}
 
 
+# 正文图片节点信息
 @dataclass(frozen=True)
 class ImageNode:
     asset_id: str
     editor_node_id: str | None = None
 
 
+# 递归遍历 Tiptap JSON 树的所有节点
 def _iter_nodes(node: Any) -> Iterable[dict[str, Any]]:
     if isinstance(node, dict):
         yield node
@@ -32,6 +34,7 @@ def _iter_nodes(node: Any) -> Iterable[dict[str, Any]]:
             yield from _iter_nodes(child)
 
 
+# 从 Tiptap 图片节点中提取 asset_id（支持多种字段名）
 def _asset_id_from_image_node(node: dict[str, Any]) -> str | None:
     attrs = node.get("attrs")
     if not isinstance(attrs, dict):
@@ -49,6 +52,7 @@ def _asset_id_from_image_node(node: dict[str, Any]) -> str | None:
     return None
 
 
+# 从 Tiptap JSON 中提取所有图片节点
 def extract_body_image_nodes(content_json: dict[str, Any]) -> list[ImageNode]:
     images: list[ImageNode] = []
     for node in _iter_nodes(content_json):
@@ -63,10 +67,12 @@ def extract_body_image_nodes(content_json: dict[str, Any]) -> list[ImageNode]:
     return images
 
 
+# 序列化 content_json 为紧凑 JSON 字符串
 def dumps_content_json(content_json: dict[str, Any]) -> str:
     return json.dumps(content_json, ensure_ascii=False, separators=(",", ":"))
 
 
+# 反序列化 content_json 字符串为字典
 def loads_content_json(raw: str) -> dict[str, Any]:
     if not raw:
         return {}
@@ -74,11 +80,13 @@ def loads_content_json(raw: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+# 校验文章状态值是否合法
 def validate_article_status(status: str) -> None:
     if status not in VALID_ARTICLE_STATUSES:
         raise ValueError(f"Invalid article status: {status}")
 
 
+# 确认资源文件在数据库中存在
 def ensure_asset_exists(db: Session, asset_id: str | None) -> None:
     if asset_id is None:
         return
@@ -86,6 +94,7 @@ def ensure_asset_exists(db: Session, asset_id: str | None) -> None:
         raise ValueError(f"Asset not found: {asset_id}")
 
 
+# 同步文章正文中的图片关联信息（全量替换）
 def sync_article_body_assets(db: Session, article: Article, content_json: dict[str, Any]) -> None:
     image_nodes = extract_body_image_nodes(content_json)
     for image_node in image_nodes:
@@ -102,6 +111,7 @@ def sync_article_body_assets(db: Session, article: Article, content_json: dict[s
         )
 
 
+# 获取单篇文章（含正文图片关联）
 def get_article(db: Session, article_id: int) -> Article | None:
     stmt = (
         select(Article)
@@ -111,6 +121,7 @@ def get_article(db: Session, article_id: int) -> Article | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
+# 列出文章，支持按标题/作者模糊搜索
 def list_articles(db: Session, query: str | None = None) -> list[Article]:
     stmt = select(Article).options(selectinload(Article.body_assets)).order_by(Article.updated_at.desc())
     if query:
@@ -119,6 +130,7 @@ def list_articles(db: Session, query: str | None = None) -> list[Article]:
     return list(db.execute(stmt).scalars().all())
 
 
+# 创建文章
 def create_article(db: Session, payload: ArticleCreate) -> Article:
     validate_article_status(payload.status)
     ensure_asset_exists(db, payload.cover_asset_id)
@@ -138,6 +150,7 @@ def create_article(db: Session, payload: ArticleCreate) -> Article:
     return get_article(db, article.id) or article
 
 
+# 更新文章（部分更新，只修改提供的字段）
 def update_article(db: Session, article: Article, payload: ArticleUpdate) -> Article:
     update_data = payload.model_dump(exclude_unset=True)
     if "status" in update_data and update_data["status"] is not None:
@@ -162,6 +175,7 @@ def update_article(db: Session, article: Article, payload: ArticleUpdate) -> Art
     return get_article(db, article.id) or article
 
 
+# 仅更新文章封面图
 def set_article_cover(db: Session, article: Article, cover_asset_id: str | None) -> Article:
     ensure_asset_exists(db, cover_asset_id)
     article.cover_asset_id = cover_asset_id
@@ -170,11 +184,13 @@ def set_article_cover(db: Session, article: Article, cover_asset_id: str | None)
     return get_article(db, article.id) or article
 
 
+# 删除文章
 def delete_article(db: Session, article: Article) -> None:
     db.delete(article)
     db.commit()
 
 
+# 将 ORM Article 转为响应体
 def to_article_read(article: Article) -> ArticleRead:
     body_assets = sorted(article.body_assets, key=lambda item: item.position)
     return ArticleRead(

@@ -7,6 +7,7 @@ from server.app.core.time import utcnow
 from server.app.db.base import Base
 
 
+# 发布任务：单篇或分组轮询，关联多个账号，包含多条发布记录
 class PublishTask(Base):
     __tablename__ = "publish_tasks"
     __table_args__ = (
@@ -19,12 +20,12 @@ class PublishTask(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(300))
-    task_type: Mapped[str] = mapped_column(String(40), index=True)
+    task_type: Mapped[str] = mapped_column(String(40), index=True)  # single / group_round_robin
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
     platform_id: Mapped[int] = mapped_column(ForeignKey("platforms.id"), index=True)
     article_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"), nullable=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("article_groups.id"), nullable=True)
-    stop_before_publish: Mapped[bool] = mapped_column(Boolean, default=True)
+    stop_before_publish: Mapped[bool] = mapped_column(Boolean, default=True)  # 是否等待手动确认发布
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -37,6 +38,7 @@ class PublishTask(Base):
     logs = relationship("TaskLog", back_populates="task", cascade="all, delete-orphan")
 
 
+# 任务-账号关联表，带排序（轮询顺序）
 class PublishTaskAccount(Base):
     __tablename__ = "publish_task_accounts"
     __table_args__ = (UniqueConstraint("task_id", "account_id", name="uq_publish_task_accounts_task_account"),)
@@ -44,12 +46,13 @@ class PublishTaskAccount(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     task_id: Mapped[int] = mapped_column(ForeignKey("publish_tasks.id"), index=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
-    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)  # 执行顺序
 
     task = relationship("PublishTask", back_populates="accounts")
     account = relationship("Account", back_populates="publish_task_accounts")
 
 
+# 发布记录：一次具体的发布操作（一篇文章 × 一个账号）
 class PublishRecord(Base):
     __tablename__ = "publish_records"
     __table_args__ = (
@@ -65,9 +68,9 @@ class PublishRecord(Base):
     platform_id: Mapped[int] = mapped_column(ForeignKey("platforms.id"), index=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
-    publish_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    publish_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # 发布成功后的 URL
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    retry_of_record_id: Mapped[int | None] = mapped_column(ForeignKey("publish_records.id"), nullable=True)
+    retry_of_record_id: Mapped[int | None] = mapped_column(ForeignKey("publish_records.id"), nullable=True)  # 重试来源
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -79,6 +82,7 @@ class PublishRecord(Base):
     logs = relationship("TaskLog", back_populates="record")
 
 
+# 任务执行日志：记录每个步骤的详情，失败时可附带截图资源
 class TaskLog(Base):
     __tablename__ = "task_logs"
     __table_args__ = (CheckConstraint("level in ('info', 'warn', 'error')", name="ck_task_logs_level"),)
@@ -86,9 +90,9 @@ class TaskLog(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     task_id: Mapped[int] = mapped_column(ForeignKey("publish_tasks.id"), index=True)
     record_id: Mapped[int | None] = mapped_column(ForeignKey("publish_records.id"), nullable=True)
-    level: Mapped[str] = mapped_column(String(20), default="info", index=True)
+    level: Mapped[str] = mapped_column(String(20), default="info", index=True)  # info / warn / error
     message: Mapped[str] = mapped_column(Text)
-    screenshot_asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"), nullable=True)
+    screenshot_asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"), nullable=True)  # 失败截图
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     task = relationship("PublishTask", back_populates="logs")

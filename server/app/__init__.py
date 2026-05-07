@@ -1,2 +1,2 @@
-"""Geo collaboration platform backend."""
+"""Geo 协作平台 — 后端应用包"""
 

@@ -1,3 +1,4 @@
+import threading
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -28,11 +29,18 @@ from server.app.schemas.task import (
     TaskRead,
 )
 
+# 常量定义
 VALID_TASK_TYPES = {"single", "group_round_robin"}
 TERMINAL_TASK_STATUSES = {"succeeded", "partial_failed", "failed", "cancelled"}
 ACTIVE_RECORD_STATUSES = {"running"}
+CAN_RETRY_TASK_STATUSES = {"failed", "partial_failed", "succeeded", "cancelled"}
+
+# 任务级互斥锁，防止同一任务被并发执行
+_task_locks: dict[int, threading.Lock] = {}
+_task_locks_lock = threading.Lock()
 
 
+# 验证通过后的任务输入
 @dataclass(frozen=True)
 class TaskInputs:
     platform: Platform
@@ -40,6 +48,7 @@ class TaskInputs:
     article_ids: list[int]
 
 
+# 文章-账号分配项
 @dataclass(frozen=True)
 class AssignmentItem:
     position: int
@@ -48,6 +57,7 @@ class AssignmentItem:
     account: Account
 
 
+# 获取所有任务列表
 def list_tasks(db: Session) -> list[PublishTask]:
     stmt = (
         select(PublishTask)
@@ -61,6 +71,7 @@ def list_tasks(db: Session) -> list[PublishTask]:
     return list(db.execute(stmt).scalars().all())
 
 
+# 获取单个任务
 def get_task(db: Session, task_id: int) -> PublishTask | None:
     stmt = (
         select(PublishTask)
@@ -74,16 +85,19 @@ def get_task(db: Session, task_id: int) -> PublishTask | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
+# 获取任务的发布记录列表
 def list_task_records(db: Session, task_id: int) -> list[PublishRecord]:
     stmt = select(PublishRecord).where(PublishRecord.task_id == task_id).order_by(PublishRecord.id.asc())
     return list(db.execute(stmt).scalars().all())
 
 
+# 获取任务的日志列表
 def list_task_logs(db: Session, task_id: int) -> list[TaskLog]:
     stmt = select(TaskLog).where(TaskLog.task_id == task_id).order_by(TaskLog.created_at.asc(), TaskLog.id.asc())
     return list(db.execute(stmt).scalars().all())
 
 
+# 创建新任务
 def create_task(db: Session, payload: TaskCreate) -> PublishTask:
     inputs = _validated_task_inputs(db, payload)
     assignments = _build_assignments(inputs.article_ids, inputs.accounts)
@@ -117,6 +131,7 @@ def create_task(db: Session, payload: TaskCreate) -> PublishTask:
     return get_task(db, task.id) or task
 
 
+# 预览任务分配结果
 def preview_task_assignment(db: Session, payload: TaskCreate) -> TaskAssignmentPreviewRead:
     inputs = _validated_task_inputs(db, payload)
     assignments = _build_assignments(inputs.article_ids, inputs.accounts)
@@ -137,32 +152,46 @@ def preview_task_assignment(db: Session, payload: TaskCreate) -> TaskAssignmentP
     )
 
 
+# 获取单个发布记录
 def get_record(db: Session, record_id: int) -> PublishRecord | None:
     return db.get(PublishRecord, record_id)
 
 
+# 执行任务：依次处理每条待处理的发布记录
 def execute_task(db: Session, task: PublishTask) -> PublishTask:
-    if task.status in TERMINAL_TASK_STATUSES:
-        raise ValueError(f"Task is already terminal: {task.status}")
+    # 获取或创建任务级互斥锁
+    with _task_locks_lock:
+        if task.id not in _task_locks:
+            _task_locks[task.id] = threading.Lock()
+    lock = _task_locks[task.id]
+    if not lock.acquire(blocking=False):
+        raise ValueError(f"Task {task.id} is already being executed")
 
-    now = utcnow()
-    if task.status == "pending":
-        task.status = "running"
-        task.started_at = now
-        _add_log(db, task.id, None, "info", "Task started")
+    try:
+        if task.status in TERMINAL_TASK_STATUSES:
+            raise ValueError(f"Task is already terminal: {task.status}")
 
-    records = list_task_records(db, task.id)
-    active_record = next((record for record in records if record.status in ACTIVE_RECORD_STATUSES), None)
-    if active_record is not None:
-        _add_log(db, task.id, active_record.id, "info", f"Task is waiting on record {active_record.id}")
+        now = utcnow()
+        if task.status == "pending":
+            task.status = "running"
+            task.started_at = now
+            _add_log(db, task.id, None, "info", "Task started")
+
+        records = list_task_records(db, task.id)
+        active_record = next((record for record in records if record.status in ACTIVE_RECORD_STATUSES), None)
+        if active_record is not None:
+            _add_log(db, task.id, active_record.id, "info", f"Task is waiting on record {active_record.id}")
+            db.commit()
+            return get_task(db, task.id) or task
+
+        _run_next_pending_record(db, task, records)
         db.commit()
         return get_task(db, task.id) or task
-
-    _run_next_pending_record(db, task, records)
-    db.commit()
-    return get_task(db, task.id) or task
+    finally:
+        lock.release()
 
 
+# 内部方法：循环执行待处理的发布记录
 def _run_next_pending_record(db: Session, task: PublishTask, records: list[PublishRecord] | None = None) -> None:
     if records is None:
         db.flush()
@@ -189,11 +218,20 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
             continue
 
         try:
-            result = build_publisher_for_record(next_record).publish_article(article, account)
-            next_record.status = "succeeded"
-            next_record.publish_url = result.url or None
-            next_record.finished_at = utcnow()
-            _add_log(db, task.id, next_record.id, "info", result.message)
+            # 调用发布器执行实际发布
+            result = build_publisher_for_record(next_record).publish_article(
+                article, account, stop_before_publish=task.stop_before_publish
+            )
+            if task.stop_before_publish:
+                # 等待用户手动确认，此时任务保持 running 状态
+                next_record.status = "waiting_manual_publish"
+                next_record.finished_at = utcnow()
+                _add_log(db, task.id, next_record.id, "info", "等待手动确认发布")
+            else:
+                next_record.status = "succeeded"
+                next_record.publish_url = result.url or None
+                next_record.finished_at = utcnow()
+                _add_log(db, task.id, next_record.id, "info", result.message)
         except ToutiaoPublishError as exc:
             screenshot_asset_id = _store_failure_screenshot(db, task.id, next_record.id, exc.screenshot)
             next_record.status = "failed"
@@ -203,6 +241,7 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
         db.commit()  # 每条 record 完成后立即落库，UI 可实时看进度
 
 
+# 手动确认发布结果（仅对 waiting_manual_publish 状态的记录有效）
 def manual_confirm_record(
     db: Session,
     record: PublishRecord,
@@ -232,6 +271,7 @@ def manual_confirm_record(
     return record
 
 
+# 重试失败的发布记录
 def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
     if record.status != "failed":
         raise ValueError(f"Only failed records can be retried: {record.status}")
@@ -247,7 +287,7 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
     db.add(new_record)
 
     task = get_task(db, record.task_id)
-    if task is not None and task.status in {"failed", "partial_failed", "succeeded"}:
+    if task is not None and task.status in CAN_RETRY_TASK_STATUSES:
         task.status = "running"
         task.finished_at = None
         _add_log(db, task.id, None, "info", f"Task reopened for retry of record {record.id}")
@@ -256,10 +296,12 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
     return new_record
 
 
+# 为记录构建发布器实例（由子类或 mock 重写）
 def build_publisher_for_record(record: PublishRecord) -> ToutiaoPublisher:
     return ToutiaoPublisher()
 
 
+# 存储失败截图并返回资源 ID
 def _store_failure_screenshot(
     db: Session,
     task_id: int,
@@ -277,6 +319,7 @@ def _store_failure_screenshot(
     return stored.asset.id
 
 
+# 取消任务
 def cancel_task(db: Session, task: PublishTask) -> PublishTask:
     if task.status in TERMINAL_TASK_STATUSES:
         return task
@@ -294,14 +337,15 @@ def cancel_task(db: Session, task: PublishTask) -> PublishTask:
     return get_task(db, task.id) or task
 
 
+# 根据所有记录的状态聚合计算任务级状态
 def _aggregate_task_status(task: PublishTask, records: list[PublishRecord]) -> None:
     now = utcnow()
     if not records:
         task.status = "failed"
         task.finished_at = now
         return
-    if any(r.status in {"pending", "running"} for r in records):
-        return
+    if any(r.status in {"pending", "running", "waiting_manual_publish"} for r in records):
+        return  # 任务尚未结束，保持当前状态
     if all(r.status == "succeeded" for r in records):
         task.status = "succeeded"
         task.finished_at = now
@@ -310,6 +354,7 @@ def _aggregate_task_status(task: PublishTask, records: list[PublishRecord]) -> N
         task.finished_at = now
 
 
+# 添加任务日志
 def _add_log(
     db: Session,
     task_id: int,
@@ -329,6 +374,7 @@ def _add_log(
     )
 
 
+# 校验任务输入参数
 def _validated_task_inputs(db: Session, payload: TaskCreate) -> TaskInputs:
     if payload.task_type not in VALID_TASK_TYPES:
         raise ValueError(f"Invalid task_type: {payload.task_type}")
@@ -347,6 +393,7 @@ def _validated_task_inputs(db: Session, payload: TaskCreate) -> TaskInputs:
     return TaskInputs(platform=platform, accounts=ordered_accounts, article_ids=article_ids)
 
 
+# 构建文章-账号分配列表（轮询算法）
 def _build_assignments(article_ids: list[int], accounts: list[tuple[int, Account]]) -> list[AssignmentItem]:
     return [
         AssignmentItem(
@@ -359,6 +406,7 @@ def _build_assignments(article_ids: list[int], accounts: list[tuple[int, Account
     ]
 
 
+# 校验并排序账号列表
 def _validated_accounts(
     db: Session,
     platform_id: int,
@@ -394,11 +442,13 @@ def _validated_accounts(
     return ordered_accounts
 
 
+# 校验文章 ID 不重复
 def _validate_unique_articles(article_ids: list[int]) -> None:
     if len(article_ids) != len(set(article_ids)):
         raise ValueError("Duplicate article_id in task assignment")
 
 
+# 根据任务类型获取文章 ID 列表
 def _article_ids_for_task(db: Session, payload: TaskCreate) -> list[int]:
     if payload.task_type == "single":
         if payload.article_id is None:
@@ -426,6 +476,7 @@ def _article_ids_for_task(db: Session, payload: TaskCreate) -> list[int]:
     return [item.article_id for item in items]
 
 
+# 将 ORM PublishTask 转为响应体
 def to_task_read(task: PublishTask) -> TaskRead:
     accounts = sorted(task.accounts, key=lambda item: item.sort_order)
     return TaskRead(
@@ -454,6 +505,7 @@ def to_task_read(task: PublishTask) -> TaskRead:
     )
 
 
+# 将 ORM PublishRecord 转为响应体
 def to_record_read(record: PublishRecord) -> PublishRecordRead:
     return PublishRecordRead(
         id=record.id,
@@ -470,6 +522,7 @@ def to_record_read(record: PublishRecord) -> PublishRecordRead:
     )
 
 
+# 将 ORM TaskLog 转为响应体
 def to_log_read(log: TaskLog) -> TaskLogRead:
     return TaskLogRead(
         id=log.id,

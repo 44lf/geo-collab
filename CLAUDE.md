@@ -77,6 +77,7 @@ React 19 + Vite + TypeScript. Single large component in `web/src/main.tsx`. Tipt
 - `geo.db` — SQLite database
 - `assets/` — uploaded images
 - `browser_states/toutiao/<account_key>/` — Playwright persistent profile + `storage_state.json`
+- `exports/` — account auth export ZIPs
 - `logs/launcher.log`
 
 ### PyInstaller Bundling
@@ -99,6 +100,16 @@ React 19 + Vite + TypeScript. Single large component in `web/src/main.tsx`. Tipt
 
 **When modifying Playwright selectors:** Use `playwright-cli` (the agent-operable browser CLI tool, `@playwright/cli`) to inspect the live page and get real `ref=eXXX` element handles. Do not guess selectors — 头条号's DOM changes frequently. Run commands like `open`, `snapshot`, `click`, `screenshot` via playwright-cli to verify actual page structure before writing code.
 
+## Task Execution Model
+
+Tasks run **synchronously in the request thread** — `POST /api/tasks/{id}/execute` blocks until all `PublishRecord`s complete. A `threading.Lock` per task (keyed by task ID) prevents concurrent runs. There is no async worker or queue.
+
+**`stop_before_publish=true` flow:** The publisher clicks "预览并发布" but skips "确认发布", leaving the record in `waiting_manual_publish` status. Call `POST /api/publish-records/{id}/manual-confirm` with `{"outcome": "succeeded"|"failed", ...}` to resolve it and advance the task to its next pending record.
+
+**Error convention:** `ValueError` raised in any service is caught globally in `create_app()` and returned as HTTP 400. This is the intended pattern — raise `ValueError` for all client-visible validation errors.
+
 ## Testing
 
 Tests use `pytest` with `httpx.AsyncClient` or `TestClient`. Test utilities in `server/tests/utils.py` build an in-memory SQLite app and monkeypatch `GEO_DATA_DIR` to a temp dir. Tests cover all API routes; browser automation is not unit-tested (use diagnostic scripts in `scripts/` instead).
+
+To fake the Playwright publisher in task tests, monkeypatch `server.app.services.tasks.build_publisher_for_record` to return a stub with a `publish_article(article, account, stop_before_publish)` method.

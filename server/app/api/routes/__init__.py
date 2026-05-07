@@ -1,2 +1,2 @@
-"""API route modules."""
+"""API 路由模块 — 每个模块对应一组 /api/ 路径的端点"""
 

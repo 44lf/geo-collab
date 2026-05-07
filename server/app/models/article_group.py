@@ -7,6 +7,7 @@ from server.app.core.time import utcnow
 from server.app.db.base import Base
 
 
+# 文章分组：用于批量发布任务，一个分组包含多篇文章
 class ArticleGroup(Base):
     __tablename__ = "article_groups"
 
@@ -20,6 +21,7 @@ class ArticleGroup(Base):
     publish_tasks = relationship("PublishTask", back_populates="group")
 
 
+# 分组-文章关联表，带排序字段
 class ArticleGroupItem(Base):
     __tablename__ = "article_group_items"
     __table_args__ = (UniqueConstraint("group_id", "article_id", name="uq_article_group_items_group_article"),)

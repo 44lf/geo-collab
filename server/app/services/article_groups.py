@@ -12,6 +12,7 @@ from server.app.schemas.article_group import (
 )
 
 
+# 获取单个分组（含文章列表）
 def get_group(db: Session, group_id: int) -> ArticleGroup | None:
     stmt = (
         select(ArticleGroup)
@@ -21,11 +22,13 @@ def get_group(db: Session, group_id: int) -> ArticleGroup | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
+# 获取所有分组列表
 def list_groups(db: Session) -> list[ArticleGroup]:
     stmt = select(ArticleGroup).options(selectinload(ArticleGroup.items)).order_by(ArticleGroup.updated_at.desc())
     return list(db.execute(stmt).scalars().all())
 
 
+# 创建新分组
 def create_group(db: Session, payload: ArticleGroupCreate) -> ArticleGroup:
     group = ArticleGroup(name=payload.name, description=payload.description)
     db.add(group)
@@ -33,6 +36,7 @@ def create_group(db: Session, payload: ArticleGroupCreate) -> ArticleGroup:
     return get_group(db, group.id) or group
 
 
+# 更新分组信息
 def update_group(db: Session, group: ArticleGroup, payload: ArticleGroupUpdate) -> ArticleGroup:
     update_data = payload.model_dump(exclude_unset=True)
     for field in ("name", "description"):
@@ -43,6 +47,7 @@ def update_group(db: Session, group: ArticleGroup, payload: ArticleGroupUpdate) 
     return get_group(db, group.id) or group
 
 
+# 全量替换分组中的文章列表（先清空再插入）
 def replace_group_items(db: Session, group: ArticleGroup, payload: ArticleGroupItemsUpdate) -> ArticleGroup:
     seen: set[int] = set()
     article_ids: list[int] = []
@@ -72,11 +77,13 @@ def replace_group_items(db: Session, group: ArticleGroup, payload: ArticleGroupI
     return get_group(db, group.id) or group
 
 
+# 删除分组
 def delete_group(db: Session, group: ArticleGroup) -> None:
     db.delete(group)
     db.commit()
 
 
+# 将 ORM ArticleGroup 转为响应体
 def to_group_read(group: ArticleGroup) -> ArticleGroupRead:
     items = sorted(group.items, key=lambda item: item.sort_order)
     return ArticleGroupRead(

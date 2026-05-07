@@ -8,6 +8,7 @@ from server.app.services.tasks import get_record, manual_confirm_record, retry_r
 router = APIRouter()
 
 
+# 手动确认发布结果（当任务设置了 stop_before_publish=True 时使用）
 @router.post("/{record_id}/manual-confirm", response_model=PublishRecordRead)
 def manual_confirm_record_endpoint(
     record_id: int,
@@ -20,6 +21,7 @@ def manual_confirm_record_endpoint(
     return to_record_read(manual_confirm_record(db, record, payload.outcome, payload.publish_url, payload.error_message))
 
 
+# 重试失败的发布记录
 @router.post("/{record_id}/retry", response_model=PublishRecordRead)
 def retry_record_endpoint(record_id: int, db: Session = Depends(get_db)) -> PublishRecordRead:
     record = get_record(db, record_id)
