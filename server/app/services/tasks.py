@@ -30,7 +30,7 @@ from server.app.schemas.task import (
 
 VALID_TASK_TYPES = {"single", "group_round_robin"}
 TERMINAL_TASK_STATUSES = {"succeeded", "partial_failed", "failed", "cancelled"}
-ACTIVE_RECORD_STATUSES = {"running", "waiting_manual_publish"}
+ACTIVE_RECORD_STATUSES = {"running"}
 
 
 @dataclass(frozen=True)
@@ -189,16 +189,18 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
             continue
 
         try:
-            result = build_publisher_for_record(next_record).fill_article(article, account)
-            next_record.status = "waiting_manual_publish"
+            result = build_publisher_for_record(next_record).publish_article(article, account)
+            next_record.status = "succeeded"
+            next_record.publish_url = result.url or None
+            next_record.finished_at = utcnow()
             _add_log(db, task.id, next_record.id, "info", result.message)
-            return
         except ToutiaoPublishError as exc:
             screenshot_asset_id = _store_failure_screenshot(db, task.id, next_record.id, exc.screenshot)
             next_record.status = "failed"
             next_record.error_message = str(exc)
             next_record.finished_at = utcnow()
             _add_log(db, task.id, next_record.id, "error", str(exc), screenshot_asset_id=screenshot_asset_id)
+        db.commit()  # 每条 record 完成后立即落库，UI 可实时看进度
 
 
 def manual_confirm_record(
@@ -284,7 +286,7 @@ def cancel_task(db: Session, task: PublishTask) -> PublishTask:
     task.status = "cancelled"
     task.finished_at = now
     for record in records:
-        if record.status in {"pending", "running", "waiting_manual_publish"}:
+        if record.status in {"pending", "running"}:
             record.status = "cancelled"
             record.finished_at = now
     _add_log(db, task.id, None, "warn", "Task cancelled")
@@ -298,7 +300,7 @@ def _aggregate_task_status(task: PublishTask, records: list[PublishRecord]) -> N
         task.status = "failed"
         task.finished_at = now
         return
-    if any(r.status in {"pending", "running", "waiting_manual_publish"} for r in records):
+    if any(r.status in {"pending", "running"} for r in records):
         return
     if all(r.status == "succeeded" for r in records):
         task.status = "succeeded"

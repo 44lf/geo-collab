@@ -205,7 +205,13 @@ function App() {
   return (
     <main className="shell">
       <aside className="sidebar">
-        <div className="brand">Geo 协作平台</div>
+        <div className="brand">
+          <div className="brandMark" />
+          <div className="brandBody">
+            <span className="brandName">Geo</span>
+            <span className="brandSub">协作平台</span>
+          </div>
+        </div>
         <nav className="nav">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -216,18 +222,21 @@ function App() {
                 type="button"
                 onClick={() => setActiveNav(item.key)}
               >
-                <Icon size={18} />
+                <Icon size={17} />
                 <span>{item.label}</span>
+                <span className="navDot" />
               </button>
             );
           })}
         </nav>
       </aside>
       <section className="workspace">
-        {activeNav === "content" ? <ContentWorkspace /> : null}
-        {activeNav === "media" ? <MediaWorkspace /> : null}
-        {activeNav === "tasks" ? <TasksWorkspace /> : null}
-        {activeNav === "system" ? <SystemWorkspace /> : null}
+        <div key={activeNav} className="workspaceInner">
+          {activeNav === "content" ? <ContentWorkspace /> : null}
+          {activeNav === "media" ? <MediaWorkspace /> : null}
+          {activeNav === "tasks" ? <TasksWorkspace /> : null}
+          {activeNav === "system" ? <SystemWorkspace /> : null}
+        </div>
       </section>
     </main>
   );
@@ -848,13 +857,13 @@ function SystemWorkspace() {
       </header>
 
       {error ? (
-        <div className="panel" style={{ borderColor: "#fecaca", color: "#991b1b" }}>{error}</div>
+        <div className="panel" style={{ borderColor: "var(--red-soft)", color: "var(--red)" }}>{error}</div>
       ) : null}
 
       {status ? (
         <div style={{ display: "grid", gap: 16, maxWidth: 760 }}>
           <div className="panel">
-            <h2 style={{ marginBottom: 14 }}>服务</h2>
+            <h2 style={{ marginBottom: 16 }}>服务</h2>
             <dl className="statGrid">
               <dt>状态</dt>
               <dd><span className="badge succeeded">✓ {status.service}</span></dd>
@@ -870,7 +879,7 @@ function SystemWorkspace() {
           </div>
 
           <div className="panel">
-            <h2 style={{ marginBottom: 14 }}>数据</h2>
+            <h2 style={{ marginBottom: 16 }}>数据</h2>
             <dl className="statGrid">
               <dt>文章</dt>
               <dd>{status.article_count} 篇</dd>
@@ -888,7 +897,7 @@ function SystemWorkspace() {
           </div>
 
           <div className="panel">
-            <h2 style={{ marginBottom: 14 }}>路径</h2>
+            <h2 style={{ marginBottom: 16 }}>路径</h2>
             <dl className="statGrid">
               <dt>数据目录</dt>
               <dd style={{ fontFamily: "monospace", fontSize: 13, wordBreak: "break-all" }}>{status.data_dir}</dd>
@@ -924,7 +933,6 @@ function TasksWorkspace() {
   const [formGroupId, setFormGroupId] = useState<number | null>(null);
   const [formAccountIds, setFormAccountIds] = useState<number[]>([]);
   const [preview, setPreview] = useState<AssignmentPreview | null>(null);
-  const [recordUrls, setRecordUrls] = useState<Record<number, string>>({});
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
   const taskIsRunning = selectedTask?.status === "running";
@@ -969,7 +977,6 @@ function TasksWorkspace() {
 
   async function selectTask(taskId: number) {
     setSelectedTaskId(taskId);
-    setRecordUrls({});
     await refreshDetail(taskId);
   }
 
@@ -1057,26 +1064,6 @@ function TasksWorkspace() {
       setNotice("已取消");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "取消失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function confirmRecord(recordId: number, outcome: "succeeded" | "failed", value: string) {
-    setLoading(true);
-    try {
-      await api<PublishRecord>(`/api/publish-records/${recordId}/manual-confirm`, {
-        method: "POST",
-        body: JSON.stringify({
-          outcome,
-          publish_url: outcome === "succeeded" ? value || null : null,
-          error_message: outcome === "failed" ? value || null : null,
-        }),
-      });
-      if (selectedTaskId) await refreshDetail(selectedTaskId);
-      setNotice("已确认");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "确认失败");
     } finally {
       setLoading(false);
     }
@@ -1261,12 +1248,12 @@ function TasksWorkspace() {
               ) : null}
             </div>
 
-            <h2 style={{ borderTop: "1px solid #e2e8f0", paddingTop: 14, marginBottom: 10 }}>发布记录</h2>
+            <hr className="sectionDivider" />
+            <h2 style={{ marginBottom: 12 }}>发布记录</h2>
             <div style={{ display: "grid", gap: 10, marginBottom: 20 }}>
               {records.map((record) => {
                 const article = articleMap[record.article_id];
                 const account = accountMap[record.account_id];
-                const urlVal = recordUrls[record.id] ?? "";
                 return (
                   <div key={record.id} className="recordItem">
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
@@ -1290,35 +1277,6 @@ function TasksWorkspace() {
                       <small style={{ color: "#dc2626" }}>{record.error_message}</small>
                     ) : null}
 
-                    {record.status === "waiting_manual_publish" ? (
-                      <div className="confirmRow">
-                        <input
-                          placeholder="发布链接（可选）"
-                          value={urlVal}
-                          onChange={(e) => setRecordUrls((prev) => ({ ...prev, [record.id]: e.target.value }))}
-                        />
-                        <button
-                          className="primaryButton"
-                          type="button"
-                          disabled={loading}
-                          onClick={() => void confirmRecord(record.id, "succeeded", urlVal)}
-                        >
-                          标记成功
-                        </button>
-                        <button
-                          className="dangerButton"
-                          type="button"
-                          disabled={loading}
-                          onClick={() => {
-                            const reason = window.prompt("失败原因（可选）") ?? "";
-                            void confirmRecord(record.id, "failed", reason);
-                          }}
-                        >
-                          标记失败
-                        </button>
-                      </div>
-                    ) : null}
-
                     {record.status === "failed" ? (
                       <button
                         className="secondaryButton"
@@ -1337,7 +1295,8 @@ function TasksWorkspace() {
               {records.length === 0 ? <p className="emptyText">暂无发布记录</p> : null}
             </div>
 
-            <h2 style={{ borderTop: "1px solid #e2e8f0", paddingTop: 14, marginBottom: 10 }}>执行日志</h2>
+            <hr className="sectionDivider" />
+            <h2 style={{ marginBottom: 12 }}>执行日志</h2>
             <div className="logList">
               {logs.map((log) => (
                 <div key={log.id} className="logItem">

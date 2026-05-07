@@ -6,13 +6,13 @@ from server.tests.utils import build_test_app
 class FakePublisher:
     def __init__(self, result: PublishFillResult | None = None, error: ToutiaoPublishError | None = None):
         self.result = result or PublishFillResult(
-            url="https://mp.toutiao.com/profile_v4/graphic/publish",
-            title="publish",
-            message="Article filled and waiting for manual publish",
+            url="https://mp.toutiao.com/article/123456",
+            title="test article",
+            message="发布成功: https://mp.toutiao.com/article/123456",
         )
         self.error = error
 
-    def fill_article(self, article, account):
+    def publish_article(self, article, account):
         if self.error is not None:
             raise self.error
         return self.result
@@ -254,7 +254,7 @@ def test_create_task_rejects_invalid_or_expired_account(monkeypatch):
         test_app.cleanup()
 
 
-def test_execute_task_starts_first_record_and_writes_logs(monkeypatch):
+def test_execute_single_task_auto_succeeds(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
 
@@ -278,23 +278,22 @@ def test_execute_task_starts_first_record_and_writes_logs(monkeypatch):
         executed = client.post(f"/api/tasks/{task['id']}/execute")
 
         assert executed.status_code == 200
-        assert executed.json()["status"] == "running"
+        assert executed.json()["status"] == "succeeded"
         assert executed.json()["started_at"] is not None
+        assert executed.json()["finished_at"] is not None
 
         records = client.get(f"/api/tasks/{task['id']}/records").json()
-        assert [record["status"] for record in records] == ["waiting_manual_publish"]
-        assert records[0]["started_at"] is not None
+        assert records[0]["status"] == "succeeded"
+        assert records[0]["publish_url"] == "https://mp.toutiao.com/article/123456"
+        assert records[0]["finished_at"] is not None
 
-        logs = client.get(f"/api/tasks/{task['id']}/logs")
-        assert logs.status_code == 200
-        assert [log["level"] for log in logs.json()] == ["info", "info", "info"]
-        assert logs.json()[0]["record_id"] is None
-        assert logs.json()[1]["record_id"] == records[0]["id"]
+        logs = client.get(f"/api/tasks/{task['id']}/logs").json()
+        assert any(log["level"] == "info" and "发布成功" in log["message"] for log in logs)
     finally:
         test_app.cleanup()
 
 
-def test_group_task_execution_is_serial_and_cancel_marks_unfinished_records(monkeypatch):
+def test_execute_group_task_auto_completes_all_records(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
 
@@ -308,8 +307,8 @@ def test_group_task_execution_is_serial_and_cancel_marks_unfinished_records(monk
         article_3 = create_article(client, "Article C")
         account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
 
-        group = client.post("/api/article-groups", json={"name": "Serial Batch"}).json()
-        update = client.put(
+        group = client.post("/api/article-groups", json={"name": "Batch"}).json()
+        client.put(
             f"/api/article-groups/{group['id']}/items",
             json={
                 "items": [
@@ -319,7 +318,6 @@ def test_group_task_execution_is_serial_and_cancel_marks_unfinished_records(monk
                 ]
             },
         )
-        assert update.status_code == 200
         task = client.post(
             "/api/tasks",
             json={
@@ -330,35 +328,41 @@ def test_group_task_execution_is_serial_and_cancel_marks_unfinished_records(monk
             },
         ).json()
 
-        first_execute = client.post(f"/api/tasks/{task['id']}/execute")
-        assert first_execute.status_code == 200
-        records_after_execute = client.get(f"/api/tasks/{task['id']}/records").json()
-        assert [record["status"] for record in records_after_execute] == [
-            "waiting_manual_publish",
-            "pending",
-            "pending",
-        ]
+        executed = client.post(f"/api/tasks/{task['id']}/execute")
+        assert executed.status_code == 200
+        assert executed.json()["status"] == "succeeded"
 
-        second_execute = client.post(f"/api/tasks/{task['id']}/execute")
-        assert second_execute.status_code == 200
-        records_after_second_execute = client.get(f"/api/tasks/{task['id']}/records").json()
-        assert [record["status"] for record in records_after_second_execute] == [
-            "waiting_manual_publish",
-            "pending",
-            "pending",
-        ]
+        records = client.get(f"/api/tasks/{task['id']}/records").json()
+        assert [record["status"] for record in records] == ["succeeded", "succeeded", "succeeded"]
+        assert all(record["publish_url"] is not None for record in records)
+    finally:
+        test_app.cleanup()
+
+
+def test_cancel_pending_task_before_execute(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    try:
+        article_id = create_article(client, "Article A")
+        account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
+        task = client.post(
+            "/api/tasks",
+            json={
+                "name": "single publish",
+                "task_type": "single",
+                "article_id": article_id,
+                "accounts": [{"account_id": account_id}],
+            },
+        ).json()
 
         cancelled = client.post(f"/api/tasks/{task['id']}/cancel")
         assert cancelled.status_code == 200
         assert cancelled.json()["status"] == "cancelled"
         assert cancelled.json()["finished_at"] is not None
 
-        records_after_cancel = client.get(f"/api/tasks/{task['id']}/records").json()
-        assert [record["status"] for record in records_after_cancel] == ["cancelled", "cancelled", "cancelled"]
-
-        logs = client.get(f"/api/tasks/{task['id']}/logs").json()
-        assert logs[-1]["level"] == "warn"
-        assert logs[-1]["message"] == "Task cancelled"
+        records = client.get(f"/api/tasks/{task['id']}/records").json()
+        assert records[0]["status"] == "cancelled"
     finally:
         test_app.cleanup()
 
@@ -437,104 +441,11 @@ def test_publisher_failure_in_group_task_auto_advances_to_next_record(monkeypatc
 
         executed = client.post(f"/api/tasks/{task['id']}/execute")
         assert executed.status_code == 200
-        assert executed.json()["status"] == "running"
+        assert executed.json()["status"] == "partial_failed"
 
         records = client.get(f"/api/tasks/{task['id']}/records").json()
         assert records[0]["status"] == "failed"
-        assert records[1]["status"] == "waiting_manual_publish"
-    finally:
-        test_app.cleanup()
-
-
-def test_manual_confirm_succeeded_finalizes_single_task(monkeypatch):
-    test_app = build_test_app(monkeypatch)
-    client = test_app.client
-
-    try:
-        monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
-            lambda record: FakePublisher(),
-        )
-        article_id = create_article(client, "Article A")
-        account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
-        task = client.post(
-            "/api/tasks",
-            json={
-                "name": "single publish",
-                "task_type": "single",
-                "article_id": article_id,
-                "accounts": [{"account_id": account_id}],
-            },
-        ).json()
-        client.post(f"/api/tasks/{task['id']}/execute")
-        records = client.get(f"/api/tasks/{task['id']}/records").json()
-        record_id = records[0]["id"]
-
-        confirmed = client.post(
-            f"/api/publish-records/{record_id}/manual-confirm",
-            json={"outcome": "succeeded", "publish_url": "https://example.com/article"},
-        )
-        assert confirmed.status_code == 200
-        assert confirmed.json()["status"] == "succeeded"
-        assert confirmed.json()["publish_url"] == "https://example.com/article"
-
-        task_after = client.get(f"/api/tasks/{task['id']}").json()
-        assert task_after["status"] == "succeeded"
-    finally:
-        test_app.cleanup()
-
-
-def test_manual_confirm_in_group_task_advances_to_next_record(monkeypatch):
-    test_app = build_test_app(monkeypatch)
-    client = test_app.client
-
-    try:
-        monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
-            lambda record: FakePublisher(),
-        )
-        article_1 = create_article(client, "Article A")
-        article_2 = create_article(client, "Article B")
-        account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
-
-        group = client.post("/api/article-groups", json={"name": "G"}).json()
-        client.put(
-            f"/api/article-groups/{group['id']}/items",
-            json={"items": [{"article_id": article_1, "sort_order": 10}, {"article_id": article_2, "sort_order": 20}]},
-        )
-        task = client.post(
-            "/api/tasks",
-            json={
-                "name": "group publish",
-                "task_type": "group_round_robin",
-                "group_id": group["id"],
-                "accounts": [{"account_id": account_id}],
-            },
-        ).json()
-
-        client.post(f"/api/tasks/{task['id']}/execute")
-        records = client.get(f"/api/tasks/{task['id']}/records").json()
-        assert records[0]["status"] == "waiting_manual_publish"
-        assert records[1]["status"] == "pending"
-
-        client.post(
-            f"/api/publish-records/{records[0]['id']}/manual-confirm",
-            json={"outcome": "succeeded"},
-        )
-
-        records_after = client.get(f"/api/tasks/{task['id']}/records").json()
-        assert records_after[0]["status"] == "succeeded"
-        assert records_after[1]["status"] == "waiting_manual_publish"
-
-        task_mid = client.get(f"/api/tasks/{task['id']}").json()
-        assert task_mid["status"] == "running"
-
-        client.post(
-            f"/api/publish-records/{records[1]['id']}/manual-confirm",
-            json={"outcome": "failed", "error_message": "Upload failed"},
-        )
-        task_final = client.get(f"/api/tasks/{task['id']}").json()
-        assert task_final["status"] == "partial_failed"
+        assert records[1]["status"] == "succeeded"
     finally:
         test_app.cleanup()
 
