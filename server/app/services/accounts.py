@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Any
 import zipfile
 
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.config import get_settings
 from server.app.core.paths import ensure_data_dirs, get_data_dir
 from server.app.core.time import utcnow
-from server.app.models import Account, Platform
+from server.app.models import Account, Platform, PublishRecord, PublishTaskAccount, TaskLog
 from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, AccountRead, ToutiaoLoginRequest
 
 TOUTIAO_HOME = "https://mp.toutiao.com"
@@ -118,20 +118,29 @@ def run_toutiao_browser_check(
             **launch_options(channel, executable_path),
         )
         page = context.pages[0] if context.pages else context.new_page()
-        page.goto(TOUTIAO_HOME, wait_until="domcontentloaded")
+        page.goto(TOUTIAO_HOME, wait_until="domcontentloaded", timeout=60000)
+        # 等 JS 渲染完毕（登录弹窗由 JS 注入，domcontentloaded 时还未出现）
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
 
         # 轮询等待页面加载完毕或超时
         deadline = wait_seconds * 1000
         elapsed = 0
         logged_in = False
         url = page.url
-        title = page.title()
+        title = ""
         while elapsed <= deadline:
             page.wait_for_timeout(1000)
             elapsed += 1000
-            url = page.url
-            title = page.title()
-            body = page.locator("body").inner_text(timeout=3000)
+            try:
+                url = page.url
+                title = page.title()
+                body = page.locator("body").inner_text(timeout=3000)
+            except Exception:
+                # 页面正在跳转，执行上下文暂时不可用，等下一轮
+                continue
             logged_in = detect_login_state_text(url, title, body)
             if logged_in:
                 break
@@ -244,8 +253,16 @@ def relogin_account(db: Session, account: Account, payload: AccountCheckRequest)
     return login_toutiao(db, request)
 
 
-# 删除账号
+# 删除账号（先清除关联记录，避免 NOT NULL FK 约束阻塞）
 def delete_account(db: Session, account: Account) -> None:
+    account_id = account.id
+    db.execute(sa_delete(PublishTaskAccount).where(PublishTaskAccount.account_id == account_id))
+    record_ids = list(
+        db.execute(select(PublishRecord.id).where(PublishRecord.account_id == account_id)).scalars()
+    )
+    if record_ids:
+        db.execute(sa_delete(TaskLog).where(TaskLog.record_id.in_(record_ids)))
+        db.execute(sa_delete(PublishRecord).where(PublishRecord.id.in_(record_ids)))
     db.delete(account)
     db.commit()
 

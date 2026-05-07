@@ -7,6 +7,7 @@ import Link from "@tiptap/extension-link";
 import {
   Bold,
   CheckCircle2,
+  ChevronRight,
   Download,
   FileText,
   Heading1,
@@ -262,7 +263,7 @@ function Placeholder({ title }: { title: string }) {
 function MediaWorkspace() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [displayName, setDisplayName] = useState("头条号账号");
-  const [accountKey, setAccountKey] = useState("chrome-spike");
+  const [accountKey, setAccountKey] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -290,6 +291,8 @@ function MediaWorkspace() {
         }),
       });
       await refreshAccounts();
+      setDisplayName("头条号账号");
+      setAccountKey("");
       setNotice("账号已添加");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "添加账号失败");
@@ -458,6 +461,7 @@ function ContentWorkspace() {
   const [loading, setLoading] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
 
   const editor = useEditor({
     extensions: [
@@ -477,6 +481,33 @@ function ContentWorkspace() {
     () => articles.find((article) => article.id === draft.id) ?? null,
     [articles, draft.id],
   );
+
+  const groupedArticleIdSet = useMemo(() => {
+    const ids = new Set<number>();
+    for (const g of groups) for (const item of g.items) ids.add(item.article_id);
+    return ids;
+  }, [groups]);
+
+  const unifiedList = useMemo(() => {
+    const articleById = Object.fromEntries(articles.map((a) => [a.id, a]));
+    const items: Array<
+      | { type: "article"; article: Article; sortTime: number }
+      | { type: "group"; group: ArticleGroup; sortTime: number }
+    > = [];
+    for (const article of articles) {
+      if (!groupedArticleIdSet.has(article.id)) {
+        items.push({ type: "article", article, sortTime: new Date(article.updated_at).getTime() });
+      }
+    }
+    for (const group of groups) {
+      const times = group.items
+        .map((item) => articleById[item.article_id]?.updated_at)
+        .filter((t): t is string => !!t)
+        .map((t) => new Date(t).getTime());
+      items.push({ type: "group", group, sortTime: times.length ? Math.max(...times) : 0 });
+    }
+    return items.sort((a, b) => b.sortTime - a.sortTime);
+  }, [articles, groups, groupedArticleIdSet]);
 
   async function refreshArticles(nextQuery = query) {
     const params = nextQuery ? `?q=${encodeURIComponent(nextQuery)}` : "";
@@ -577,15 +608,8 @@ function ContentWorkspace() {
       const saved = draft.id
         ? await api<Article>(`/api/articles/${draft.id}`, { method: "PUT", body: JSON.stringify(payload) })
         : await api<Article>("/api/articles", { method: "POST", body: JSON.stringify(payload) });
-      setDraft({
-        id: saved.id,
-        title: saved.title,
-        author: saved.author ?? "",
-        cover_asset_id: saved.cover_asset_id,
-        status: saved.status,
-      });
-      editor.commands.setContent(saved.content_json);
       await refreshArticles();
+      resetDraft();
       setNotice("文章已保存");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "保存失败");
@@ -704,24 +728,86 @@ function ContentWorkspace() {
           </div>
 
           <div className="articleList">
-            {articles.map((article) => (
-              <article className={`articleItem ${article.id === draft.id ? "selected" : ""}`} key={article.id}>
-                <label className="checkLine">
-                  <input
-                    checked={selectedArticleIds.includes(article.id)}
-                    type="checkbox"
-                    onChange={() => toggleSelectedArticle(article.id)}
-                  />
-                  <span>{article.status}</span>
-                </label>
-                <button type="button" onClick={() => loadArticle(article)}>
-                  <strong>{article.title}</strong>
-                  <span>{article.author || "未填写作者"}</span>
-                  <small>{new Date(article.updated_at).toLocaleString()}</small>
-                </button>
-              </article>
-            ))}
-            {articles.length === 0 ? <p className="emptyText">暂无文章</p> : null}
+            {unifiedList.map((item) => {
+              if (item.type === "article") {
+                const { article } = item;
+                return (
+                  <article className={`articleItem ${article.id === draft.id ? "selected" : ""}`} key={`a-${article.id}`}>
+                    <label className="checkLine">
+                      <input
+                        checked={selectedArticleIds.includes(article.id)}
+                        type="checkbox"
+                        onChange={() => toggleSelectedArticle(article.id)}
+                      />
+                      <span>{article.status}</span>
+                    </label>
+                    <button type="button" onClick={() => loadArticle(article)}>
+                      <strong>{article.title}</strong>
+                      <span>{article.author || "未填写作者"}</span>
+                      <small>{new Date(article.updated_at).toLocaleString()}</small>
+                    </button>
+                  </article>
+                );
+              }
+              const { group } = item;
+              const isExpanded = expandedGroupIds.has(group.id);
+              const groupArticles = group.items
+                .slice()
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((gi) => articles.find((a) => a.id === gi.article_id))
+                .filter((a): a is Article => a !== undefined);
+              return (
+                <div className="groupRowItem" key={`g-${group.id}`}>
+                  <div className={`groupRowHeader ${group.id === editingGroupId ? "selected" : ""}`}>
+                    <button
+                      className="groupRowToggle"
+                      type="button"
+                      onClick={() =>
+                        setExpandedGroupIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(group.id)) next.delete(group.id);
+                          else next.add(group.id);
+                          return next;
+                        })
+                      }
+                    >
+                      <ChevronRight size={13} className={`groupRowChevron${isExpanded ? " open" : ""}`} />
+                      <span className="groupRowName">{group.name}</span>
+                      <small className="groupRowCount">{group.items.length} 篇</small>
+                    </button>
+                    <button className="groupRowEdit" type="button" onClick={() => loadGroup(group)}>
+                      编辑
+                    </button>
+                  </div>
+                  {isExpanded ? (
+                    <div className="groupRowArticles">
+                      {groupArticles.map((article) => (
+                        <article
+                          className={`articleItem ${article.id === draft.id ? "selected" : ""}`}
+                          key={article.id}
+                        >
+                          <label className="checkLine">
+                            <input
+                              checked={selectedArticleIds.includes(article.id)}
+                              type="checkbox"
+                              onChange={() => toggleSelectedArticle(article.id)}
+                            />
+                            <span>{article.status}</span>
+                          </label>
+                          <button type="button" onClick={() => loadArticle(article)}>
+                            <strong>{article.title}</strong>
+                            <span>{article.author || "未填写作者"}</span>
+                            <small>{new Date(article.updated_at).toLocaleString()}</small>
+                          </button>
+                        </article>
+                      ))}
+                      {groupArticles.length === 0 ? <p className="emptyText">分组暂无文章</p> : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {unifiedList.length === 0 ? <p className="emptyText">暂无文章</p> : null}
           </div>
 
           <section className="groupBox">
@@ -742,15 +828,6 @@ function ContentWorkspace() {
                 </button>
               </div>
             ) : null}
-            <div className="groupList">
-              {groups.map((group) => (
-                <button className={`groupItem ${group.id === editingGroupId ? "selected" : ""}`} key={group.id} type="button" onClick={() => loadGroup(group)}>
-                  <span>{group.name}</span>
-                  <small>{group.items.length} 篇</small>
-                </button>
-              ))}
-              {groups.length === 0 ? <p className="emptyText">暂无分组</p> : null}
-            </div>
           </section>
         </aside>
 
@@ -1003,6 +1080,7 @@ function TasksWorkspace() {
           article_id: formType === "single" ? formArticleId : null,
           group_id: formType === "group_round_robin" ? formGroupId : null,
           accounts: formAccountIds.map((id, index) => ({ account_id: id, sort_order: index })),
+          stop_before_publish: false,
         }),
       });
       setShowCreateForm(false);
@@ -1073,10 +1151,29 @@ function TasksWorkspace() {
     setLoading(true);
     try {
       await api<PublishRecord>(`/api/publish-records/${recordId}/retry`, { method: "POST" });
-      if (selectedTaskId) await refreshDetail(selectedTaskId);
-      setNotice("已创建重试记录");
+      if (selectedTaskId) {
+        await api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" });
+        await refreshDetail(selectedTaskId);
+      }
+      setNotice("重试已启动");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "重试失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function manualConfirm(recordId: number, outcome: "succeeded" | "failed") {
+    setLoading(true);
+    try {
+      await api<PublishRecord>(`/api/publish-records/${recordId}/manual-confirm`, {
+        method: "POST",
+        body: JSON.stringify({ outcome }),
+      });
+      if (selectedTaskId) await refreshDetail(selectedTaskId);
+      setNotice(outcome === "succeeded" ? "已标记为发布成功" : "已标记为发布失败");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "操作失败");
     } finally {
       setLoading(false);
     }
@@ -1277,7 +1374,7 @@ function TasksWorkspace() {
                       <small style={{ color: "#dc2626" }}>{record.error_message}</small>
                     ) : null}
 
-                    {record.status === "failed" ? (
+                    {record.status === "failed" && !records.some((r) => r.retry_of_record_id === record.id) ? (
                       <button
                         className="secondaryButton"
                         type="button"
@@ -1288,6 +1385,27 @@ function TasksWorkspace() {
                         <RefreshCw size={13} />
                         重试
                       </button>
+                    ) : null}
+                    {record.status === "waiting_manual_publish" ? (
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          className="primaryButton"
+                          type="button"
+                          disabled={loading}
+                          onClick={() => void manualConfirm(record.id, "succeeded")}
+                        >
+                          <CheckCircle2 size={13} />
+                          已发布
+                        </button>
+                        <button
+                          className="dangerButton"
+                          type="button"
+                          disabled={loading}
+                          onClick={() => void manualConfirm(record.id, "failed")}
+                        >
+                          发布失败
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 );

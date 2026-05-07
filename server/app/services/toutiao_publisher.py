@@ -63,7 +63,7 @@ class ToutiaoPublisher:
         page = context.pages[0] if context.pages else context.new_page()
         try:
             # 导航到发布页面，依次执行各步骤
-            page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded")
+            page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(self.wait_ms)
             self._ensure_publish_page(page)
             self._close_ai_drawer(page)
