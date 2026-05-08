@@ -12,6 +12,7 @@ class TaskAccountInput(BaseModel):
 # 任务创建请求体
 class TaskCreate(BaseModel):
     name: str = Field(min_length=1, max_length=300)
+    client_request_id: str | None = Field(default=None, max_length=80)
     task_type: str  # single / group_round_robin
     article_id: int | None = None  # 单篇任务时必填
     group_id: int | None = None  # 分组轮询时必填

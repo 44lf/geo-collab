@@ -9,11 +9,9 @@ import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
-import { FixedSizeList as VirtualList } from "react-window";
-import { Plus, Save, Search, Trash2, Upload, ChevronRight } from "lucide-react";
-import { api, assetSrc, countWords, emptyDoc } from "../../api/client";
-import type { Article, ArticleGroup, Asset, Draft } from "../../types";
-import { ITEM_HEIGHT } from "../../types";
+import { Plus, Save, Search, Trash2, Upload, ChevronRight, X } from "lucide-react";
+import { api, assetSrc, countWords, emptyDoc, newClientRequestId, singleFlight, withAssetToken } from "../../api/client";
+import type { Article, ArticleGroup, ArticleSummary, Asset, Draft } from "../../types";
 import { EditorToolbar } from "../../components/editor/EditorToolbar";
 import { ArticleListItem } from "../../components/ArticleListItem";
 
@@ -24,6 +22,7 @@ function makeEmptyDraft(): Draft {
     author: "",
     cover_asset_id: null,
     status: "draft",
+    version: null,
   };
 }
 
@@ -121,33 +120,30 @@ const CustomImage = Image.extend({
   },
 });
 
+const LIST_PAGE_SIZE = 20;
+const ARTICLE_FETCH_LIMIT = 200;
+
+type UnifiedListItem =
+  | { type: "article"; article: ArticleSummary; sortTime: number }
+  | { type: "group"; group: ArticleGroup; sortTime: number };
+
 export function ContentWorkspace() {
-  const [articles, setArticles] = useState<Article[]>([]);
+  const [articles, setArticles] = useState<ArticleSummary[]>([]);
   const [groups, setGroups] = useState<ArticleGroup[]>([]);
+  const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [selectedArticleIds, setSelectedArticleIds] = useState<number[]>([]);
   const [query, setQuery] = useState("");
+  const [articlePage, setArticlePage] = useState(0);
   const [draft, setDraft] = useState<Draft>(makeEmptyDraft);
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
+  const [groupPickerArticle, setGroupPickerArticle] = useState<ArticleSummary | null>(null);
+  const [groupPickerSelectedId, setGroupPickerSelectedId] = useState<number | null>(null);
 
   const pasteImageRef = useRef<(file: File) => void>(() => {});
-  const listContainerRef = useRef<HTMLDivElement>(null);
-  const [listHeight, setListHeight] = useState(400);
-
-  useEffect(() => {
-    function measure() {
-      if (listContainerRef.current) {
-        setListHeight(listContainerRef.current.offsetHeight);
-      }
-    }
-    measure();
-    const observer = new ResizeObserver(measure);
-    if (listContainerRef.current) observer.observe(listContainerRef.current);
-    return () => observer.disconnect();
-  }, []);
 
   const editor = useEditor({
     extensions: [
@@ -180,11 +176,6 @@ export function ContentWorkspace() {
     },
   });
 
-  const selectedArticle = useMemo(
-    () => articles.find((article) => article.id === draft.id) ?? null,
-    [articles, draft.id],
-  );
-
   const groupedArticleIdSet = useMemo(() => {
     const ids = new Set<number>();
     for (const g of groups) for (const item of g.items) ids.add(item.article_id);
@@ -193,35 +184,41 @@ export function ContentWorkspace() {
 
   const unifiedList = useMemo(() => {
     const articleById = Object.fromEntries(articles.map((a) => [a.id, a]));
-    const items: Array<
-      | { type: "article"; article: Article; sortTime: number }
-      | { type: "group"; group: ArticleGroup; sortTime: number }
-    > = [];
+    const items: UnifiedListItem[] = [];
     for (const article of articles) {
       if (!groupedArticleIdSet.has(article.id)) {
-        items.push({ type: "article", article, sortTime: new Date(article.updated_at).getTime() });
+        items.push({ type: "article", article, sortTime: new Date(article.created_at).getTime() });
       }
     }
     for (const group of groups) {
-      const times = group.items
-        .map((item) => articleById[item.article_id]?.updated_at)
-        .filter((t): t is string => !!t)
-        .map((t) => new Date(t).getTime());
-      items.push({ type: "group", group, sortTime: times.length ? Math.max(...times) : 0 });
+      if (!query || group.name.toLowerCase().includes(query.toLowerCase()) || group.items.some((item) => articleById[item.article_id])) {
+        items.push({ type: "group", group, sortTime: new Date(group.created_at).getTime() });
+      }
     }
     return items.sort((a, b) => b.sortTime - a.sortTime);
-  }, [articles, groups, groupedArticleIdSet]);
+  }, [articles, groups, groupedArticleIdSet, query]);
 
-  const freeArticles = useMemo(() => {
-    return articles
-      .filter((a) => !groupedArticleIdSet.has(a.id))
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-  }, [articles, groupedArticleIdSet]);
+  const totalArticlePages = Math.max(1, Math.ceil(unifiedList.length / LIST_PAGE_SIZE));
+  const pagedUnifiedList = unifiedList.slice(articlePage * LIST_PAGE_SIZE, (articlePage + 1) * LIST_PAGE_SIZE);
+  const articleById = useMemo(() => Object.fromEntries(articles.map((a) => [a.id, a])), [articles]);
 
-  async function refreshArticles(nextQuery = query) {
-    const params = nextQuery ? `?q=${encodeURIComponent(nextQuery)}` : "";
-    const data = await api<Article[]>(`/api/articles${params}`);
-    setArticles(data);
+  useEffect(() => {
+    if (articlePage >= totalArticlePages) {
+      setArticlePage(totalArticlePages - 1);
+    }
+  }, [articlePage, totalArticlePages]);
+
+  async function refreshArticles(nextQuery = query, nextPage = articlePage) {
+    const allArticles: ArticleSummary[] = [];
+    for (let skip = 0; ; skip += ARTICLE_FETCH_LIMIT) {
+      const params = new URLSearchParams({ skip: String(skip), limit: String(ARTICLE_FETCH_LIMIT) });
+      if (nextQuery) params.set("q", nextQuery);
+      const batch = await api<ArticleSummary[]>(`/api/articles?${params.toString()}`);
+      allArticles.push(...batch);
+      if (batch.length < ARTICLE_FETCH_LIMIT) break;
+    }
+    setArticles(allArticles);
+    setArticlePage(nextPage);
   }
 
   async function refreshGroups() {
@@ -236,19 +233,30 @@ export function ContentWorkspace() {
 
   function resetDraft() {
     setDraft(makeEmptyDraft());
+    setSelectedArticle(null);
     editor?.commands.setContent(emptyDoc);
     setSelectedArticleIds([]);
   }
 
-  function loadArticle(article: Article) {
-    setDraft({
-      id: article.id,
-      title: article.title,
-      author: article.author ?? "",
-      cover_asset_id: article.cover_asset_id,
-      status: article.status,
-    });
-    editor?.commands.setContent(article.content_json);
+  async function loadArticle(article: ArticleSummary) {
+    setLoading(true);
+    try {
+      const detail = await api<Article>(`/api/articles/${article.id}`);
+      setSelectedArticle(detail);
+      setDraft({
+        id: detail.id,
+        title: detail.title,
+        author: detail.author ?? "",
+        cover_asset_id: detail.cover_asset_id,
+        status: detail.status,
+        version: detail.version,
+      });
+      editor?.commands.setContent(detail.content_json || emptyDoc);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "加载文章失败");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function uploadAsset(file: File): Promise<Asset> {
@@ -282,7 +290,7 @@ export function ContentWorkspace() {
         .insertContent({
           type: "image",
           attrs: {
-            src: asset.url,
+            src: withAssetToken(asset.url),
             alt: asset.filename,
             title: asset.filename,
             assetId: asset.id,
@@ -314,10 +322,19 @@ export function ContentWorkspace() {
         plain_text: editor.getText(),
         word_count: countWords(editor.getText()),
         status: draft.status,
+        version: draft.version,
       };
       const saved = draft.id
-        ? await api<Article>(`/api/articles/${draft.id}`, { method: "PUT", body: JSON.stringify(payload) })
-        : await api<Article>("/api/articles", { method: "POST", body: JSON.stringify(payload) });
+        ? await singleFlight(`article-save-${draft.id}`, () =>
+            api<Article>(`/api/articles/${draft.id}`, { method: "PUT", body: JSON.stringify(payload) }),
+          )
+        : await singleFlight("article-create", () =>
+            api<Article>("/api/articles", {
+              method: "POST",
+              body: JSON.stringify({ ...payload, client_request_id: newClientRequestId("article") }),
+            }),
+          );
+      if (!saved) return;
       await refreshArticles();
       resetDraft();
       setNotice("文章已保存");
@@ -345,8 +362,8 @@ export function ContentWorkspace() {
 
   async function saveGroupFromSelection() {
     const name = groupName.trim();
-    if (!name || selectedArticleIds.length === 0) {
-      setNotice("请输入分组名称并选择文章");
+    if (!name) {
+      setNotice("请输入分组名称");
       return;
     }
     setLoading(true);
@@ -354,18 +371,21 @@ export function ContentWorkspace() {
       const group = editingGroupId
         ? await api<ArticleGroup>(`/api/article-groups/${editingGroupId}`, {
             method: "PUT",
-            body: JSON.stringify({ name }),
+            body: JSON.stringify({ name, version: groups.find((item) => item.id === editingGroupId)?.version }),
           })
         : await api<ArticleGroup>("/api/article-groups", {
             method: "POST",
             body: JSON.stringify({ name }),
           });
-      await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
-        method: "PUT",
-        body: JSON.stringify({
-          items: selectedArticleIds.map((articleId, index) => ({ article_id: articleId, sort_order: index })),
-        }),
-      });
+      if (!editingGroupId && selectedArticleIds.length > 0) {
+        await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
+          method: "PUT",
+          body: JSON.stringify({
+            items: selectedArticleIds.map((articleId, index) => ({ article_id: articleId, sort_order: index })),
+            version: group.version,
+          }),
+        });
+      }
       setGroupName("");
       setEditingGroupId(null);
       setSelectedArticleIds([]);
@@ -398,7 +418,7 @@ export function ContentWorkspace() {
   function loadGroup(group: ArticleGroup) {
     setEditingGroupId(group.id);
     setGroupName(group.name);
-    setSelectedArticleIds(group.items.sort((a, b) => a.sort_order - b.sort_order).map((item) => item.article_id));
+    setSelectedArticleIds([]);
   }
 
   function toggleSelectedArticle(articleId: number) {
@@ -408,7 +428,60 @@ export function ContentWorkspace() {
   }
 
   async function searchArticles() {
-    await refreshArticles(query);
+    setArticlePage(0);
+    await refreshArticles(query, 0);
+  }
+
+  async function addArticleToGroup() {
+    if (!groupPickerArticle || !groupPickerSelectedId) return;
+    const group = groups.find((item) => item.id === groupPickerSelectedId);
+    if (!group) return;
+    setLoading(true);
+    try {
+      await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
+        method: "PUT",
+        body: JSON.stringify({
+          items: [
+            ...group.items.map((item) => ({ article_id: item.article_id, sort_order: item.sort_order })),
+            { article_id: groupPickerArticle.id, sort_order: group.items.length },
+          ],
+          version: group.version,
+        }),
+      });
+      setGroupPickerArticle(null);
+      setGroupPickerSelectedId(null);
+      await refreshGroups();
+      setNotice("文章已加入分组");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "加入分组失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function removeArticleFromGroup(group: ArticleGroup, articleId: number) {
+    setLoading(true);
+    try {
+      await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
+        method: "PUT",
+        body: JSON.stringify({
+          items: group.items
+            .filter((item) => item.article_id !== articleId)
+            .map((item, index) => ({ article_id: item.article_id, sort_order: index })),
+          version: group.version,
+        }),
+      });
+      await refreshGroups();
+      setNotice("文章已移出分组");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "移出分组失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function changeArticlePage(nextPage: number) {
+    setArticlePage(Math.min(Math.max(nextPage, 0), totalArticlePages - 1));
   }
 
   return (
@@ -445,35 +518,38 @@ export function ContentWorkspace() {
             </button>
           </div>
 
-          <div className="articleList">
-            <div ref={listContainerRef} style={{ minHeight: freeArticles.length > 0 ? 200 : 0 }}>
-              {freeArticles.length > 0 ? (
-                <VirtualList height={Math.min(listHeight, freeArticles.length * ITEM_HEIGHT)} itemCount={freeArticles.length} itemSize={ITEM_HEIGHT} width="100%">
-                  {({ index, style }) => {
-                    const article = freeArticles[index];
-                    return (
-                      <div style={style}>
-                        <ArticleListItem
-                          article={article}
-                          draftId={draft.id}
-                          selectedIds={selectedArticleIds}
-                          onToggle={toggleSelectedArticle}
-                          onSelect={loadArticle}
-                        />
-                      </div>
-                    );
-                  }}
-                </VirtualList>
-              ) : null}
-            </div>
-            {unifiedList.filter((item) => item.type === "group").map((item) => {
+          <div className="articleList contentArticleList">
+            {pagedUnifiedList.map((item) => {
+              if (item.type === "article") {
+                return (
+                  <div className="articleRowWithAction" key={`a-${item.article.id}`}>
+                    <ArticleListItem
+                      article={item.article}
+                      draftId={draft.id}
+                      selectedIds={selectedArticleIds}
+                      onToggle={toggleSelectedArticle}
+                      onSelect={(article) => void loadArticle(article)}
+                    />
+                    <button
+                      className="inlineMiniButton"
+                      type="button"
+                      onClick={() => {
+                        setGroupPickerArticle(item.article);
+                        setGroupPickerSelectedId(groups[0]?.id ?? null);
+                      }}
+                    >
+                      加入分组
+                    </button>
+                  </div>
+                );
+              }
               const { group } = item;
               const isExpanded = expandedGroupIds.has(group.id);
               const groupArticles = group.items
                 .slice()
                 .sort((a, b) => a.sort_order - b.sort_order)
-                .map((gi) => articles.find((a) => a.id === gi.article_id))
-                .filter((a): a is Article => a !== undefined);
+                .map((gi) => articleById[gi.article_id])
+                .filter((a): a is ArticleSummary => a !== undefined);
               return (
                 <div className="groupRowItem" key={`g-${group.id}`}>
                   <div className={`groupRowHeader ${group.id === editingGroupId ? "selected" : ""}`}>
@@ -489,7 +565,7 @@ export function ContentWorkspace() {
                         })
                       }
                     >
-                      <ChevronRight size={13} className={`groupRowChevron${isExpanded ? " open" : ""}`} />
+                      <ChevronRight size={18} className={`groupRowChevron${isExpanded ? " open" : ""}`} />
                       <span className="groupRowName">{group.name}</span>
                       <small className="groupRowCount">{group.items.length} 篇</small>
                     </button>
@@ -512,13 +588,20 @@ export function ContentWorkspace() {
                             />
                             <span>{article.status}</span>
                           </label>
-                          <button type="button" onClick={() => loadArticle(article)}>
+                          <button type="button" onClick={() => void loadArticle(article)}>
                             <strong>{article.title}</strong>
                             <span>{article.author || "未填写作者"}</span>
                             <small>
                               {new Date(article.updated_at).toLocaleString()}
                               {article.published_count > 0 ? <span style={{ color: "#16a34a", marginLeft: 6 }}>· 已发布 {article.published_count} 次</span> : null}
                             </small>
+                          </button>
+                          <button
+                            className="inlineMiniButton removeFromGroupButton"
+                            type="button"
+                            onClick={() => void removeArticleFromGroup(group, article.id)}
+                          >
+                            移出
                           </button>
                         </article>
                       ))}
@@ -528,7 +611,17 @@ export function ContentWorkspace() {
                 </div>
               );
             })}
-            {freeArticles.length === 0 && groups.length === 0 ? <p className="emptyText">暂无文章</p> : null}
+            {unifiedList.length === 0 ? <p className="emptyText">暂无文章</p> : null}
+          </div>
+
+          <div className="pagerRow">
+            <button type="button" disabled={articlePage === 0 || loading} onClick={() => void changeArticlePage(articlePage - 1)}>
+              上一页
+            </button>
+            <span>第 {articlePage + 1} / {totalArticlePages} 页</span>
+            <button type="button" disabled={articlePage >= totalArticlePages - 1 || loading} onClick={() => void changeArticlePage(articlePage + 1)}>
+              下一页
+            </button>
           </div>
 
           <section className="groupBox">
@@ -594,6 +687,45 @@ export function ContentWorkspace() {
 
         </section>
       </section>
+
+      {groupPickerArticle ? (
+        <div className="modalBackdrop" role="presentation" onMouseDown={() => setGroupPickerArticle(null)}>
+          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <div>
+                <h2>加入分组</h2>
+                <p>{groupPickerArticle.title}</p>
+              </div>
+              <button type="button" aria-label="关闭" onClick={() => setGroupPickerArticle(null)}>
+                <X size={16} />
+              </button>
+            </header>
+            <div className="groupPickerList">
+              {groups.map((group) => (
+                <label className="groupPickerOption" key={group.id}>
+                  <input
+                    checked={groupPickerSelectedId === group.id}
+                    name="targetGroup"
+                    type="radio"
+                    onChange={() => setGroupPickerSelectedId(group.id)}
+                  />
+                  <span>{group.name}</span>
+                  <small>{group.items.length} 篇</small>
+                </label>
+              ))}
+              {groups.length === 0 ? <p className="emptyText">暂无分组</p> : null}
+            </div>
+            <footer className="modalActions">
+              <button type="button" onClick={() => setGroupPickerArticle(null)}>
+                取消
+              </button>
+              <button type="button" disabled={!groupPickerSelectedId || loading} onClick={() => void addArticleToGroup()}>
+                加入
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </>
   );
 }

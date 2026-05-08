@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../../api/client";
-import type { Task, Account, Article, ArticleGroup, PublishRecord, TaskLog, AssignmentPreview } from "../../types";
+import { api, newClientRequestId, singleFlight } from "../../api/client";
+import type { Task, Account, ArticleGroup, ArticleSummary, PublishRecord, TaskLog, AssignmentPreview } from "../../types";
 import { TERMINAL_STATUSES, statusLabel } from "../../types";
 import { CheckCircle2, Plus, RefreshCw, Send } from "lucide-react";
 
+const TASK_PAGE_SIZE = 20;
+
 export function TasksWorkspace() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskPage, setTaskPage] = useState(0);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [records, setRecords] = useState<PublishRecord[]>([]);
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [articles, setArticles] = useState<Article[]>([]);
+  const [articles, setArticles] = useState<ArticleSummary[]>([]);
   const [groups, setGroups] = useState<ArticleGroup[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [notice, setNotice] = useState("");
@@ -29,6 +32,12 @@ export function TasksWorkspace() {
   const taskIsRunning = selectedTask?.status === "running";
   const articleMap = useMemo(() => Object.fromEntries(articles.map((a) => [a.id, a])), [articles]);
   const accountMap = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a])), [accounts]);
+  const sortedTasks = useMemo(
+    () => tasks.slice().sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    [tasks],
+  );
+  const totalTaskPages = Math.max(1, Math.ceil(sortedTasks.length / TASK_PAGE_SIZE));
+  const pagedTasks = sortedTasks.slice(taskPage * TASK_PAGE_SIZE, (taskPage + 1) * TASK_PAGE_SIZE);
 
   useEffect(() => {
     void loadInitial();
@@ -42,11 +51,17 @@ export function TasksWorkspace() {
     return () => clearInterval(interval);
   }, [selectedTaskId, taskIsRunning]);
 
+  useEffect(() => {
+    if (taskPage >= totalTaskPages) {
+      setTaskPage(totalTaskPages - 1);
+    }
+  }, [taskPage, totalTaskPages]);
+
   async function loadInitial() {
     const [ts, accs, arts, gs] = await Promise.all([
       api<Task[]>("/api/tasks"),
       api<Account[]>("/api/accounts"),
-      api<Article[]>("/api/articles"),
+      api<ArticleSummary[]>("/api/articles"),
       api<ArticleGroup[]>("/api/article-groups"),
     ]);
     setTasks(ts);
@@ -91,23 +106,28 @@ export function TasksWorkspace() {
     }
     setLoading(true);
     try {
-      const task = await api<Task>("/api/tasks", {
-        method: "POST",
-        body: JSON.stringify({
-          name: formName.trim(),
-          task_type: formType,
-          article_id: formType === "single" ? formArticleId : null,
-          group_id: formType === "group_round_robin" ? formGroupId : null,
-          accounts: formAccountIds.map((id, index) => ({ account_id: id, sort_order: index })),
-          stop_before_publish: false,
+      const task = await singleFlight("task-create", () =>
+        api<Task>("/api/tasks", {
+          method: "POST",
+          body: JSON.stringify({
+            name: formName.trim(),
+            client_request_id: newClientRequestId("task"),
+            task_type: formType,
+            article_id: formType === "single" ? formArticleId : null,
+            group_id: formType === "group_round_robin" ? formGroupId : null,
+            accounts: formAccountIds.map((id, index) => ({ account_id: id, sort_order: index })),
+            stop_before_publish: false,
+          }),
         }),
-      });
+      );
+      if (!task) return;
       setShowCreateForm(false);
       setFormName("");
       setFormArticleId(null);
       setFormGroupId(null);
       setFormAccountIds([]);
       setPreview(null);
+      setTaskPage(0);
       setNotice("任务已创建");
       await selectTask(task.id);
     } catch (error) {
@@ -142,7 +162,9 @@ export function TasksWorkspace() {
     if (!selectedTaskId) return;
     setLoading(true);
     try {
-      await api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" });
+      await singleFlight(`task-execute-${selectedTaskId}`, () =>
+        api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" }),
+      );
       await refreshDetail(selectedTaskId);
       setNotice("已启动");
     } catch (error) {
@@ -156,7 +178,9 @@ export function TasksWorkspace() {
     if (!selectedTaskId) return;
     setLoading(true);
     try {
-      await api<Task>(`/api/tasks/${selectedTaskId}/cancel`, { method: "POST" });
+      await singleFlight(`task-cancel-${selectedTaskId}`, () =>
+        api<Task>(`/api/tasks/${selectedTaskId}/cancel`, { method: "POST" }),
+      );
       await refreshDetail(selectedTaskId);
       setNotice("已取消");
     } catch (error) {
@@ -169,9 +193,13 @@ export function TasksWorkspace() {
   async function retryRecord(recordId: number) {
     setLoading(true);
     try {
-      await api<PublishRecord>(`/api/publish-records/${recordId}/retry`, { method: "POST" });
+      await singleFlight(`record-retry-${recordId}`, () =>
+        api<PublishRecord>(`/api/publish-records/${recordId}/retry`, { method: "POST" }),
+      );
       if (selectedTaskId) {
-        await api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" });
+        await singleFlight(`task-execute-${selectedTaskId}`, () =>
+          api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" }),
+        );
         await refreshDetail(selectedTaskId);
       }
       setNotice("重试已启动");
@@ -185,10 +213,12 @@ export function TasksWorkspace() {
   async function manualConfirm(recordId: number, outcome: "succeeded" | "failed") {
     setLoading(true);
     try {
-      await api<PublishRecord>(`/api/publish-records/${recordId}/manual-confirm`, {
-        method: "POST",
-        body: JSON.stringify({ outcome }),
-      });
+      await singleFlight(`record-confirm-${recordId}`, () =>
+        api<PublishRecord>(`/api/publish-records/${recordId}/manual-confirm`, {
+          method: "POST",
+          body: JSON.stringify({ outcome }),
+        }),
+      );
       if (selectedTaskId) await refreshDetail(selectedTaskId);
       setNotice(outcome === "succeeded" ? "已标记为发布成功" : "已标记为发布失败");
     } catch (error) {
@@ -314,8 +344,8 @@ export function TasksWorkspace() {
             </div>
           ) : null}
 
-          <div className="articleList">
-            {tasks.map((task) => (
+          <div className="articleList taskList">
+            {pagedTasks.map((task) => (
               <button
                 key={task.id}
                 className={`taskItem ${task.id === selectedTaskId ? "selected" : ""}`}
@@ -334,6 +364,19 @@ export function TasksWorkspace() {
               </button>
             ))}
             {tasks.length === 0 ? <p className="emptyText">暂无任务</p> : null}
+          </div>
+          <div className="pagerRow">
+            <button type="button" disabled={taskPage === 0 || loading} onClick={() => setTaskPage((page) => Math.max(0, page - 1))}>
+              上一页
+            </button>
+            <span>第 {taskPage + 1} / {totalTaskPages} 页</span>
+            <button
+              type="button"
+              disabled={taskPage >= totalTaskPages - 1 || loading}
+              onClick={() => setTaskPage((page) => Math.min(totalTaskPages - 1, page + 1))}
+            >
+              下一页
+            </button>
           </div>
         </div>
 

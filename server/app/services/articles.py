@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from server.app.core.time import utcnow
 from server.app.models import Article, ArticleBodyAsset, ArticleGroupItem, Asset, PublishRecord, TaskLog
 from server.app.schemas.article import ArticleBodyAssetRead, ArticleCreate, ArticleRead, ArticleUpdate
+from server.app.services.errors import ConflictError
 
 VALID_ARTICLE_STATUSES = {"draft", "ready", "archived"}
 
@@ -144,6 +145,13 @@ def list_articles(db: Session, query: str | None = None, skip: int = 0, limit: i
 
 # 创建文章
 def create_article(db: Session, payload: ArticleCreate) -> Article:
+    if payload.client_request_id:
+        existing = db.execute(
+            select(Article).where(Article.client_request_id == payload.client_request_id)
+        ).scalar_one_or_none()
+        if existing is not None:
+            return get_article(db, existing.id) or existing
+
     validate_article_status(payload.status)
     ensure_asset_exists(db, payload.cover_asset_id)
     article = Article(
@@ -155,6 +163,7 @@ def create_article(db: Session, payload: ArticleCreate) -> Article:
         plain_text=payload.plain_text,
         word_count=payload.word_count,
         status=payload.status,
+        client_request_id=payload.client_request_id,
     )
     sync_article_body_assets(db, article, payload.content_json)
     db.add(article)
@@ -165,6 +174,10 @@ def create_article(db: Session, payload: ArticleCreate) -> Article:
 # 更新文章（部分更新，只修改提供的字段）
 def update_article(db: Session, article: Article, payload: ArticleUpdate) -> Article:
     update_data = payload.model_dump(exclude_unset=True)
+    expected_version = update_data.pop("version", None)
+    if expected_version is not None and article.version != expected_version:
+        raise ConflictError("Article has been modified; refresh before saving")
+
     if "status" in update_data and update_data["status"] is not None:
         validate_article_status(update_data["status"])
     if "cover_asset_id" in update_data:
@@ -182,6 +195,7 @@ def update_article(db: Session, article: Article, payload: ArticleUpdate) -> Art
         article.content_json = dumps_content_json(content_json)
         sync_article_body_assets(db, article, content_json)
 
+    article.version += 1
     article.updated_at = utcnow()
     db.flush()
     return get_article(db, article.id) or article
@@ -191,6 +205,7 @@ def update_article(db: Session, article: Article, payload: ArticleUpdate) -> Art
 def set_article_cover(db: Session, article: Article, cover_asset_id: str | None) -> Article:
     ensure_asset_exists(db, cover_asset_id)
     article.cover_asset_id = cover_asset_id
+    article.version += 1
     article.updated_at = utcnow()
     db.flush()
     return get_article(db, article.id) or article
@@ -223,6 +238,7 @@ def to_article_read(article: Article, published_count: int = 0) -> ArticleRead:
         plain_text=article.plain_text,
         word_count=article.word_count,
         status=article.status,
+        version=article.version,
         published_count=published_count,
         body_assets=[
             ArticleBodyAssetRead(

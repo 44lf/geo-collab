@@ -1,5 +1,5 @@
 import React from "react";
-import type { Article } from "../types";
+import type { ArticleSummary } from "../types";
 
 export const ArticleListItem = React.memo(function ArticleListItem({
   article,
@@ -8,11 +8,11 @@ export const ArticleListItem = React.memo(function ArticleListItem({
   onToggle,
   onSelect,
 }: {
-  article: Article;
+  article: ArticleSummary;
   draftId: number | null;
   selectedIds: number[];
   onToggle: (id: number) => void;
-  onSelect: (article: Article) => void;
+  onSelect: (article: ArticleSummary) => void;
 }) {
   return (
     <article className={`articleItem ${article.id === draftId ? "selected" : ""}`}>

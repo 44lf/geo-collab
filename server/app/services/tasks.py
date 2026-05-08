@@ -110,6 +110,13 @@ def list_task_logs(db: Session, task_id: int, after_id: int = 0, limit: int = 10
 
 # 创建新任务
 def create_task(db: Session, payload: TaskCreate) -> PublishTask:
+    if payload.client_request_id:
+        existing = db.execute(
+            select(PublishTask).where(PublishTask.client_request_id == payload.client_request_id)
+        ).scalar_one_or_none()
+        if existing is not None:
+            return get_task(db, existing.id) or existing
+
     inputs = _validated_task_inputs(db, payload)
     assignments = _build_assignments(inputs.article_ids, inputs.accounts)
 
@@ -121,6 +128,7 @@ def create_task(db: Session, payload: TaskCreate) -> PublishTask:
         article_id=payload.article_id if payload.task_type == "single" else None,
         group_id=payload.group_id if payload.task_type == "group_round_robin" else None,
         stop_before_publish=payload.stop_before_publish,
+        client_request_id=payload.client_request_id,
     )
     db.add(task)
     db.flush()
@@ -188,8 +196,20 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
 
         now = utcnow()
         if task.status == "pending":
-            task.status = "running"
-            task.started_at = now
+            stmt = (
+                sa_update(PublishTask)
+                .where(PublishTask.id == task.id, PublishTask.status == "pending")
+                .values(status="running", started_at=now)
+            )
+            if db.execute(stmt).rowcount == 0:
+                db.flush()
+                refreshed = get_task(db, task.id)
+                if refreshed is None or refreshed.status in TERMINAL_TASK_STATUSES:
+                    return refreshed or task
+                task = refreshed
+            else:
+                task.status = "running"
+                task.started_at = now
             _add_log(db, task.id, None, "info", "Task started")
 
         records = list_task_records(db, task.id)
@@ -228,15 +248,28 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
             return
 
         now = utcnow()
+        record_id = next_record.id
+        article_id = next_record.article_id
+        account_id = next_record.account_id
+        lease_until = utcnow() + timedelta(minutes=10)
+        stmt = (
+            sa_update(PublishRecord)
+            .where(PublishRecord.id == record_id, PublishRecord.status == "pending")
+            .values(status="running", started_at=now, lease_until=lease_until)
+        )
+        if db.execute(stmt).rowcount == 0:
+            db.commit()
+            records = list_task_records(db, task.id)
+            continue
         next_record.status = "running"
         next_record.started_at = now
-        next_record.lease_until = utcnow() + timedelta(minutes=10)
+        next_record.lease_until = lease_until
         _add_log(db, task.id, next_record.id, "info", f"Record {next_record.id} started")
         # Phase 1: Commit running state (short transaction)
         db.commit()
 
-        article = db.get(Article, next_record.article_id)
-        account = db.get(Account, next_record.account_id)
+        article = db.get(Article, article_id)
+        account = db.get(Account, account_id)
         if not (article is not None and account is not None):
             stmt = (
                 sa_update(PublishRecord)
@@ -610,7 +643,7 @@ def recover_stuck_records(db: Session) -> None:
         ).scalars().all()
     )
     for record in records:
-        record.status = "queued"
+        record.status = "pending"
         record.lease_until = None
     if records:
         db.commit()

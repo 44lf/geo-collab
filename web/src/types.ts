@@ -19,25 +19,33 @@ export type ArticleBodyAsset = {
   editor_node_id: string | null;
 };
 
-export type Article = {
+export type ArticleSummary = {
   id: number;
   title: string;
   author: string | null;
   cover_asset_id: string | null;
+  word_count: number;
+  status: string;
+  version: number;
+  published_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Article = ArticleSummary & {
   content_json: Record<string, unknown>;
   content_html: string;
   plain_text: string;
-  word_count: number;
-  status: string;
   body_assets: ArticleBodyAsset[];
-  published_count: number;
-  updated_at: string;
 };
 
 export type ArticleGroup = {
   id: number;
   name: string;
   items: { article_id: number; sort_order: number }[];
+  version: number;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Account = {
@@ -58,6 +66,7 @@ export type Draft = {
   author: string;
   cover_asset_id: string | null;
   status: string;
+  version: number | null;
 };
 
 export type TaskAccountRead = {

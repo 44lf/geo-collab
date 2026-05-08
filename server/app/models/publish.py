@@ -16,6 +16,7 @@ class PublishTask(Base):
             "status in ('pending', 'running', 'succeeded', 'partial_failed', 'failed', 'cancelled')",
             name="ck_publish_tasks_status",
         ),
+        UniqueConstraint("client_request_id", name="uq_publish_tasks_client_request_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -26,6 +27,7 @@ class PublishTask(Base):
     article_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"), nullable=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("article_groups.id"), nullable=True)
     stop_before_publish: Mapped[bool] = mapped_column(Boolean, default=True)  # 是否等待手动确认发布
+    client_request_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

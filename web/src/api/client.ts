@@ -1,6 +1,25 @@
 export const emptyDoc = { type: "doc", content: [{ type: "paragraph" }] };
 
 let _token: string | null = null;
+const inFlightKeys = new Set<string>();
+
+export async function singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T | undefined> {
+  if (inFlightKeys.has(key)) return undefined;
+  inFlightKeys.add(key);
+  try {
+    return await fn();
+  } finally {
+    inFlightKeys.delete(key);
+  }
+}
+
+export function newClientRequestId(prefix: string): string {
+  const cryptoObj = globalThis.crypto;
+  const random = typeof cryptoObj?.randomUUID === "function"
+    ? cryptoObj.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${random}`;
+}
 
 async function getToken(): Promise<string | null> {
   if (_token !== null) return _token;
@@ -37,7 +56,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function assetSrc(assetId: string | null): string | null {
-  return assetId ? `/api/assets/${assetId}` : null;
+  if (!assetId) return null;
+  return withAssetToken(`/api/assets/${assetId}`);
+}
+
+export function withAssetToken(url: string): string {
+  if (!_token || !url.startsWith("/api/assets/")) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}token=${encodeURIComponent(_token)}`;
 }
 
 export function countWords(text: string): number {

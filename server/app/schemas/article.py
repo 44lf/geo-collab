@@ -33,7 +33,7 @@ class ArticleBase(BaseModel):
 
 
 class ArticleCreate(ArticleBase):
-    pass
+    client_request_id: str | None = Field(default=None, max_length=80)
 
 
 # 文章更新请求（所有字段可选）
@@ -46,6 +46,7 @@ class ArticleUpdate(BaseModel):
     plain_text: str | None = None
     word_count: int | None = None
     status: str | None = None
+    version: int | None = Field(default=None, ge=1)
 
     @field_validator("content_html", mode="before")
     @classmethod
@@ -59,6 +60,7 @@ class ArticleUpdate(BaseModel):
 # 仅更新文章封面
 class ArticleCoverUpdate(BaseModel):
     cover_asset_id: str | None = None
+    version: int | None = Field(default=None, ge=1)
 
 
 class ArticleListRead(BaseModel):
@@ -68,6 +70,7 @@ class ArticleListRead(BaseModel):
     cover_asset_id: str | None
     word_count: int
     status: str
+    version: int
     published_count: int = 0
     created_at: datetime
     updated_at: datetime
@@ -84,6 +87,7 @@ class ArticleRead(BaseModel):
     plain_text: str
     word_count: int
     status: str
+    version: int
     body_assets: list[ArticleBodyAssetRead]
     published_count: int = 0  # 成功发布次数
     created_at: datetime

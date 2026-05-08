@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from server.app.db.session import get_db
-from server.app.models import PublishRecord
+from server.app.models import Article, PublishRecord
 from server.app.schemas.article import ArticleCoverUpdate, ArticleCreate, ArticleListRead, ArticleRead, ArticleUpdate
+from server.app.services.errors import ConflictError
 from server.app.services.articles import (
     create_article,
     delete_article,
@@ -44,6 +46,7 @@ def read_articles(
             cover_asset_id=a.cover_asset_id,
             word_count=a.word_count,
             status=a.status,
+            version=a.version,
             published_count=count_map.get(a.id, 0),
             created_at=a.created_at,
             updated_at=a.updated_at,
@@ -55,7 +58,17 @@ def read_articles(
 # 创建新文章
 @router.post("", response_model=ArticleRead)
 def create_article_endpoint(payload: ArticleCreate, db: Session = Depends(get_db)) -> ArticleRead:
-    return to_article_read(create_article(db, payload))
+    try:
+        return to_article_read(create_article(db, payload))
+    except IntegrityError as exc:
+        db.rollback()
+        if payload.client_request_id:
+            existing = db.execute(
+                select(Article).where(Article.client_request_id == payload.client_request_id)
+            ).scalar_one_or_none()
+            if existing is not None:
+                return to_article_read(get_article(db, existing.id) or existing)
+        raise exc
 
 
 # 获取单篇文章详情
@@ -92,5 +105,7 @@ def update_article_cover(article_id: int, payload: ArticleCoverUpdate, db: Sessi
     article = get_article(db, article_id)
     if article is None:
         raise HTTPException(status_code=404, detail="Article not found")
+    if payload.version is not None and article.version != payload.version:
+        raise ConflictError("Article has been modified; refresh before saving")
     return to_article_read(set_article_cover(db, article, payload.cover_asset_id))
 

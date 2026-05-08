@@ -3,9 +3,12 @@ import threading
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from server.app.db.session import get_db
+from server.app.models import PublishTask
 from server.app.schemas.task import (
     PublishRecordRead,
     TaskAssignmentPreviewRead,
@@ -43,7 +46,18 @@ def read_tasks(db: Session = Depends(get_db)) -> list[TaskRead]:
 # 创建新任务
 @router.post("", response_model=TaskRead)
 def create_task_endpoint(payload: TaskCreate, db: Session = Depends(get_db)) -> TaskRead:
-    return to_task_read(create_task(db, payload))
+    try:
+        return to_task_read(create_task(db, payload))
+    except IntegrityError as exc:
+        db.rollback()
+        if payload.client_request_id:
+            existing = db.execute(
+                select(PublishTask).where(PublishTask.client_request_id == payload.client_request_id)
+            ).scalar_one_or_none()
+            if existing is not None:
+                refreshed = get_task(db, existing.id)
+                return to_task_read(refreshed or existing)
+        raise exc
 
 
 # 预览任务分配（分组轮询时的文章-账号映射）

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
 from server.app.models import Article, ArticleGroup, ArticleGroupItem
+from server.app.services.errors import ConflictError
 from server.app.schemas.article_group import (
     ArticleGroupCreate,
     ArticleGroupItemRead,
@@ -39,9 +40,14 @@ def create_group(db: Session, payload: ArticleGroupCreate) -> ArticleGroup:
 # 更新分组信息
 def update_group(db: Session, group: ArticleGroup, payload: ArticleGroupUpdate) -> ArticleGroup:
     update_data = payload.model_dump(exclude_unset=True)
+    expected_version = update_data.pop("version", None)
+    if expected_version is not None and group.version != expected_version:
+        raise ConflictError("Article group has been modified; refresh before saving")
+
     for field in ("name", "description"):
         if field in update_data:
             setattr(group, field, update_data[field])
+    group.version += 1
     group.updated_at = utcnow()
     db.flush()
     return get_group(db, group.id) or group
@@ -49,6 +55,9 @@ def update_group(db: Session, group: ArticleGroup, payload: ArticleGroupUpdate) 
 
 # 全量替换分组中的文章列表（先清空再插入）
 def replace_group_items(db: Session, group: ArticleGroup, payload: ArticleGroupItemsUpdate) -> ArticleGroup:
+    if payload.version is not None and group.version != payload.version:
+        raise ConflictError("Article group has been modified; refresh before saving")
+
     seen: set[int] = set()
     article_ids: list[int] = []
     for item in payload.items:
@@ -73,6 +82,7 @@ def replace_group_items(db: Session, group: ArticleGroup, payload: ArticleGroupI
             )
         )
     group.updated_at = utcnow()
+    group.version += 1
     db.flush()
     return get_group(db, group.id) or group
 
@@ -90,6 +100,7 @@ def to_group_read(group: ArticleGroup) -> ArticleGroupRead:
         id=group.id,
         name=group.name,
         description=group.description,
+        version=group.version,
         items=[
             ArticleGroupItemRead(
                 article_id=item.article_id,

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.core.time import utcnow
@@ -10,7 +10,10 @@ from server.app.db.base import Base
 # 文章：三份存储（Tiptap JSON、HTML、纯文本），关联封面和正文图片
 class Article(Base):
     __tablename__ = "articles"
-    __table_args__ = (CheckConstraint("status in ('draft', 'ready', 'archived')", name="ck_articles_status"),)
+    __table_args__ = (
+        CheckConstraint("status in ('draft', 'ready', 'archived')", name="ck_articles_status"),
+        UniqueConstraint("client_request_id", name="uq_articles_client_request_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(300), index=True)
@@ -21,6 +24,8 @@ class Article(Base):
     plain_text: Mapped[str] = mapped_column(Text, default="")  # 纯文本，用于发布
     word_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(30), default="draft", index=True)  # draft / ready / archived
+    client_request_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
