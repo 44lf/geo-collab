@@ -1,8 +1,77 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
+import type { NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
+import Link from "@tiptap/extension-link";
+import { TextStyle } from "@tiptap/extension-text-style";
+import Color from "@tiptap/extension-color";
+import Highlight from "@tiptap/extension-highlight";
+import Underline from "@tiptap/extension-underline";
+import TextAlign from "@tiptap/extension-text-align";
+
+const CustomTextStyle = TextStyle.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      fontSize: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.style.fontSize || null,
+        renderHTML: (attrs: Record<string, unknown>) =>
+          attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {},
+      },
+    };
+  },
+});
+
+function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
+  const attrs = node.attrs as {
+    src: string;
+    alt: string;
+    title: string;
+    assetId: string | null;
+    width: string;
+  };
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  function startResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = imgRef.current?.offsetWidth ?? 300;
+    const containerWidth = imgRef.current?.parentElement?.offsetWidth ?? 600;
+
+    function onMove(ev: MouseEvent) {
+      const pct = Math.min(
+        100,
+        Math.max(10, Math.round(((startWidth + ev.clientX - startX) / containerWidth) * 100)),
+      );
+      updateAttributes({ width: `${pct}%` });
+    }
+    function onUp() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  return (
+    <NodeViewWrapper style={{ display: "block", position: "relative", width: attrs.width ?? "100%" }}>
+      <img
+        ref={imgRef}
+        src={attrs.src}
+        alt={attrs.alt ?? ""}
+        title={attrs.title ?? ""}
+        data-asset-id={attrs.assetId ?? undefined}
+        style={{ width: "100%", display: "block", borderRadius: "var(--r)" }}
+        draggable={false}
+      />
+      {selected && <div className="imgResizeHandle" onMouseDown={startResize} />}
+    </NodeViewWrapper>
+  );
+}
+
 const CustomImage = Image.extend({
   addAttributes() {
     return {
@@ -12,10 +81,17 @@ const CustomImage = Image.extend({
         parseHTML: (el) => el.getAttribute("data-asset-id"),
         renderHTML: (attrs) => (attrs.assetId ? { "data-asset-id": attrs.assetId } : {}),
       },
+      width: {
+        default: "100%",
+        parseHTML: (el) => el.style.width || "100%",
+        renderHTML: (attrs) => ({ style: `width: ${attrs.width ?? "100%"}` }),
+      },
     };
   },
+  addNodeView() {
+    return ReactNodeViewRenderer(ImageResizeView);
+  },
 });
-import Link from "@tiptap/extension-link";
 import {
   Bold,
   CheckCircle2,
@@ -553,16 +629,35 @@ function ContentWorkspace() {
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
 
+  const pasteImageRef = useRef<(file: File) => void>(() => {});
+
   const editor = useEditor({
     extensions: [
       StarterKit,
       Link.configure({ openOnClick: false }),
       CustomImage.configure({ allowBase64: false }),
+      CustomTextStyle,
+      Color,
+      Highlight.configure({ multicolor: true }),
+      Underline,
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
     ],
     content: emptyDoc,
     editorProps: {
       attributes: {
         class: "editorSurface",
+      },
+      transformPastedHTML(html) {
+        return html.replace(/ style="[^"]*"/gi, "");
+      },
+      handlePaste(_, event) {
+        const items = Array.from(event.clipboardData?.items ?? []);
+        const imageItem = items.find((item) => item.type.startsWith("image/"));
+        if (!imageItem) return false;
+        const file = imageItem.getAsFile();
+        if (!file) return false;
+        pasteImageRef.current(file);
+        return true;
       },
     },
   });
@@ -677,6 +772,7 @@ function ContentWorkspace() {
       setLoading(false);
     }
   }
+  pasteImageRef.current = (file: File) => void handleBodyImageUpload(file);
 
   async function saveArticle() {
     if (!editor || !draft.title.trim()) {
@@ -1579,7 +1675,14 @@ function EditorToolbar({
       </button>
       <label className="toolbarFile" title="插入图片">
         <ImagePlus size={16} />
-        <input accept="image/*" type="file" onChange={(event) => void onImageUpload(event.target.files?.[0] ?? null)} />
+        <input
+          accept="image/*"
+          type="file"
+          onChange={(event) => {
+            void onImageUpload(event.target.files?.[0] ?? null);
+            event.currentTarget.value = "";
+          }}
+        />
       </label>
     </div>
   );
