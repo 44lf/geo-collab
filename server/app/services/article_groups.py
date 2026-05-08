@@ -32,7 +32,7 @@ def list_groups(db: Session) -> list[ArticleGroup]:
 def create_group(db: Session, payload: ArticleGroupCreate) -> ArticleGroup:
     group = ArticleGroup(name=payload.name, description=payload.description)
     db.add(group)
-    db.commit()
+    db.flush()
     return get_group(db, group.id) or group
 
 
@@ -43,7 +43,7 @@ def update_group(db: Session, group: ArticleGroup, payload: ArticleGroupUpdate) 
         if field in update_data:
             setattr(group, field, update_data[field])
     group.updated_at = utcnow()
-    db.commit()
+    db.flush()
     return get_group(db, group.id) or group
 
 
@@ -73,14 +73,14 @@ def replace_group_items(db: Session, group: ArticleGroup, payload: ArticleGroupI
             )
         )
     group.updated_at = utcnow()
-    db.commit()
+    db.flush()
     return get_group(db, group.id) or group
 
 
 # 删除分组
 def delete_group(db: Session, group: ArticleGroup) -> None:
     db.delete(group)
-    db.commit()
+    db.flush()
 
 
 # 将 ORM ArticleGroup 转为响应体

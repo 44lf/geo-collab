@@ -4,9 +4,6 @@ from pydantic import BaseModel
 # 系统状态响应体
 class SystemStatus(BaseModel):
     service: str
-    version: str
-    data_dir: str  # 数据目录路径
-    database_path: str  # 数据库文件路径
     directories_ready: bool
     article_count: int = 0
     account_count: int = 0

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
 # 任务创建中的账号输入
@@ -41,6 +41,14 @@ class PublishRecordRead(BaseModel):
     retry_of_record_id: int | None
     started_at: datetime | None
     finished_at: datetime | None
+    lease_until: datetime | None = None
+
+
+# 任务精简状态（/status 接口用）
+class TaskStatusRead(BaseModel):
+    id: int
+    status: str
+    lease_until: datetime | None = None
 
 
 # 任务日志响应
@@ -91,6 +99,6 @@ class TaskRead(BaseModel):
 
 # 手动确认发布的输入
 class ManualConfirmInput(BaseModel):
-    outcome: str  # succeeded / failed
-    publish_url: str | None = None
+    outcome: str
+    publish_url: HttpUrl | None = None
     error_message: str | None = None

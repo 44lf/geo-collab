@@ -12,9 +12,10 @@ def test_system_status_returns_runtime_info(monkeypatch):
         payload = response.json()
         assert payload["service"] == "ok"
         assert payload["directories_ready"] is True
-        assert payload["data_dir"]
-        assert payload["database_path"]
-        assert payload["database_path"] != ""
+        assert payload["article_count"] >= 0
+        assert payload["account_count"] >= 0
+        assert payload["task_count"] >= 0
+        assert "browser_ready" in payload
     finally:
         test_app.cleanup()
 

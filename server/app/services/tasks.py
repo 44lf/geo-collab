@@ -1,7 +1,9 @@
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
@@ -38,6 +40,10 @@ CAN_RETRY_TASK_STATUSES = {"failed", "partial_failed", "succeeded", "cancelled"}
 # 任务级互斥锁，防止同一任务被并发执行
 _task_locks: dict[int, threading.Lock] = {}
 _task_locks_lock = threading.Lock()
+
+# 任务硬取消标志
+_task_cancel: dict[int, threading.Event] = {}
+RECORD_TIMEOUT_SECONDS = 300
 
 
 # 验证通过后的任务输入
@@ -91,9 +97,14 @@ def list_task_records(db: Session, task_id: int) -> list[PublishRecord]:
     return list(db.execute(stmt).scalars().all())
 
 
-# 获取任务的日志列表
-def list_task_logs(db: Session, task_id: int) -> list[TaskLog]:
-    stmt = select(TaskLog).where(TaskLog.task_id == task_id).order_by(TaskLog.created_at.asc(), TaskLog.id.asc())
+# 获取任务的日志列表（支持增量拉取）
+def list_task_logs(db: Session, task_id: int, after_id: int = 0, limit: int = 100) -> list[TaskLog]:
+    stmt = (
+        select(TaskLog)
+        .where(TaskLog.task_id == task_id, TaskLog.id > after_id)
+        .order_by(TaskLog.created_at.asc(), TaskLog.id.asc())
+        .limit(limit)
+    )
     return list(db.execute(stmt).scalars().all())
 
 
@@ -127,7 +138,7 @@ def create_task(db: Session, payload: TaskCreate) -> PublishTask:
             )
         )
 
-    db.commit()
+    db.flush()
     return get_task(db, task.id) or task
 
 
@@ -167,6 +178,10 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
     if not lock.acquire(blocking=False):
         raise ValueError(f"Task {task.id} is already being executed")
 
+    # 注册取消事件
+    cancel_event = threading.Event()
+    _task_cancel[task.id] = cancel_event
+
     try:
         if task.status in TERMINAL_TASK_STATUSES:
             raise ValueError(f"Task is already terminal: {task.status}")
@@ -181,14 +196,17 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
         active_record = next((record for record in records if record.status in ACTIVE_RECORD_STATUSES), None)
         if active_record is not None:
             _add_log(db, task.id, active_record.id, "info", f"Task is waiting on record {active_record.id}")
-            db.commit()
+            db.flush()
             return get_task(db, task.id) or task
 
         _run_next_pending_record(db, task, records)
-        db.commit()
+        db.flush()
         return get_task(db, task.id) or task
     finally:
         lock.release()
+        with _task_locks_lock:
+            _task_locks.pop(task.id, None)
+        _task_cancel.pop(task.id, None)
 
 
 # 内部方法：循环执行待处理的发布记录
@@ -197,7 +215,13 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
         db.flush()
         records = list_task_records(db, task.id)
 
+    cancel_evt = _task_cancel.get(task.id)
+
     while True:
+        if cancel_evt and cancel_evt.is_set():
+            _add_log(db, task.id, None, "warn", "Task cancelled during execution")
+            break
+
         next_record = next((r for r in records if r.status == "pending"), None)
         if next_record is None:
             _aggregate_task_status(task, records)
@@ -206,39 +230,72 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
         now = utcnow()
         next_record.status = "running"
         next_record.started_at = now
+        next_record.lease_until = utcnow() + timedelta(minutes=10)
         _add_log(db, task.id, next_record.id, "info", f"Record {next_record.id} started")
+        # Phase 1: Commit running state (short transaction)
+        db.commit()
 
         article = db.get(Article, next_record.article_id)
         account = db.get(Account, next_record.account_id)
-        if article is None or account is None:
-            next_record.status = "failed"
-            next_record.error_message = "Record article or account not found"
-            next_record.finished_at = utcnow()
-            _add_log(db, task.id, next_record.id, "error", next_record.error_message)
+        if not (article is not None and account is not None):
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == next_record.id)
+                .values(status="failed", error_message="Record article or account not found", finished_at=utcnow(), lease_until=None)
+            )
+            db.execute(stmt)
+            _add_log(db, task.id, next_record.id, "error", "Record article or account not found")
+            db.commit()
             continue
 
         try:
-            # 调用发布器执行实际发布
-            result = build_publisher_for_record(next_record).publish_article(
-                article, account, stop_before_publish=task.stop_before_publish
+            # Phase 2: Playwright execution (no DB transaction wrapping)
+            publisher = build_publisher_for_record(next_record)
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    publisher.publish_article,
+                    article, account,
+                    stop_before_publish=task.stop_before_publish,
+                )
+                result = future.result(timeout=RECORD_TIMEOUT_SECONDS)
+        except FutureTimeoutError:
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == next_record.id)
+                .values(status="failed", error_message="Timeout: record execution exceeded 300s", finished_at=utcnow(), lease_until=None)
             )
-            if task.stop_before_publish:
-                # 等待用户手动确认，此时任务保持 running 状态
-                next_record.status = "waiting_manual_publish"
-                next_record.finished_at = utcnow()
-                _add_log(db, task.id, next_record.id, "info", "等待手动确认发布")
-            else:
-                next_record.status = "succeeded"
-                next_record.publish_url = result.url or None
-                next_record.finished_at = utcnow()
-                _add_log(db, task.id, next_record.id, "info", result.message)
+            db.execute(stmt)
+            _add_log(db, task.id, next_record.id, "error", "Timeout: record execution exceeded 300s")
+            db.commit()
+            continue
         except ToutiaoPublishError as exc:
             screenshot_asset_id = _store_failure_screenshot(db, task.id, next_record.id, exc.screenshot)
-            next_record.status = "failed"
-            next_record.error_message = str(exc)
-            next_record.finished_at = utcnow()
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == next_record.id)
+                .values(status="failed", error_message=str(exc), finished_at=utcnow(), lease_until=None)
+            )
+            db.execute(stmt)
             _add_log(db, task.id, next_record.id, "error", str(exc), screenshot_asset_id=screenshot_asset_id)
-        db.commit()  # 每条 record 完成后立即落库，UI 可实时看进度
+            db.commit()
+            continue
+
+        # Phase 3: Conditional update — only if still 'running'
+        if task.stop_before_publish:
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == next_record.id, PublishRecord.status == "running")
+                .values(status="waiting_manual_publish", finished_at=utcnow(), lease_until=None)
+            )
+        else:
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == next_record.id, PublishRecord.status == "running")
+                .values(status="succeeded", publish_url=result.url or None, finished_at=utcnow(), lease_until=None)
+            )
+        if db.execute(stmt).rowcount > 0:
+            _add_log(db, task.id, next_record.id, "info", result.message if not task.stop_before_publish else "等待手动确认发布")
+        db.commit()
 
 
 # 手动确认发布结果（仅对 waiting_manual_publish 状态的记录有效）
@@ -267,7 +324,7 @@ def manual_confirm_record(
     if task is not None and task.status not in TERMINAL_TASK_STATUSES:
         _run_next_pending_record(db, task)
 
-    db.commit()
+    db.flush()
     return record
 
 
@@ -292,7 +349,7 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
         task.finished_at = None
         _add_log(db, task.id, None, "info", f"Task reopened for retry of record {record.id}")
 
-    db.commit()
+    db.flush()
     return new_record
 
 
@@ -324,6 +381,11 @@ def cancel_task(db: Session, task: PublishTask) -> PublishTask:
     if task.status in TERMINAL_TASK_STATUSES:
         return task
 
+    # 信号硬取消（正在执行的 record 会收到中断）
+    evt = _task_cancel.get(task.id)
+    if evt:
+        evt.set()
+
     now = utcnow()
     records = list_task_records(db, task.id)
     task.status = "cancelled"
@@ -333,7 +395,7 @@ def cancel_task(db: Session, task: PublishTask) -> PublishTask:
             record.status = "cancelled"
             record.finished_at = now
     _add_log(db, task.id, None, "warn", "Task cancelled")
-    db.commit()
+    db.flush()
     return get_task(db, task.id) or task
 
 
@@ -519,6 +581,7 @@ def to_record_read(record: PublishRecord) -> PublishRecordRead:
         retry_of_record_id=record.retry_of_record_id,
         started_at=record.started_at,
         finished_at=record.finished_at,
+        lease_until=record.lease_until,
     )
 
 
@@ -533,3 +596,21 @@ def to_log_read(log: TaskLog) -> TaskLogRead:
         screenshot_asset_id=log.screenshot_asset_id,
         created_at=log.created_at,
     )
+
+
+def recover_stuck_records(db: Session) -> None:
+    """启动时恢复卡住的记录：status='running' 且 lease_until < utcnow()。"""
+    now = utcnow()
+    records = list(
+        db.execute(
+            select(PublishRecord).where(
+                PublishRecord.status == "running",
+                PublishRecord.lease_until < now,
+            )
+        ).scalars().all()
+    )
+    for record in records:
+        record.status = "queued"
+        record.lease_until = None
+    if records:
+        db.commit()

@@ -47,54 +47,42 @@ class ToutiaoPublisher:
 
     def publish_article(self, article: Article, account: Account, stop_before_publish: bool = False) -> PublishFillResult:
         """填充文章表单并点击发布，完成后关闭浏览器。"""
-        from playwright.sync_api import sync_playwright
+        from server.app.services.browser import managed_browser_context
 
         account_key = account_key_from_state_path(account.state_path)
         state_path = (get_data_dir() / account.state_path).resolve()
         if not state_path.exists():
             raise ToutiaoPublishError(f"Account storage state not found: {account.state_path}")
 
-        # 启动 Playwright 浏览器
-        playwright = sync_playwright().start()
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir_for_key(account_key)),
-            **launch_options(self.channel, self.executable_path),
-        )
-        page = context.pages[0] if context.pages else context.new_page()
-        try:
-            # 导航到发布页面，依次执行各步骤
-            page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
-            # 等标题输入框出现，慢机器给 20 秒；超时后 _fill_title 内部会再重试
+        with managed_browser_context(
+            account_key=account_key,
+            channel=self.channel,
+            executable_path=self.executable_path,
+        ) as (playwright, context, page):
             try:
-                page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=20000)
-            except Exception:
-                pass
-            self._ensure_publish_page(page)
-            self._close_ai_drawer(page)
-            self._fill_title(page, article.title)
-            self._fill_body(page, article.plain_text or article.content_html)
-            self._handle_cover(page, article)
-            page.wait_for_timeout(1000)
-            publish_url = self._click_publish_and_wait(page, stop_before_publish)
-            # 更新 storage_state 以保持登录状态
-            context.storage_state(path=str(state_path))
-            context.close()
-            playwright.stop()
-            return PublishFillResult(
-                url=publish_url,
-                title=article.title,
-                message=f"发布成功: {publish_url}",
-            )
-        except ToutiaoPublishError as exc:
-            screenshot = exc.screenshot or self._screenshot(page)
-            context.close()
-            playwright.stop()
-            raise ToutiaoPublishError(str(exc), screenshot) from exc
-        except Exception as exc:
-            screenshot = self._screenshot(page)
-            context.close()
-            playwright.stop()
-            raise ToutiaoPublishError(str(exc), screenshot) from exc
+                page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=20000)
+                except Exception:
+                    pass
+                self._ensure_publish_page(page)
+                self._close_ai_drawer(page)
+                self._fill_title(page, article.title)
+                self._fill_body(page, article.plain_text or article.content_html)
+                self._handle_cover(page, article)
+                page.wait_for_timeout(1000)
+                publish_url = self._click_publish_and_wait(page, stop_before_publish)
+                context.storage_state(path=str(state_path))
+                return PublishFillResult(
+                    url=publish_url,
+                    title=article.title,
+                    message=f"发布成功: {publish_url}",
+                )
+            except ToutiaoPublishError:
+                raise
+            except Exception as exc:
+                screenshot = self._screenshot(page)
+                raise ToutiaoPublishError(str(exc), screenshot) from exc
 
     def _close_ai_drawer(self, page: Any) -> None:
         """关闭头条号 AI 创作助手抽屉，避免遮挡正文编辑区。"""

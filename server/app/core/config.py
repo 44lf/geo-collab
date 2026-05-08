@@ -18,3 +18,19 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 
+
+# File upload limits
+MAX_ASSET_BYTES: int = 20 * 1024 * 1024  # 20 MB
+MAX_ZIP_BYTES: int = 50 * 1024 * 1024  # 50 MB
+
+# Allowed magic bytes for image uploads
+# Maps first bytes -> description
+# WebP: first 4 bytes "RIFF", bytes 8-12 "WEBP"
+ALLOWED_MAGIC: list[bytes] = [
+    b"\x89PNG\r\n\x1a\n",  # PNG
+    b"\xff\xd8",            # JPEG
+    b"RIFF",                # WebP (also check bytes 8:12 == b"WEBP")
+    b"GIF87a",              # GIF
+    b"GIF89a",              # GIF
+]
+

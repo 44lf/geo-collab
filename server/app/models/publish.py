@@ -73,6 +73,7 @@ class PublishRecord(Base):
     retry_of_record_id: Mapped[int | None] = mapped_column(ForeignKey("publish_records.id"), nullable=True)  # 重试来源
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 租约到期时间，用于崩溃恢复
 
     task = relationship("PublishTask", back_populates="records")
     article = relationship("Article", back_populates="publish_records")

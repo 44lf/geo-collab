@@ -92,9 +92,6 @@ def _create_asset(db: Session, data: bytes, filename: str, content_type: str) ->
     sha256 = hashlib.sha256(data).hexdigest()
     width, height = guess_image_size(data)
     storage_key = Path("assets") / f"{now:%Y}" / f"{now:%m}" / f"{asset_id}{ext}"
-    path = get_data_dir() / storage_key
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
 
     asset = Asset(
         id=asset_id,
@@ -109,6 +106,10 @@ def _create_asset(db: Session, data: bytes, filename: str, content_type: str) ->
     )
     db.add(asset)
     db.flush()
+
+    path = get_data_dir() / storage_key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
     return StoredAsset(asset=asset, path=path)
 
 
@@ -119,14 +120,116 @@ def store_bytes(db: Session, data: bytes, filename: str, content_type: str) -> S
     return _create_asset(db, data, filename, content_type)
 
 
-# 处理 HTTP 文件上传请求
+# 内部方法：将临时文件移动至最终存储，创建 Asset 记录
+def _create_asset_from_path(
+    db: Session, filepath: Path, filename: str, content_type: str,
+    sha256_hash: str, size: int,
+) -> StoredAsset:
+    now = utcnow()
+    asset_id = uuid.uuid4().hex
+    with open(filepath, "rb") as f:
+        header = f.read(32)
+    ext = normalize_ext(filename, content_type, header)
+    width, height = guess_image_size(header)
+    storage_key = Path("assets") / f"{now:%Y}" / f"{now:%m}" / f"{asset_id}{ext}"
+    dest = get_data_dir() / storage_key
+
+    asset = Asset(
+        id=asset_id,
+        filename=filename,
+        ext=ext,
+        mime_type=content_type,
+        size=size,
+        sha256=sha256_hash,
+        storage_key=storage_key.as_posix(),
+        width=width,
+        height=height,
+    )
+    db.add(asset)
+    db.flush()
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.move(str(filepath), str(dest))
+    return StoredAsset(asset=asset, path=dest)
+
+
+# 处理 HTTP 文件上传请求（流式写入 + 魔数校验 + SHA256 去重）
 async def store_upload(db: Session, upload: UploadFile) -> StoredAsset:
-    data = await upload.read()
-    if not data:
-        raise ValueError("Uploaded file is empty")
+    import tempfile
+
+    from fastapi import HTTPException
+
+    from server.app.core.config import ALLOWED_MAGIC, MAX_ASSET_BYTES
+
     filename = upload.filename or f"{uuid.uuid4().hex}.bin"
     content_type = upload.content_type or "application/octet-stream"
-    stored = _create_asset(db, data, filename, content_type)
-    db.commit()
-    db.refresh(stored.asset)
-    return stored
+
+    # 流式写入临时文件，同时校验魔数和大小
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp_path = Path(tmp.name)
+    sha256 = hashlib.sha256()
+    total = 0
+    first_chunk = True
+
+    try:
+        while True:
+            chunk = await upload.read(65536)  # 64KB
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_ASSET_BYTES:
+                tmp.close()
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds {MAX_ASSET_BYTES // (1024 * 1024)}MB limit",
+                )
+
+            if first_chunk:
+                valid_magic = False
+                for magic in ALLOWED_MAGIC:
+                    if chunk.startswith(magic):
+                        if magic == b"RIFF":
+                            # WebP 需额外检查 bytes 8:12
+                            if len(chunk) >= 12 and chunk[8:12] == b"WEBP":
+                                valid_magic = True
+                                break
+                        else:
+                            valid_magic = True
+                            break
+                if not valid_magic:
+                    tmp.close()
+                    tmp_path.unlink(missing_ok=True)
+                    raise HTTPException(status_code=415, detail="Unsupported file type")
+                first_chunk = False
+
+            tmp.write(chunk)
+            sha256.update(chunk)
+
+        tmp.close()
+
+        if total == 0:
+            tmp_path.unlink(missing_ok=True)
+            raise ValueError("Uploaded file is empty")
+
+        # SHA256 去重
+        digest = sha256.hexdigest()
+        existing = db.query(Asset).filter(Asset.sha256 == digest).first()
+        if existing:
+            tmp_path.unlink(missing_ok=True)
+            db.flush()
+            db.refresh(existing)
+            return StoredAsset(asset=existing, path=resolve_asset_path(existing))
+
+        stored = _create_asset_from_path(db, tmp_path, filename, content_type, digest, total)
+        db.flush()
+        db.refresh(stored.asset)
+        return stored
+
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from server.app.db.session import get_db
 from server.app.models import PublishRecord
-from server.app.schemas.article import ArticleCoverUpdate, ArticleCreate, ArticleRead, ArticleUpdate
+from server.app.schemas.article import ArticleCoverUpdate, ArticleCreate, ArticleListRead, ArticleRead, ArticleUpdate
 from server.app.services.articles import (
     create_article,
     delete_article,
@@ -18,10 +18,15 @@ from server.app.services.articles import (
 router = APIRouter()
 
 
-# 获取文章列表，支持按标题/作者搜索
-@router.get("", response_model=list[ArticleRead])
-def read_articles(q: str | None = Query(default=None), db: Session = Depends(get_db)) -> list[ArticleRead]:
-    articles = list_articles(db, q)
+# 获取文章列表，支持按标题/作者搜索、分页
+@router.get("", response_model=list[ArticleListRead])
+def read_articles(
+    q: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, le=200),
+    db: Session = Depends(get_db),
+) -> list[ArticleListRead]:
+    articles = list_articles(db, q, skip=skip, limit=limit)
     if not articles:
         return []
     article_ids = [a.id for a in articles]
@@ -31,7 +36,20 @@ def read_articles(q: str | None = Query(default=None), db: Session = Depends(get
         .group_by(PublishRecord.article_id)
     ).all()
     count_map = {row.article_id: row.cnt for row in rows}
-    return [to_article_read(a, count_map.get(a.id, 0)) for a in articles]
+    return [
+        ArticleListRead(
+            id=a.id,
+            title=a.title,
+            author=a.author,
+            cover_asset_id=a.cover_asset_id,
+            word_count=a.word_count,
+            status=a.status,
+            published_count=count_map.get(a.id, 0),
+            created_at=a.created_at,
+            updated_at=a.updated_at,
+        )
+        for a in articles
+    ]
 
 
 # 创建新文章

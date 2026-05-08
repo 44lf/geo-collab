@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import delete as sa_delete, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
@@ -121,12 +121,24 @@ def get_article(db: Session, article_id: int) -> Article | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
-# 列出文章，支持按标题/作者模糊搜索
-def list_articles(db: Session, query: str | None = None) -> list[Article]:
+# 列出文章，支持按标题/作者模糊搜索、分页
+def list_articles(db: Session, query: str | None = None, skip: int = 0, limit: int = 50) -> list[Article]:
     stmt = select(Article).options(selectinload(Article.body_assets)).order_by(Article.updated_at.desc())
     if query:
-        like = f"%{query}%"
-        stmt = stmt.where((Article.title.like(like)) | (Article.author.like(like)))
+        if len(query) >= 3:
+            fts_result = db.execute(
+                text("SELECT rowid FROM articles_fts WHERE articles_fts MATCH :q"),
+                {"q": query},
+            ).all()
+            if fts_result:
+                fts_ids = [row[0] for row in fts_result]
+                stmt = stmt.where(Article.id.in_(fts_ids))
+            else:
+                return []
+        else:
+            like = f"%{query}%"
+            stmt = stmt.where((Article.title.like(like)) | (Article.author.like(like)))
+    stmt = stmt.offset(skip).limit(limit)
     return list(db.execute(stmt).scalars().all())
 
 
@@ -146,7 +158,7 @@ def create_article(db: Session, payload: ArticleCreate) -> Article:
     )
     sync_article_body_assets(db, article, payload.content_json)
     db.add(article)
-    db.commit()
+    db.flush()
     return get_article(db, article.id) or article
 
 
@@ -171,7 +183,7 @@ def update_article(db: Session, article: Article, payload: ArticleUpdate) -> Art
         sync_article_body_assets(db, article, content_json)
 
     article.updated_at = utcnow()
-    db.commit()
+    db.flush()
     return get_article(db, article.id) or article
 
 
@@ -180,7 +192,7 @@ def set_article_cover(db: Session, article: Article, cover_asset_id: str | None)
     ensure_asset_exists(db, cover_asset_id)
     article.cover_asset_id = cover_asset_id
     article.updated_at = utcnow()
-    db.commit()
+    db.flush()
     return get_article(db, article.id) or article
 
 
@@ -195,7 +207,7 @@ def delete_article(db: Session, article: Article) -> None:
         db.execute(sa_delete(TaskLog).where(TaskLog.record_id.in_(record_ids)))
         db.execute(sa_delete(PublishRecord).where(PublishRecord.id.in_(record_ids)))
     db.delete(article)
-    db.commit()
+    db.flush()
 
 
 # 将 ORM Article 转为响应体

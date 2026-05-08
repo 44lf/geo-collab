@@ -43,14 +43,43 @@ def export_accounts(payload: AccountExportRequest | None = None, db: Session = D
         export_path,
         media_type="application/zip",
         filename=export_path.name,
-        headers={"X-Export-Path": str(export_path)},
     )
 
 
 # 导入账号授权包
 @router.post("/import")
 async def import_accounts(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict:
+    import io
+    import re
+    import zipfile
+
+    from server.app.core.config import MAX_ZIP_BYTES
+
     zip_bytes = await file.read()
+    if len(zip_bytes) > MAX_ZIP_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"ZIP file exceeds {MAX_ZIP_BYTES // (1024 * 1024)}MB limit",
+        )
+
+    ZIP_ENTRY_RE = re.compile(r"^browser_states/toutiao/([A-Za-z0-9_-]{1,120})/storage_state\.json$")
+    MAX_ENTRIES = 50
+    MAX_ENTRY_BYTES = 2 * 1024 * 1024
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            entries = archive.namelist()
+            if len(entries) > MAX_ENTRIES:
+                raise HTTPException(status_code=400, detail=f"ZIP contains {len(entries)} entries, max {MAX_ENTRIES} allowed")
+            for entry_name in entries:
+                info = archive.getinfo(entry_name)
+                if not ZIP_ENTRY_RE.match(entry_name):
+                    raise HTTPException(status_code=400, detail=f"Invalid ZIP entry path: {entry_name}")
+                if info.file_size > MAX_ENTRY_BYTES:
+                    raise HTTPException(status_code=400, detail=f"ZIP entry too large: {entry_name} ({info.file_size} bytes)")
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file")
+
     try:
         return import_accounts_auth_package(db, zip_bytes)
     except ValueError as exc:

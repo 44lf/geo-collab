@@ -1,7 +1,9 @@
 import shutil
+import threading
 import uuid
 from pathlib import Path
 
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -30,20 +32,69 @@ def build_test_app(monkeypatch) -> TestApp:
     monkeypatch.setenv("GEO_DATA_DIR", str(data_dir))
     get_settings.cache_clear()
 
+    # 清理全局任务锁和取消标志（避免跨测试污染）
+    from server.app.services import tasks as _tasks_mod
+    _tasks_mod._task_locks.clear()
+    _tasks_mod._task_locks_lock = threading.Lock()
+    _tasks_mod._task_cancel.clear()
+
+    db_path = data_dir / "test.db"
     engine = create_engine(
-        "sqlite://",
+        f"sqlite:///{db_path.as_posix()}",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
+    with engine.connect() as conn:
+        conn.execute(
+            sa.text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5("
+                "title, author, content='articles', content_rowid='id', tokenize='trigram')"
+            )
+        )
+        conn.execute(sa.text("INSERT OR IGNORE INTO articles_fts(rowid, title, author) SELECT id, title, author FROM articles"))
+        conn.execute(
+            sa.text(
+                "CREATE TRIGGER IF NOT EXISTS after_articles_insert "
+                "AFTER INSERT ON articles BEGIN "
+                "INSERT INTO articles_fts(rowid, title, author) VALUES (new.id, new.title, new.author); "
+                "END"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "CREATE TRIGGER IF NOT EXISTS after_articles_delete "
+                "AFTER DELETE ON articles BEGIN "
+                "INSERT INTO articles_fts(articles_fts, rowid, title, author) "
+                "VALUES('delete', old.id, old.title, old.author); "
+                "END"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "CREATE TRIGGER IF NOT EXISTS after_articles_update "
+                "AFTER UPDATE ON articles BEGIN "
+                "INSERT INTO articles_fts(articles_fts, rowid, title, author) "
+                "VALUES('delete', old.id, old.title, old.author); "
+                "INSERT INTO articles_fts(rowid, title, author) VALUES (new.id, new.title, new.author); "
+                "END"
+            )
+        )
+        conn.commit()
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
     def override_get_db():
         db: Session = TestingSessionLocal()
         try:
             yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
+
+    # 让后台任务线程也使用测试数据库
+    monkeypatch.setattr("server.app.api.routes.tasks.bg_session_factory", TestingSessionLocal)
 
     app = create_app()
     app.dependency_overrides[get_db] = override_get_db

@@ -3,6 +3,22 @@ from server.app.services.toutiao_publisher import PublishFillResult, ToutiaoPubl
 from server.tests.utils import build_test_app
 
 
+def _execute_and_wait(client, task_id: int, max_wait: float = 5.0) -> dict:
+    """后台执行任务并轮询直到完成（含 started_at 确认）。"""
+    resp = client.post(f"/api/tasks/{task_id}/execute")
+    assert resp.status_code == 202
+    assert resp.json() == {"queued": True}
+    import time as _time
+    deadline = _time.time() + max_wait
+    while _time.time() < deadline:
+        task = client.get(f"/api/tasks/{task_id}").json()
+        if task["status"] not in ("pending", "running", "queued"):
+            if task["status"] in ("succeeded", "failed", "partial_failed", "cancelled"):
+                return task
+        _time.sleep(0.05)
+    raise AssertionError(f"Task {task_id} did not complete within {max_wait}s (last status: {task.get('status', '?')})")
+
+
 class FakePublisher:
     def __init__(self, result: PublishFillResult | None = None, error: ToutiaoPublishError | None = None):
         self.result = result or PublishFillResult(
@@ -95,6 +111,7 @@ def test_create_single_task_generates_one_publish_record(monkeypatch):
                 "retry_of_record_id": None,
                 "started_at": None,
                 "finished_at": None,
+                "lease_until": None,
             }
         ]
 
@@ -278,12 +295,11 @@ def test_execute_single_task_auto_succeeds(monkeypatch):
             },
         ).json()
 
-        executed = client.post(f"/api/tasks/{task['id']}/execute")
+        executed = _execute_and_wait(client, task['id'])
 
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "succeeded"
-        assert executed.json()["started_at"] is not None
-        assert executed.json()["finished_at"] is not None
+        assert executed["status"] == "succeeded"
+        assert executed["started_at"] is not None
+        assert executed["finished_at"] is not None
 
         records = client.get(f"/api/tasks/{task['id']}/records").json()
         assert records[0]["status"] == "succeeded"
@@ -332,10 +348,9 @@ def test_execute_group_task_auto_completes_all_records(monkeypatch):
             },
         ).json()
 
-        executed = client.post(f"/api/tasks/{task['id']}/execute")
+        executed = _execute_and_wait(client, task['id'])
 
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "succeeded"
+        assert executed["status"] == "succeeded"
 
         records = client.get(f"/api/tasks/{task['id']}/records").json()
         assert [record["status"] for record in records] == ["succeeded", "succeeded", "succeeded"]
@@ -395,10 +410,9 @@ def test_execute_task_records_publisher_failure_with_screenshot(monkeypatch):
             },
         ).json()
 
-        executed = client.post(f"/api/tasks/{task['id']}/execute")
+        executed = _execute_and_wait(client, task['id'])
 
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "failed"
+        assert executed["status"] == "failed"
         records = client.get(f"/api/tasks/{task['id']}/records").json()
         assert records[0]["status"] == "failed"
         assert records[0]["error_message"] == "Toutiao title field not found"
@@ -447,9 +461,8 @@ def test_publisher_failure_in_group_task_auto_advances_to_next_record(monkeypatc
             },
         ).json()
 
-        executed = client.post(f"/api/tasks/{task['id']}/execute")
-        assert executed.status_code == 200
-        assert executed.json()["status"] == "partial_failed"
+        executed = _execute_and_wait(client, task['id'])
+        assert executed["status"] == "partial_failed"
 
         records = client.get(f"/api/tasks/{task['id']}/records").json()
         assert records[0]["status"] == "failed"
@@ -479,7 +492,7 @@ def test_retry_failed_record_creates_pending_record_and_resets_task(monkeypatch)
                 "stop_before_publish": False,
             },
         ).json()
-        client.post(f"/api/tasks/{task['id']}/execute")
+        _execute_and_wait(client, task['id'])
 
         task_before = client.get(f"/api/tasks/{task['id']}").json()
         assert task_before["status"] == "failed"

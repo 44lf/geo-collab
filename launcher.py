@@ -6,6 +6,7 @@ Bundle:        pyinstaller geo.spec  →  dist/GeoCollab.exe
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import sys
 import threading
@@ -95,6 +96,17 @@ def main() -> None:
             "Google Chrome not found. Browser automation (account login / article publish) "
             "requires Chrome to be installed."
         )
+
+    # 确保本地 API token 存在（第一次启动时自动生成）
+    import secrets
+
+    if "GEO_LOCAL_API_TOKEN" not in os.environ:
+        token = secrets.token_hex(32)
+        os.environ["GEO_LOCAL_API_TOKEN"] = token
+        env_path = project_root / ".env"
+        with open(env_path, "a") as f:
+            f.write(f"\nGEO_LOCAL_API_TOKEN={token}\n")
+        logging.info("Generated GEO_LOCAL_API_TOKEN=%s", token)
 
     port = _find_free_port()
     logging.info("Starting server on port %d", port)

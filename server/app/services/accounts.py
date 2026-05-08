@@ -77,13 +77,19 @@ def get_or_create_toutiao_platform(db: Session) -> Platform:
 
     platform = Platform(code="toutiao", name="头条号", base_url="https://mp.toutiao.com", enabled=True)
     db.add(platform)
-    db.commit()
+    db.flush()
     db.refresh(platform)
     return platform
 
 
+import re
+
+VALID_EXE_RE = re.compile(r"^[a-zA-Z0-9_\-/.\\: ]+\.(exe|bat|cmd)$", re.IGNORECASE)
+
+
 # Playwright 浏览器启动参数
 def launch_options(channel: str, executable_path: str | None) -> dict[str, Any]:
+    from pathlib import Path
     options: dict[str, Any] = {
         "headless": False,
         "viewport": {"width": 1440, "height": 900},
@@ -91,6 +97,10 @@ def launch_options(channel: str, executable_path: str | None) -> dict[str, Any]:
     if channel:
         options["channel"] = channel
     if executable_path:
+        if not VALID_EXE_RE.match(executable_path):
+            raise ValueError(f"Invalid executable_path: {executable_path}")
+        if not Path(executable_path).is_file():
+            raise ValueError(f"Executable not found: {executable_path}")
         options["executable_path"] = executable_path
     return options
 
@@ -110,24 +120,21 @@ def run_toutiao_browser_check(
     executable_path: str | None,
     wait_seconds: int,
 ) -> BrowserCheckResult:
-    from playwright.sync_api import sync_playwright
+    from server.app.services.browser import managed_browser_context
 
     ensure_data_dirs()
     state_dir_for_key(account_key).mkdir(parents=True, exist_ok=True)
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir_for_key(account_key)),
-            **launch_options(channel, executable_path),
-        )
-        page = context.pages[0] if context.pages else context.new_page()
+    with managed_browser_context(
+        account_key=account_key,
+        channel=channel,
+        executable_path=executable_path,
+    ) as (playwright, context, page):
         page.goto(TOUTIAO_HOME, wait_until="domcontentloaded", timeout=60000)
-        # 等 JS 渲染完毕（登录弹窗由 JS 注入，domcontentloaded 时还未出现）
         try:
             page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
             pass
 
-        # 轮询等待页面加载完毕或超时
         deadline = wait_seconds * 1000
         elapsed = 0
         logged_in = False
@@ -141,15 +148,12 @@ def run_toutiao_browser_check(
                 title = page.title()
                 body = page.locator("body").inner_text(timeout=3000)
             except Exception:
-                # 页面正在跳转，执行上下文暂时不可用，等下一轮
                 continue
             logged_in = detect_login_state_text(url, title, body)
             if logged_in:
                 break
 
-        # 保存登录状态到 storage_state.json
         context.storage_state(path=str(state_path_for_key(account_key)))
-        context.close()
         return BrowserCheckResult(logged_in=logged_in, url=url, title=title)
 
 
@@ -214,7 +218,7 @@ def login_toutiao(db: Session, payload: ToutiaoLoginRequest) -> Account:
             account.last_login_at = now
         account.updated_at = now
 
-    db.commit()
+    db.flush()
     return get_account(db, account.id) or account
 
 
@@ -236,7 +240,7 @@ def check_account(db: Session, account: Account, payload: AccountCheckRequest) -
 
     account.last_checked_at = now
     account.updated_at = now
-    db.commit()
+    db.flush()
     return get_account(db, account.id) or account
 
 
@@ -259,7 +263,7 @@ def relogin_account(db: Session, account: Account, payload: AccountCheckRequest)
 def rename_account(db: Session, account: Account, display_name: str) -> Account:
     account.display_name = display_name.strip()
     account.updated_at = utcnow()
-    db.commit()
+    db.flush()
     return get_account(db, account.id) or account
 
 
@@ -274,7 +278,7 @@ def delete_account(db: Session, account: Account) -> None:
         db.execute(sa_delete(TaskLog).where(TaskLog.record_id.in_(record_ids)))
         db.execute(sa_delete(PublishRecord).where(PublishRecord.id.in_(record_ids)))
     db.delete(account)
-    db.commit()
+    db.flush()
 
 
 # 导出账号授权包（ZIP 格式，含 storage_state.json）
@@ -378,7 +382,7 @@ def import_accounts_auth_package(db: Session, zip_bytes: bytes) -> dict[str, lis
             db.add(account)
             imported.append(display_name)
 
-    db.commit()
+    db.flush()
     return {"imported": imported, "skipped": skipped}
 
 

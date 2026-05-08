@@ -1,16 +1,29 @@
 import base64
+import struct
+import zlib
 
 from server.tests.utils import build_test_app
 
-PNG_1X1 = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X8pJ8AAAAASUVORK5CYII="
-)
+
+def _make_1x1_png(r: int, g: int, b: int) -> bytes:
+    """Create a minimal 1x1 RGB PNG with the given pixel color."""
+    def chunk(typ: bytes, data: bytes) -> bytes:
+        c = typ + data
+        return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xFFFFFFFF)
+    sig = b'\x89PNG\r\n\x1a\n'
+    ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
+    idat = chunk(b'IDAT', zlib.compress(b'\x00' + bytes([r, g, b])))
+    iend = chunk(b'IEND', b'')
+    return sig + ihdr + idat + iend
 
 
-def upload_asset(client, filename: str) -> str:
+PNG_1X1 = _make_1x1_png(255, 255, 255)
+
+
+def upload_asset(client, filename: str, data: bytes | None = None) -> str:
     response = client.post(
         "/api/assets",
-        files={"file": (filename, PNG_1X1, "image/png")},
+        files={"file": (filename, data or PNG_1X1, "image/png")},
     )
     assert response.status_code == 200
     return response.json()["id"]
@@ -39,9 +52,9 @@ def test_create_article_syncs_body_images_and_excludes_cover(monkeypatch):
     client = test_app.client
 
     try:
-        cover_id = upload_asset(client, "cover.png")
-        image_1 = upload_asset(client, "body-1.png")
-        image_2 = upload_asset(client, "body-2.png")
+        cover_id = upload_asset(client, "cover.png", _make_1x1_png(255, 255, 255))
+        image_1 = upload_asset(client, "body-1.png", _make_1x1_png(255, 0, 0))
+        image_2 = upload_asset(client, "body-2.png", _make_1x1_png(0, 0, 255))
 
         response = client.post(
             "/api/articles",
@@ -77,8 +90,8 @@ def test_update_article_rebuilds_body_image_order(monkeypatch):
     client = test_app.client
 
     try:
-        image_1 = upload_asset(client, "body-1.png")
-        image_2 = upload_asset(client, "body-2.png")
+        image_1 = upload_asset(client, "body-1.png", _make_1x1_png(255, 0, 0))
+        image_2 = upload_asset(client, "body-2.png", _make_1x1_png(0, 0, 255))
 
         created = client.post(
             "/api/articles",
@@ -110,8 +123,8 @@ def test_article_cover_endpoint_does_not_touch_body_assets(monkeypatch):
     client = test_app.client
 
     try:
-        image_1 = upload_asset(client, "body-1.png")
-        cover_id = upload_asset(client, "cover.png")
+        image_1 = upload_asset(client, "body-1.png", _make_1x1_png(255, 0, 0))
+        cover_id = upload_asset(client, "cover.png", _make_1x1_png(255, 255, 255))
         created = client.post(
             "/api/articles",
             json={
