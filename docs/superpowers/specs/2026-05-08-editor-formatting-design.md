@@ -56,6 +56,8 @@
 - **高亮色**：同上，预置几个常用颜色（黄/绿/粉/无）
 - **下划线 / 删除线**：图标按钮，toggle 行为
 - **对齐**：三个图标按钮（Left / Center / Right），互斥激活状态
+- **撤销 / 重做**：图标按钮，调 StarterKit 内置 History 的 `undo()` / `redo()`，按钮在无历史时 disabled
+- **清除格式**：图标按钮，调 `unsetAllMarks().clearNodes()`，还原选中内容为默认段落样式
 
 ---
 
