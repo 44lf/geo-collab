@@ -614,6 +614,88 @@ input:focus, select:focus, textarea:focus {
 
 .editorSurface img { max-width: 100%; border-radius: var(--r); }
 
+/* ── toolbar new controls ── */
+.toolbarSep {
+  width: 1px;
+  height: 20px;
+  background: var(--hair);
+  margin: 0 2px;
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.toolbarSelect {
+  height: 28px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-sm);
+  padding: 0 6px;
+  font-size: 12px;
+  background: var(--paper);
+  color: var(--fg);
+  cursor: pointer;
+  align-self: center;
+}
+
+.toolbarColorBtn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all .12s;
+}
+.toolbarColorBtn:hover {
+  background: var(--paper);
+  border-color: var(--hair);
+  color: var(--accent);
+}
+.toolbarColorBar {
+  display: block;
+  width: 16px;
+  height: 3px;
+  border-radius: 1px;
+}
+.toolbarColorBtn input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+.toolbar button:disabled,
+.toolbar button:disabled:hover {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-2);
+}
+
+/* ── image resize handle ── */
+.imgResizeHandle {
+  position: absolute;
+  right: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 32px;
+  background: #3b82f6;
+  border-radius: 4px;
+  cursor: ew-resize;
+  z-index: 10;
+}
+
 /* ═══════════════════════════════ MEDIA WORKSPACE ═══════════════════════════════ */
 .mediaGrid {
   display: grid;
