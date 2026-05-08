@@ -1,0 +1,90 @@
+<h2>增强后的编辑器工具栏</h2>
+<p class="subtitle">字体控制 + 排版对齐 + 图片缩放，选你倾向的图片缩放方案</p>
+
+<!-- Toolbar mockup -->
+<div class="mockup" style="margin-bottom:32px">
+  <div class="mockup-header">工具栏预览（字体 + 排版部分不变，新增如下）</div>
+  <div class="mockup-body" style="padding:0">
+
+    <!-- Row 1: existing + new text format -->
+    <div style="display:flex;align-items:center;gap:4px;padding:8px 12px;border-bottom:1px solid #e5e7eb;flex-wrap:wrap">
+      <!-- Font size dropdown -->
+      <select style="height:28px;border:1px solid #d1d5db;border-radius:4px;padding:0 6px;font-size:13px;background:#fff;cursor:pointer">
+        <option>12px</option>
+        <option selected>15px</option>
+        <option>18px</option>
+        <option>20px</option>
+        <option>24px</option>
+      </select>
+
+      <div style="width:1px;height:20px;background:#e5e7eb;margin:0 4px"></div>
+
+      <!-- Bold / Italic / Underline / Strike -->
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-weight:bold;font-size:13px;cursor:pointer">B</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-style:italic;font-size:13px;cursor:pointer">I</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;text-decoration:underline;font-size:13px;cursor:pointer">U</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;text-decoration:line-through;font-size:13px;cursor:pointer">S</button>
+
+      <div style="width:1px;height:20px;background:#e5e7eb;margin:0 4px"></div>
+
+      <!-- Color pickers -->
+      <div style="position:relative;display:flex;align-items:center">
+        <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px">
+          <span style="font-weight:bold;font-size:11px;line-height:1">A</span>
+          <span style="width:16px;height:3px;background:#e63946;border-radius:1px"></span>
+        </button>
+      </div>
+      <div style="position:relative;display:flex;align-items:center">
+        <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px">
+          <span style="font-size:11px;line-height:1">A</span>
+          <span style="width:16px;height:3px;background:#ffd166;border-radius:1px"></span>
+        </button>
+      </div>
+
+      <div style="width:1px;height:20px;background:#e5e7eb;margin:0 4px"></div>
+
+      <!-- Alignment -->
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#e0e7ff;font-size:11px;cursor:pointer" title="左对齐">≡</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer" title="居中">≡</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer" title="右对齐">≡</button>
+
+      <div style="width:1px;height:20px;background:#e5e7eb;margin:0 4px"></div>
+
+      <!-- Existing: H1 H2 lists quote link image -->
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer">H1</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer">H2</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer">•≡</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer">1≡</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer">"</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer">🔗</button>
+      <button style="width:28px;height:28px;border:1px solid #d1d5db;border-radius:4px;background:#fff;font-size:11px;cursor:pointer">🖼</button>
+    </div>
+
+    <!-- Editor area -->
+    <div style="padding:20px;min-height:100px;font-size:15px;line-height:1.8;color:#374151">
+      <p>这是一段正文文字，<strong>加粗</strong>和<span style="color:#e63946">红色字体</span>都有效果。</p>
+      <p style="text-align:center;font-size:20px">居中的大号标题文字</p>
+    </div>
+  </div>
+</div>
+
+<!-- Image resize options -->
+<h3>图片缩放方案，选一个</h3>
+
+<div class="options">
+  <div class="option" data-choice="resize-handles" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>拖拽缩放（推荐）</h3>
+      <p>点击图片后四角出现拖拽手柄，像 Word 一样拖动调整大小。直观，适合精确控制尺寸。需要引入社区扩展 <code>tiptap-extension-resize-image</code>。</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="resize-presets" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>点击预设尺寸</h3>
+      <p>点击图片后浮出小工具条，选 小 / 中 / 大 / 通栏 四个宽度。实现简单，适合文章发布场景——头条号本身也不允许任意图片宽度。</p>
+    </div>
+  </div>
+</div>
