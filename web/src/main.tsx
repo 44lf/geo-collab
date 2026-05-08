@@ -1695,7 +1695,7 @@ function EditorToolbar({
         />
         <input
           type="color"
-          defaultValue="#1a1a1a"
+          value={(editor.getAttributes("textStyle").color as string | undefined) ?? "#1a1a1a"}
           onChange={(e) => editor.chain().focus().setColor(e.target.value).run()}
         />
       </label>
@@ -1709,7 +1709,7 @@ function EditorToolbar({
         />
         <input
           type="color"
-          defaultValue="#ffd166"
+          value={(editor.getAttributes("highlight").color as string | undefined) ?? "#ffd166"}
           onChange={(e) => editor.chain().focus().setHighlight({ color: e.target.value }).run()}
         />
       </label>
