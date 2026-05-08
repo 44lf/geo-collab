@@ -2,6 +2,30 @@
 
 本仓库是 Geo 协作平台 Windows 本地 MVP 的工程目录。实施计划见 `plan/README.md`。
 
+## 代码阅读顺序
+
+以下顺序适合新人从零开始掌握项目全貌：
+
+### 第一层：项目骨架
+1. **`server/app/core/config.py`** — 全局配置（数据目录、应用名等）
+2. **`server/app/db/session.py`** — 数据库连接方式（SQLite WAL + busy_timeout）
+3. **`server/app/models/`** — 11 个 ORM 模型：Platform → Account → Article → PublishTask → PublishRecord，以及 ArticleGroup / Asset 等辅助表
+
+### 第二层：业务逻辑
+4. **`server/app/services/accounts.py`** — 账号登录 / 检测 / 导入导出，了解 storage_state 生命周期
+5. **`server/app/services/toutiao_publisher.py`** — Playwright 自动化发文，了解头条页面操作流程
+6. **`server/app/services/tasks.py`** — 任务调度引擎，了解 publish 执行链路和状态机
+
+### 第三层：API 接口
+7. **`server/app/api/routes/`** — 6 个路由模块，了解 RESTful 接口如何暴露业务逻辑
+
+### 第四层：前端
+8. **`web/src/main.tsx`** — 单文件 1377 行，所有 UI 组件集中于此，配合 `web/src/styles.css` 理解界面
+
+### 第五层：入口与测试
+9. **`server/app/launcher.py`** — 桌面应用入口（Alembic 自动升级等启动逻辑）
+10. **`server/tests/`** — 关键测试文件，验证对各模块的理解
+
 ## 环境
 
 - Python 使用 conda 环境：`geo_xzpt`
