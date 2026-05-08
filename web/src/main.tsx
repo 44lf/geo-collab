@@ -34,12 +34,19 @@ function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
     width: string;
   };
   const imgRef = useRef<HTMLImageElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      cleanupRef.current?.();
+    };
+  }, []);
 
   function startResize(e: React.MouseEvent) {
     e.preventDefault();
     const startX = e.clientX;
     const startWidth = imgRef.current?.offsetWidth ?? 300;
-    const containerWidth = imgRef.current?.parentElement?.offsetWidth ?? 600;
+    const containerWidth = imgRef.current?.parentElement?.offsetWidth || 600;
 
     function onMove(ev: MouseEvent) {
       const pct = Math.min(
@@ -51,7 +58,12 @@ function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
     function onUp() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      cleanupRef.current = null;
     }
+    cleanupRef.current = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }
