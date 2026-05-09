@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import base64
 import logging
 import re
+import struct
+import sys
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -84,9 +87,9 @@ class ToutiaoPublisher:
                 self._ensure_publish_page(page)
                 self._close_ai_drawer(page)
                 self._fill_title(page, article.title)
-                self._fill_body(page, article)
                 self._handle_cover(page, article)
-                page.wait_for_timeout(1000)
+                self._fill_body(page, article)
+                self._wait_publish_images_ready(page)
                 publish_url = self._click_publish_and_wait(page, stop_before_publish)
                 context.storage_state(path=str(state_path))
                 return PublishFillResult(
@@ -175,7 +178,7 @@ class ToutiaoPublisher:
     def _insert_body_text(self, page: Any, text: str) -> None:
         if not text:
             return
-        page.evaluate("(text) => document.execCommand('insertText', false, text)", text)
+        page.keyboard.type(text)
 
     def _body_segments(self, article: Article) -> list[BodySegment]:
         content_json = loads_content_json(article.content_json)
@@ -272,45 +275,234 @@ class ToutiaoPublisher:
             raise ToutiaoPublishError(f"正文图片文件不存在: {asset.id}")
 
         before_count = self._body_image_count(page)
-        encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-        page.evaluate(
+
+        self._set_clipboard_files([image_path])
+        page.keyboard.press("Control+V")
+
+        try:
+            self._wait_body_image_ready(page, before_count)
+        except Exception as exc:
+            after_count = self._body_image_count(page)
+            page_closed = self._page_is_closed(page)
+            screenshot = self._screenshot(page)
+            raise ToutiaoPublishError(
+                (
+                    f"正文图片未能插入编辑器: {asset.id}; "
+                    f"before={before_count}; after={after_count}; "
+                    f"page_closed={page_closed}; error={type(exc).__name__}: {exc}"
+                ),
+                screenshot,
+            ) from exc
+
+    def _wait_body_image_ready(self, page: Any, before_count: int, timeout_ms: int = 30000) -> None:
+        page.wait_for_function(
+            "count => document.querySelectorAll(\"[contenteditable='true'] img\").length > count",
+            arg=before_count,
+            timeout=timeout_ms,
+        )
+        page.wait_for_function(
             """
-            async ({ data, mimeType, filename }) => {
-              const active = document.activeElement;
-              const target =
-                active?.closest?.("[contenteditable='true']") ||
-                document.querySelector("[contenteditable='true']") ||
-                active ||
-                document.body;
-              target.focus?.();
-
-              const binary = atob(data);
-              const bytes = new Uint8Array(binary.length);
-              for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-              const file = new File([bytes], filename, { type: mimeType });
-              const transfer = new DataTransfer();
-              transfer.items.add(file);
-
-              const event = new Event("paste", { bubbles: true, cancelable: true });
-              Object.defineProperty(event, "clipboardData", { value: transfer });
-              target.dispatchEvent(event);
+            count => {
+              const images = Array.from(document.querySelectorAll("[contenteditable='true'] img"));
+              return images.length > count &&
+                images.every((img) => img.complete && img.naturalWidth > 0);
             }
             """,
-            {
-                "data": encoded,
-                "mimeType": asset.mime_type or "image/png",
-                "filename": asset.filename or image_path.name,
-            },
+            arg=before_count,
+            timeout=timeout_ms,
         )
+        page.wait_for_timeout(4000)
+
+    def _wait_publish_images_ready(self, page: Any, timeout_ms: int = 120000) -> None:
+        deadline = time.monotonic() + timeout_ms / 1000
+        stable_rounds = 0
+        last_state: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            state = self._publish_image_state(page)
+            last_state = state
+            if (
+                state["invalid_count"] == 0
+                and state["pending_count"] == 0
+                and not state["has_progress"]
+                and not state["has_uploading_text"]
+            ):
+                stable_rounds += 1
+                if stable_rounds >= 2:
+                    page.wait_for_timeout(500)
+                    return
+            else:
+                stable_rounds = 0
+            page.wait_for_timeout(2000)
+
+        screenshot = self._screenshot(page)
+        raise ToutiaoPublishError(f"正文图片上传未完成，仍存在临时图片 URI: {last_state}", screenshot)
+
+    def _publish_image_state(self, page: Any) -> dict[str, Any]:
+        return page.evaluate(
+            """
+            () => {
+              const editables = Array.from(document.querySelectorAll("[contenteditable='true']"));
+              const images = editables.flatMap((node) => Array.from(node.querySelectorAll("img")));
+              const isVisible = (node) => {
+                const style = window.getComputedStyle(node);
+                const rect = node.getBoundingClientRect();
+                return style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  rect.width > 0 &&
+                  rect.height > 0;
+              };
+              const isTemporarySrc = (src) => {
+                if (!src) return true;
+                const value = String(src);
+                return value.startsWith("blob:") ||
+                  value.startsWith("data:") ||
+                  value.startsWith("file:") ||
+                  value.includes("127.0.0.1") ||
+                  value.includes("localhost") ||
+                  value.includes("/api/assets/");
+              };
+              const states = images.map((img, index) => {
+                const src = img.currentSrc || img.src || img.getAttribute("src") || "";
+                return {
+                  index,
+                  src: String(src).slice(0, 180),
+                  complete: Boolean(img.complete),
+                  naturalWidth: Number(img.naturalWidth || 0),
+                  temporary: isTemporarySrc(src),
+                };
+              });
+              const progressSelectors = [
+                "[role='progressbar']",
+                ".byte-progress",
+                ".semi-progress",
+                "[class*='progress']",
+                "[class*='Progress']",
+                "[class*='uploading']",
+                "[class*='Uploading']"
+              ];
+              const progressNodes = editables.flatMap((node) =>
+                progressSelectors.flatMap((selector) => Array.from(node.querySelectorAll(selector)))
+              );
+              const bodyText = document.body?.innerText || "";
+              return {
+                image_count: states.length,
+                invalid_count: states.filter((item) => item.temporary).length,
+                pending_count: states.filter((item) => !item.complete || item.naturalWidth <= 0).length,
+                invalid_sources: states.filter((item) => item.temporary).map((item) => item.src),
+                pending_sources: states
+                  .filter((item) => !item.complete || item.naturalWidth <= 0)
+                  .map((item) => item.src),
+                has_progress: progressNodes.some(isVisible),
+                has_uploading_text: /上传中|正在上传|图片处理中|加载中|处理中/.test(bodyText),
+              };
+            }
+            """
+        )
+
+    @staticmethod
+    def _set_clipboard_files(paths: list[Path]) -> None:
+        """将文件路径写入 Windows 剪贴板（CF_HDROP），模拟资源管理器复制文件。"""
+        if sys.platform != "win32":
+            raise ToutiaoPublishError("正文图片粘贴仅支持 Windows 文件剪贴板")
+
+        absolute_paths = [str(path.resolve()) for path in paths]
+        if not absolute_paths:
+            raise ToutiaoPublishError("正文图片粘贴文件列表为空")
+
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.EmptyClipboard.argtypes = []
+        user32.EmptyClipboard.restype = wintypes.BOOL
+        user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+        user32.SetClipboardData.restype = wintypes.HANDLE
+        user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+        user32.RegisterClipboardFormatW.restype = wintypes.UINT
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = wintypes.BOOL
+
+        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalLock.restype = wintypes.LPVOID
+        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+        kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalFree.restype = wintypes.HGLOBAL
+
+        cf_hdrop = 15
+        preferred_drop_effect = user32.RegisterClipboardFormatW("Preferred DropEffect")
+        gmem_moveable = 0x0002
+        gmem_zeroinit = 0x0040
+        payload = ToutiaoPublisher._build_hdrop_payload(absolute_paths)
+        drop_effect_payload = struct.pack("<I", 1)
+
+        handle = kernel32.GlobalAlloc(gmem_moveable | gmem_zeroinit, len(payload))
+        if not handle:
+            raise ToutiaoPublishError("无法分配正文图片剪贴板内存")
+        drop_effect_handle = kernel32.GlobalAlloc(gmem_moveable | gmem_zeroinit, len(drop_effect_payload))
+        if not drop_effect_handle:
+            kernel32.GlobalFree(handle)
+            raise ToutiaoPublishError("无法分配正文图片剪贴板操作内存")
+
+        locked = kernel32.GlobalLock(handle)
+        if not locked:
+            kernel32.GlobalFree(handle)
+            kernel32.GlobalFree(drop_effect_handle)
+            raise ToutiaoPublishError("无法锁定正文图片剪贴板内存")
+
         try:
-            page.wait_for_function(
-                "count => document.querySelectorAll(\"[contenteditable='true'] img\").length > count",
-                before_count,
-                timeout=45000,
-            )
-            page.wait_for_timeout(1000)
-        except Exception as exc:
-            raise ToutiaoPublishError(f"正文图片未能插入编辑器: {asset.id}") from exc
+            ctypes.memmove(locked, payload, len(payload))
+        finally:
+            kernel32.GlobalUnlock(handle)
+
+        locked = kernel32.GlobalLock(drop_effect_handle)
+        if not locked:
+            kernel32.GlobalFree(handle)
+            kernel32.GlobalFree(drop_effect_handle)
+            raise ToutiaoPublishError("无法锁定正文图片剪贴板操作内存")
+
+        try:
+            ctypes.memmove(locked, drop_effect_payload, len(drop_effect_payload))
+        finally:
+            kernel32.GlobalUnlock(drop_effect_handle)
+
+        opened = False
+        try:
+            for _ in range(10):
+                if user32.OpenClipboard(None):
+                    opened = True
+                    break
+                time.sleep(0.05)
+            if not opened:
+                raise ToutiaoPublishError("无法打开 Windows 剪贴板")
+
+            if not user32.EmptyClipboard():
+                raise ToutiaoPublishError("无法清空 Windows 剪贴板")
+            if not user32.SetClipboardData(cf_hdrop, handle):
+                raise ToutiaoPublishError("无法写入正文图片文件到 Windows 剪贴板")
+            if not preferred_drop_effect or not user32.SetClipboardData(preferred_drop_effect, drop_effect_handle):
+                raise ToutiaoPublishError("无法写入正文图片剪贴板复制标记")
+            handle = None
+            drop_effect_handle = None
+        finally:
+            if opened:
+                user32.CloseClipboard()
+            if handle:
+                kernel32.GlobalFree(handle)
+            if drop_effect_handle:
+                kernel32.GlobalFree(drop_effect_handle)
+
+    @staticmethod
+    def _build_hdrop_payload(absolute_paths: list[str]) -> bytes:
+        dropfiles_header = struct.pack("<IiiII", 20, 0, 0, 0, 1)
+        file_list = ("\0".join(absolute_paths) + "\0\0").encode("utf-16le")
+        return dropfiles_header + file_list
 
     def _handle_cover(self, page: Any, article: Article) -> None:
         """上传封面图片。封面图是必填项。"""
@@ -321,17 +513,18 @@ class ToutiaoPublisher:
         if not cover_path.exists():
             raise ToutiaoPublishError(f"Cover asset file not found: {article.cover_asset_id}")
 
-        try:
-            add_btn = page.locator(".add-icon").first
-            add_btn.scroll_into_view_if_needed()
-            add_btn.click()
-        except Exception as exc:
-            raise ToutiaoPublishError(f"无法点击封面上传按钮: {exc}") from exc
+        if self._cover_already_present(page):
+            return
 
         try:
-            page.get_by_role("button", name="本地上传").wait_for(state="visible", timeout=5000)
+            self._click_cover_upload_entry(page)
         except Exception as exc:
-            raise ToutiaoPublishError(f"封面上传对话框未出现: {exc}") from exc
+            body_hint = self._body_text_hint(page)
+            screenshot = self._screenshot(page)
+            raise ToutiaoPublishError(
+                f"无法点击封面上传按钮: {exc}\n页面内容摘要: {body_hint}",
+                screenshot,
+            ) from exc
 
         try:
             with page.expect_file_chooser(timeout=5000) as fc_info:
@@ -350,6 +543,64 @@ class ToutiaoPublisher:
             page.wait_for_timeout(800)
         except Exception as exc:
             raise ToutiaoPublishError(f"无法点击封面确认按钮: {exc}") from exc
+
+    def _cover_already_present(self, page: Any) -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    """
+                    () => {
+                      const bodyText = document.body?.innerText || "";
+                      if (!/(编辑替换|已上传\\s*1\\s*张图片)/.test(bodyText)) return false;
+                      const visibleImage = Array.from(document.querySelectorAll("img")).some((img) => {
+                        if (img.closest("[contenteditable='true']")) return false;
+                        const rect = img.getBoundingClientRect();
+                        const style = window.getComputedStyle(img);
+                        return img.complete &&
+                          img.naturalWidth > 0 &&
+                          rect.width >= 40 &&
+                          rect.height >= 40 &&
+                          style.display !== "none" &&
+                          style.visibility !== "hidden";
+                      });
+                      return visibleImage || /已上传\\s*1\\s*张图片/.test(bodyText);
+                    }
+                    """
+                )
+            )
+        except Exception:
+            logger.warning("Failed to detect existing Toutiao cover", exc_info=True)
+            return False
+
+    def _click_cover_upload_entry(self, page: Any) -> None:
+        candidates = [
+            page.get_by_text("编辑替换").first,
+            page.get_by_text("添加封面").first,
+            page.locator("[class*='cover'] .add-icon").first,
+            page.locator(".add-icon").first,
+        ]
+        last_error: Exception | None = None
+        for candidate in candidates:
+            try:
+                candidate.wait_for(state="visible", timeout=3000)
+                candidate.scroll_into_view_if_needed(timeout=3000)
+                candidate.click(timeout=3000)
+                page.get_by_role("button", name="本地上传").wait_for(state="visible", timeout=7000)
+                return
+            except Exception as exc:
+                last_error = exc
+                self._dismiss_cover_candidate_side_effect(page)
+                continue
+        if last_error is not None:
+            raise last_error
+        raise ToutiaoPublishError("未找到封面上传入口")
+
+    def _dismiss_cover_candidate_side_effect(self, page: Any) -> None:
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(200)
+        except Exception:
+            logger.debug("Failed to dismiss failed cover entry side effect", exc_info=True)
 
     def _click_publish_and_wait(self, page: Any, stop_before_publish: bool = False) -> str:
         """两步发布：先点"预览并发布"，再点"确认发布"。"""
@@ -433,3 +684,9 @@ class ToutiaoPublisher:
         except Exception:
             logger.warning("Failed to capture screenshot", exc_info=True)
             return None
+
+    def _page_is_closed(self, page: Any) -> bool | str:
+        try:
+            return bool(page.is_closed())
+        except Exception as exc:
+            return f"unknown: {type(exc).__name__}: {exc}"
