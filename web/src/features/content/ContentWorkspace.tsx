@@ -252,6 +252,9 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
   const [groupPickerArticle, setGroupPickerArticle] = useState<ArticleSummary | null>(null);
   const [groupPickerSelectedId, setGroupPickerSelectedId] = useState<number | null>(null);
+  const [confirmDeleteArticle, setConfirmDeleteArticle] = useState(false);
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(false);
+  const [confirmUnsavedNew, setConfirmUnsavedNew] = useState(false);
 
   const pasteImageRef = useRef<(file: File) => void>(() => {});
   const [charCount, setCharCount] = useState(0);
@@ -649,7 +652,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         </div>
         <div className="topActions">
           {notice ? <span className="status">{notice}</span> : null}
-          <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => { if (window.confirm("确定要删除这篇文章吗？此操作不可撤销。")) void deleteCurrentArticle(); }}>
+          <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
             <Trash2 size={16} />
             删除
           </button>
@@ -657,7 +660,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
             <Save size={16} />
             保存
           </button>
-          <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (!(dirtyCheckRef?.current?.() ?? false) || window.confirm("当前文章有未保存内容，确定要放弃吗？")) resetDraft(); }}>
+          <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (dirtyCheckRef?.current?.() ?? false) { setConfirmUnsavedNew(true); } else { resetDraft(); } }}>
             <Plus size={16} />
             新建
           </button>
@@ -796,7 +799,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
                 <button type="button" onClick={() => { setEditingGroupId(null); setGroupName(""); setSelectedArticleIds([]); }}>
                   取消编辑
                 </button>
-                <button type="button" onClick={() => { if (window.confirm("确定要删除该分组吗？此操作不可撤销。")) deleteEditingGroup(); }}>
+                <button type="button" onClick={() => setConfirmDeleteGroup(true)}>
                   删除分组
                 </button>
               </div>
@@ -882,6 +885,65 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
               <button type="button" disabled={!groupPickerSelectedId || loading} onClick={() => void addArticleToGroup()}>
                 加入
               </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {confirmDeleteArticle ? (
+        <div className="modalBackdrop" role="presentation" onMouseDown={() => setConfirmDeleteArticle(false)}>
+          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <div>
+                <h2>确认删除文章？</h2>
+                <p>《{draft.title}》删除后不可恢复</p>
+              </div>
+              <button type="button" aria-label="关闭" onClick={() => setConfirmDeleteArticle(false)}>
+                <X size={16} />
+              </button>
+            </header>
+            <footer className="modalActions">
+              <button type="button" onClick={() => setConfirmDeleteArticle(false)}>取消</button>
+              <button type="button" className="dangerButton" disabled={loading} onClick={() => { setConfirmDeleteArticle(false); void deleteCurrentArticle(); }}>确认删除</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {confirmDeleteGroup ? (
+        <div className="modalBackdrop" role="presentation" onMouseDown={() => setConfirmDeleteGroup(false)}>
+          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <div>
+                <h2>确认删除分组？</h2>
+                <p>分组下文章的关联将被移除，文章本身不受影响</p>
+              </div>
+              <button type="button" aria-label="关闭" onClick={() => setConfirmDeleteGroup(false)}>
+                <X size={16} />
+              </button>
+            </header>
+            <footer className="modalActions">
+              <button type="button" onClick={() => setConfirmDeleteGroup(false)}>取消</button>
+              <button type="button" className="dangerButton" disabled={loading} onClick={() => { setConfirmDeleteGroup(false); void deleteEditingGroup(); }}>确认删除</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {confirmUnsavedNew ? (
+        <div className="modalBackdrop" role="presentation" onMouseDown={() => setConfirmUnsavedNew(false)}>
+          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <div>
+                <h2>当前有未保存的内容，确认放弃？</h2>
+              </div>
+              <button type="button" aria-label="关闭" onClick={() => setConfirmUnsavedNew(false)}>
+                <X size={16} />
+              </button>
+            </header>
+            <footer className="modalActions">
+              <button type="button" onClick={() => setConfirmUnsavedNew(false)}>取消</button>
+              <button type="button" className="primaryButton" onClick={() => { setConfirmUnsavedNew(false); resetDraft(); }}>确认放弃</button>
             </footer>
           </section>
         </div>

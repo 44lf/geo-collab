@@ -57,11 +57,11 @@ class ToutiaoPublisher:
     def publish_article(self, article: Article, account: Account, stop_before_publish: bool = False) -> PublishFillResult:
         """填充文章表单并点击发布，完成后关闭浏览器。"""
         if not article.title or not article.title.strip():
-            raise ValueError("文章标题不能为空")
+            raise ToutiaoPublishError("标题不能为空")
         if not article_has_publishable_body(article):
-            raise ValueError("文章正文不能为空")
+            raise ToutiaoPublishError("正文不能为空")
         if article.cover_asset is None:
-            raise ValueError("文章封面不能为空")
+            raise ToutiaoPublishError("封面图片是必填项")
 
         from server.app.services.browser import managed_browser_context
 

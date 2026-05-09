@@ -38,11 +38,44 @@ def _find_free_port(start: int = 8765) -> int:
     raise RuntimeError("No free port found in range 8765-8864")
 
 
-def _open_browser(port: int, delay: float = 1.8) -> None:
+def _open_browser(url: str, delay: float = 1.8) -> None:
     time.sleep(delay)
-    url = f"http://127.0.0.1:{port}"
     logging.info("Opening browser: %s", url)
     webbrowser.open(url)
+
+
+def _make_tray_image():
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([2, 2, 62, 62], fill="#2563eb")
+    try:
+        font = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 32)
+    except Exception:
+        font = ImageFont.load_default()
+    draw.text((32, 32), "G", fill="white", font=font, anchor="mm")
+    return img
+
+
+def _run_tray(url: str, server) -> None:
+    import pystray
+    img = _make_tray_image()
+
+    def on_open(icon, item):
+        webbrowser.open(url)
+
+    def on_quit(icon, item):
+        server.should_exit = True
+        icon.stop()
+
+    menu = pystray.Menu(
+        pystray.MenuItem("GeoCollab 运行中", None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("打开界面", on_open, default=True),
+        pystray.MenuItem("退出 GeoCollab", on_quit),
+    )
+    tray = pystray.Icon("GeoCollab", img, "GeoCollab", menu)
+    tray.run()
 
 
 def _run_migrations(alembic_dir: Path) -> None:
@@ -146,24 +179,34 @@ def main() -> None:
         os.environ["GEO_LOCAL_API_TOKEN"] = token
 
     port = _find_free_port()
+    url = f"http://127.0.0.1:{port}"
     logging.info("Step 4: Starting server on port %d", port)
-
-    threading.Thread(target=_open_browser, args=(port,), daemon=True).start()
 
     # Import app object directly so PyInstaller bundles the full server package.
     logging.info("Step 5: Importing server app...")
     from server.app.main import app  # noqa: PLC0415
 
+    import asyncio
     import uvicorn
 
-    logging.info("Step 6: Starting uvicorn...")
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=port,
-        log_config=None,
-        access_log=False,
-    )
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
+    server = uvicorn.Server(config)
+
+    logging.info("Step 6: Starting uvicorn in background thread...")
+    threading.Thread(target=lambda: asyncio.run(server.serve()), daemon=True).start()
+    threading.Thread(target=_open_browser, args=(url,), daemon=True).start()
+
+    logging.info("Step 7: Starting system tray...")
+    try:
+        _run_tray(url, server)
+    except Exception as exc:
+        logging.warning("System tray unavailable (%s), running without tray", exc)
+        # Fallback: block main thread until Ctrl-C
+        try:
+            while not server.should_exit:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            server.should_exit = True
 
 
 if __name__ == "__main__":

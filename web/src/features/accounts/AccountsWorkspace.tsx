@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, authHeaders } from "../../api/client";
 import type { Account } from "../../types";
-import { CheckCircle2, Download, Plus, RefreshCw, Trash2, Upload, UserPlus } from "lucide-react";
+import { CheckCircle2, Download, Plus, RefreshCw, Trash2, Upload, UserPlus, X } from "lucide-react";
 
 export function AccountsWorkspace() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -11,6 +11,7 @@ export function AccountsWorkspace() {
   const [loading, setLoading] = useState(false);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [confirmDeleteAccount, setConfirmDeleteAccount] = useState<Account | null>(null);
 
   async function refreshAccounts() {
     const data = await api<Account[]>("/api/accounts");
@@ -253,7 +254,7 @@ export function AccountsWorkspace() {
                   <RefreshCw size={15} />
                   重登
                 </button>
-                <button type="button" disabled={loading} onClick={() => { if (window.confirm("确定要删除该账号吗？此操作不可撤销。")) void remove(account); }}>
+                <button type="button" disabled={loading} onClick={() => setConfirmDeleteAccount(account)}>
                   <Trash2 size={15} />
                   删除
                 </button>
@@ -263,6 +264,26 @@ export function AccountsWorkspace() {
           {accounts.length === 0 ? <p className="emptyText">暂无授权账号</p> : null}
         </section>
       </section>
+
+      {confirmDeleteAccount ? (
+        <div className="modalBackdrop" role="presentation" onMouseDown={() => setConfirmDeleteAccount(null)}>
+          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <div>
+                <h2>确认删除账号？</h2>
+                <p>将同时清除该账号的本地授权状态，需要重新登录</p>
+              </div>
+              <button type="button" aria-label="关闭" onClick={() => setConfirmDeleteAccount(null)}>
+                <X size={16} />
+              </button>
+            </header>
+            <footer className="modalActions">
+              <button type="button" onClick={() => setConfirmDeleteAccount(null)}>取消</button>
+              <button type="button" className="dangerButton" disabled={loading} onClick={() => { const account = confirmDeleteAccount; setConfirmDeleteAccount(null); void remove(account); }}>确认删除</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </>
   );
 }

@@ -105,11 +105,11 @@ def _create_asset(db: Session, data: bytes, filename: str, content_type: str) ->
         height=height,
     )
     db.add(asset)
-    db.flush()
 
     path = get_data_dir() / storage_key
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+    db.flush()
     return StoredAsset(asset=asset, path=path)
 
 

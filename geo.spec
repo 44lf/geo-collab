@@ -73,6 +73,16 @@ a = Analysis(
         "python_multipart",
         # email validation (pydantic)
         "email_validator",
+        # system tray
+        "pystray",
+        "pystray._base",
+        "pystray._win32",
+        # Pillow (tray icon rendering)
+        "PIL",
+        "PIL.Image",
+        "PIL.ImageDraw",
+        "PIL.ImageFont",
+        "PIL._imaging",
     ],
     hookspath=[],
     hooksconfig={},

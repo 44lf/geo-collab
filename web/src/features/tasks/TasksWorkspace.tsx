@@ -320,9 +320,10 @@ export function TasksWorkspace() {
               )}
               <div>
                 <p style={{ margin: "0 0 6px", fontSize: 13, color: "#475569" }}>发布账号</p>
+                {formType === "single" ? <p style={{ margin: "0 0 6px", fontSize: 12, color: "#e67e22" }}>单篇发布只能选一个账号</p> : null}
                 {validAccounts.map((a) => (
                   <label key={a.id} className="checkLine">
-                    <input type="checkbox" checked={formAccountIds.includes(a.id)} onChange={() => toggleAccount(a.id)} />
+                    <input type={formType === "single" ? "radio" : "checkbox"} name="formAccount" checked={formAccountIds.includes(a.id)} onChange={() => toggleAccount(a.id)} />
                     <span>{a.display_name}</span>
                   </label>
                 ))}
