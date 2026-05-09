@@ -13,6 +13,8 @@ web/dist/
 !.env.example
 GeoAppData/
 .test-data/
+.playwright-cli/
+_tmp_*/
 *.db
 *.sqlite
 *.log
