@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -68,6 +69,14 @@ def extract_body_image_nodes(content_json: dict[str, Any]) -> list[ImageNode]:
     return images
 
 
+def article_has_publishable_body(article: Article) -> bool:
+    if (article.plain_text or "").strip():
+        return True
+    if re.sub(r"<[^>]+>", "", article.content_html or "").strip():
+        return True
+    return bool(extract_body_image_nodes(loads_content_json(article.content_json)))
+
+
 # 序列化 content_json 为紧凑 JSON 字符串
 def dumps_content_json(content_json: dict[str, Any]) -> str:
     return json.dumps(content_json, ensure_ascii=False, separators=(",", ":"))
@@ -126,17 +135,22 @@ def get_article(db: Session, article_id: int) -> Article | None:
 def list_articles(db: Session, query: str | None = None, skip: int = 0, limit: int = 50) -> list[Article]:
     stmt = select(Article).options(selectinload(Article.body_assets)).order_by(Article.updated_at.desc())
     if query:
+        fts_ok = False
         if len(query) >= 3:
-            fts_result = db.execute(
-                text("SELECT rowid FROM articles_fts WHERE articles_fts MATCH :q"),
-                {"q": query},
-            ).all()
-            if fts_result:
-                fts_ids = [row[0] for row in fts_result]
-                stmt = stmt.where(Article.id.in_(fts_ids))
-            else:
-                return []
-        else:
+            try:
+                fts_result = db.execute(
+                    text("SELECT rowid FROM articles_fts WHERE articles_fts MATCH :q"),
+                    {"q": query},
+                ).all()
+                if fts_result:
+                    fts_ids = [row[0] for row in fts_result]
+                    stmt = stmt.where(Article.id.in_(fts_ids))
+                else:
+                    return []
+                fts_ok = True
+            except Exception:
+                pass
+        if not fts_ok:
             like = f"%{query}%"
             stmt = stmt.where((Article.title.like(like)) | (Article.author.like(like)))
     stmt = stmt.offset(skip).limit(limit)
@@ -214,6 +228,16 @@ def set_article_cover(db: Session, article: Article, cover_asset_id: str | None)
 # 删除文章（先清除分组关联和发布记录，避免 NOT NULL FK 约束阻塞）
 def delete_article(db: Session, article: Article) -> None:
     article_id = article.id
+
+    active = db.execute(
+        select(PublishRecord.id).where(
+            PublishRecord.article_id == article_id,
+            PublishRecord.status.in_(["pending", "running", "waiting_manual_publish"]),
+        )
+    ).scalars().all()
+    if active:
+        raise ValueError("存在未完成发布记录，无法删除文章")
+
     db.execute(sa_delete(ArticleGroupItem).where(ArticleGroupItem.article_id == article_id))
     record_ids = list(
         db.execute(select(PublishRecord.id).where(PublishRecord.article_id == article_id)).scalars()

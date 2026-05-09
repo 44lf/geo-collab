@@ -75,6 +75,51 @@ def _check_chrome() -> bool:
     return False
 
 
+def _show_chrome_missing_error() -> None:
+    message = (
+        "未检测到 Google Chrome 浏览器。\n\n"
+        "Chrome 浏览器是账号登录和文章发布功能的必要依赖。\n"
+        "请安装 Chrome 浏览器后重新启动 GeoCollab。\n\n"
+        "下载地址：https://www.google.com/chrome/"
+    )
+    gui_shown = False
+    try:
+        import tkinter.messagebox
+        try:
+            import tkinter
+            root = tkinter.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            tkinter.messagebox.showerror("GeoCollab — 缺少 Chrome", message)
+            root.destroy()
+            gui_shown = True
+        except Exception:
+            pass
+    except ImportError:
+        pass
+    if gui_shown:
+        sys.exit(1)
+    raise RuntimeError(message)
+
+
+def _ensure_chromium() -> None:
+    if not _check_chrome():
+        _show_chrome_missing_error()
+
+
+def _read_or_generate_token(data_dir: Path) -> str:
+    import secrets
+
+    token_path = data_dir / "local_token.txt"
+    if token_path.exists():
+        token = token_path.read_text(encoding="utf-8").strip()
+        if token:
+            return token
+    token = secrets.token_hex(32)
+    token_path.write_text(token, encoding="utf-8")
+    return token
+
+
 def main() -> None:
     # Resolve project root — works both in dev and inside a PyInstaller bundle
     if hasattr(sys, "_MEIPASS"):
@@ -89,44 +134,61 @@ def main() -> None:
     logging.info("Geo Collab starting — data dir: %s", data_dir)
 
     alembic_dir = project_root / "server" / "alembic"
+    logging.info("Step 1: Running DB migrations...")
     _run_migrations(alembic_dir)
 
-    if not _check_chrome():
-        logging.warning(
-            "Google Chrome not found. Browser automation (account login / article publish) "
-            "requires Chrome to be installed."
-        )
-
-    # 确保本地 API token 存在（第一次启动时自动生成）
-    import secrets
+    logging.info("Step 2: Checking Chrome availability...")
+    _ensure_chromium()
 
     if "GEO_LOCAL_API_TOKEN" not in os.environ:
-        token = secrets.token_hex(32)
+        logging.info("Step 3: Initializing local token...")
+        token = _read_or_generate_token(data_dir)
         os.environ["GEO_LOCAL_API_TOKEN"] = token
-        env_path = project_root / ".env"
-        with open(env_path, "a") as f:
-            f.write(f"\nGEO_LOCAL_API_TOKEN={token}\n")
-        logging.info("Generated GEO_LOCAL_API_TOKEN=%s", token)
 
     port = _find_free_port()
-    logging.info("Starting server on port %d", port)
+    logging.info("Step 4: Starting server on port %d", port)
 
     threading.Thread(target=_open_browser, args=(port,), daemon=True).start()
 
     # Import app object directly so PyInstaller bundles the full server package.
-    # Do NOT use the string form "server.app.main:app" — PyInstaller cannot trace
-    # dynamic string imports and would leave the entire server out of the bundle.
+    logging.info("Step 5: Importing server app...")
     from server.app.main import app  # noqa: PLC0415
 
     import uvicorn
 
+    logging.info("Step 6: Starting uvicorn...")
     uvicorn.run(
         app,
         host="127.0.0.1",
         port=port,
-        log_level="warning",
+        log_config=None,
+        access_log=False,
     )
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback as _tb
+        crash_msg = _tb.format_exc()
+        crash_log = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "GeoCollab" / "logs" / "crash.log"
+        try:
+            crash_log.parent.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(
+                level=logging.INFO,
+                format="%(asctime)s %(levelname)s %(message)s",
+                handlers=[logging.FileHandler(crash_log, encoding="utf-8")],
+            )
+            logging.critical("GeoCollab crashed on startup\n%s", crash_msg)
+        except Exception:
+            pass
+        try:
+            import tkinter.messagebox
+            tkinter.messagebox.showerror(
+                "GeoCollab — 启动失败",
+                f"GeoCollab 启动时遇到错误，请查看日志：\n\n{crash_log}\n\n{crash_msg[-2000:]}",
+            )
+        except Exception:
+            pass
+        sys.exit(1)

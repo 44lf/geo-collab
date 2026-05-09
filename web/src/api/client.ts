@@ -55,6 +55,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getToken();
+  return token ? { "X-Geo-Token": token } : {};
+}
+
 export function assetSrc(assetId: string | null): string | null {
   if (!assetId) return null;
   return withAssetToken(`/api/assets/${assetId}`);

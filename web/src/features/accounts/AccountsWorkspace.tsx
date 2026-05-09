@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../../api/client";
+import { api, authHeaders } from "../../api/client";
 import type { Account } from "../../types";
 import { CheckCircle2, Download, Plus, RefreshCw, Trash2, Upload, UserPlus } from "lucide-react";
 
@@ -97,12 +97,7 @@ export function AccountsWorkspace() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const response = await fetch("/api/accounts/import", { method: "POST", body: formData });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || `${response.status}`);
-      }
-      const result = await response.json() as { imported: string[]; skipped: string[] };
+      const result = await api<{ imported: string[]; skipped: string[] }>("/api/accounts/import", { method: "POST", body: formData });
       await refreshAccounts();
       const msg = `导入完成：${result.imported.length} 个新增${result.skipped.length ? `，${result.skipped.length} 个已存在跳过` : ""}`;
       setNotice(msg);
@@ -134,9 +129,10 @@ export function AccountsWorkspace() {
   async function exportAuthPackage() {
     setLoading(true);
     try {
+      const headers = { ...await authHeaders(), "Content-Type": "application/json" };
       const response = await fetch("/api/accounts/export", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ account_ids: accounts.map((account) => account.id) }),
       });
       if (!response.ok) {
@@ -257,7 +253,7 @@ export function AccountsWorkspace() {
                   <RefreshCw size={15} />
                   重登
                 </button>
-                <button type="button" disabled={loading} onClick={() => void remove(account)}>
+                <button type="button" disabled={loading} onClick={() => { if (window.confirm("确定要删除该账号吗？此操作不可撤销。")) void remove(account); }}>
                   <Trash2 size={15} />
                   删除
                 </button>

@@ -36,6 +36,8 @@ def build_test_app(monkeypatch) -> TestApp:
     from server.app.services import tasks as _tasks_mod
     _tasks_mod._task_locks.clear()
     _tasks_mod._task_locks_lock = threading.Lock()
+    _tasks_mod._account_locks.clear()
+    _tasks_mod._account_locks_lock = threading.Lock()
     _tasks_mod._task_cancel.clear()
 
     db_path = data_dir / "test.db"

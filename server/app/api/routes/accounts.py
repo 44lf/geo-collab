@@ -62,7 +62,7 @@ async def import_accounts(file: UploadFile = File(...), db: Session = Depends(ge
             detail=f"ZIP file exceeds {MAX_ZIP_BYTES // (1024 * 1024)}MB limit",
         )
 
-    ZIP_ENTRY_RE = re.compile(r"^browser_states/toutiao/([A-Za-z0-9_-]{1,120})/storage_state\.json$")
+    ZIP_ENTRY_RE = re.compile(r"^(?:manifest\.json|accounts/[a-zA-Z0-9_]+-\d+/(?:account|storage_state)\.json)$")
     MAX_ENTRIES = 50
     MAX_ENTRY_BYTES = 2 * 1024 * 1024
 

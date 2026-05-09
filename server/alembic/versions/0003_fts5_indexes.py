@@ -25,10 +25,16 @@ def upgrade() -> None:
 
     # FTS5 virtual table (external content — reads text from articles table)
     # Uses trigram tokenizer for CJK/Chinese full-text search support
-    op.execute(
-        "CREATE VIRTUAL TABLE articles_fts USING fts5("
-        "title, author, content='articles', content_rowid='id', tokenize='trigram')"
-    )
+    try:
+        op.execute(
+            "CREATE VIRTUAL TABLE articles_fts USING fts5("
+            "title, author, content='articles', content_rowid='id', tokenize='trigram')"
+        )
+    except Exception:
+        op.execute(
+            "CREATE VIRTUAL TABLE articles_fts USING fts5("
+            "title, author, content='articles', content_rowid='id')"
+        )
     op.execute("INSERT INTO articles_fts(rowid, title, author) SELECT id, title, author FROM articles")
 
     # Keep FTS index in sync with articles DML

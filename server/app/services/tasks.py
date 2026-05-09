@@ -1,15 +1,17 @@
 import threading
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, wait
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
 from server.app.models import (
     Account,
     Article,
+    ArticleBodyAsset,
     ArticleGroup,
     ArticleGroupItem,
     Platform,
@@ -19,6 +21,7 @@ from server.app.models import (
     TaskLog,
 )
 from server.app.services.assets import store_bytes
+from server.app.services.articles import article_has_publishable_body
 from server.app.services.toutiao_publisher import ToutiaoPublisher, ToutiaoPublishError
 from server.app.schemas.task import (
     PublishRecordRead,
@@ -36,14 +39,25 @@ VALID_TASK_TYPES = {"single", "group_round_robin"}
 TERMINAL_TASK_STATUSES = {"succeeded", "partial_failed", "failed", "cancelled"}
 ACTIVE_RECORD_STATUSES = {"running"}
 CAN_RETRY_TASK_STATUSES = {"failed", "partial_failed", "succeeded", "cancelled"}
+MAX_CONCURRENT_RECORDS = 3
 
 # 任务级互斥锁，防止同一任务被并发执行
+# 锁对象永久保留（不 pop），避免 race condition
 _task_locks: dict[int, threading.Lock] = {}
-_task_locks_lock = threading.Lock()
+_account_locks: dict[int, threading.Lock] = {}
+_account_locks_lock = threading.Lock()
+_task_locks_lock = threading.Lock()  # 仅在测试中用于批量 clean
 
 # 任务硬取消标志
 _task_cancel: dict[int, threading.Event] = {}
 RECORD_TIMEOUT_SECONDS = 300
+
+
+@dataclass(frozen=True)
+class RunningRecord:
+    record_id: int
+    account_id: int
+    started_monotonic: float
 
 
 # 验证通过后的任务输入
@@ -109,6 +123,14 @@ def list_task_logs(db: Session, task_id: int, after_id: int = 0, limit: int = 10
 
 
 # 创建新任务
+def delete_all_tasks(db: Session) -> None:
+    db.execute(sa_delete(TaskLog))
+    db.execute(sa_delete(PublishRecord))
+    db.execute(sa_delete(PublishTaskAccount))
+    db.execute(sa_delete(PublishTask))
+    db.flush()
+
+
 def create_task(db: Session, payload: TaskCreate) -> PublishTask:
     if payload.client_request_id:
         existing = db.execute(
@@ -178,15 +200,11 @@ def get_record(db: Session, record_id: int) -> PublishRecord | None:
 
 # 执行任务：依次处理每条待处理的发布记录
 def execute_task(db: Session, task: PublishTask) -> PublishTask:
-    # 获取或创建任务级互斥锁
-    with _task_locks_lock:
-        if task.id not in _task_locks:
-            _task_locks[task.id] = threading.Lock()
-    lock = _task_locks[task.id]
-    if not lock.acquire(blocking=False):
+    lock = _task_locks.setdefault(task.id, threading.Lock())
+    locked = lock.acquire(blocking=False)
+    if not locked:
         raise ValueError(f"Task {task.id} is already being executed")
 
-    # 注册取消事件
     cancel_event = threading.Event()
     _task_cancel[task.id] = cancel_event
 
@@ -212,24 +230,249 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
                 task.started_at = now
             _add_log(db, task.id, None, "info", "Task started")
 
-        records = list_task_records(db, task.id)
-        active_record = next((record for record in records if record.status in ACTIVE_RECORD_STATUSES), None)
-        if active_record is not None:
-            _add_log(db, task.id, active_record.id, "info", f"Task is waiting on record {active_record.id}")
-            db.flush()
-            return get_task(db, task.id) or task
-
-        _run_next_pending_record(db, task, records)
+        _run_pending_records(db, task)
         db.flush()
         return get_task(db, task.id) or task
     finally:
-        lock.release()
-        with _task_locks_lock:
-            _task_locks.pop(task.id, None)
+        if locked:
+            lock.release()
         _task_cancel.pop(task.id, None)
 
 
 # 内部方法：循环执行待处理的发布记录
+def _run_pending_records(db: Session, task: PublishTask) -> None:
+    cancel_evt = _task_cancel.get(task.id)
+    running: dict[Future, RunningRecord] = {}
+    executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_RECORDS)
+
+    try:
+        while True:
+            if cancel_evt and cancel_evt.is_set():
+                _add_log(db, task.id, None, "warn", "Task cancelled during execution")
+                break
+
+            if task.stop_before_publish:
+                records = list_task_records(db, task.id)
+                if any(record.status == "waiting_manual_publish" for record in records):
+                    db.commit()
+                    return
+
+            _start_runnable_records(db, task, executor, running)
+
+            if not running:
+                records = list_task_records(db, task.id)
+                if not any(record.status == "pending" for record in records):
+                    _aggregate_task_status(task, records)
+                    db.commit()
+                    return
+                db.commit()
+                time.sleep(0.2)
+                continue
+
+            done, _ = wait(running.keys(), timeout=1, return_when=FIRST_COMPLETED)
+            timed_out = [
+                future
+                for future, running_record in running.items()
+                if time.monotonic() - running_record.started_monotonic > RECORD_TIMEOUT_SECONDS
+            ]
+            for future in set(done) | set(timed_out):
+                running_record = running.pop(future)
+                if future in timed_out and not future.done():
+                    _mark_record_failed(db, task.id, running_record.record_id, "Timeout: record execution exceeded 300s")
+                    _release_account_lock(running_record.account_id)
+                    db.commit()
+                    continue
+                _finish_record_future(db, task, running_record.record_id, future)
+                _release_account_lock(running_record.account_id)
+                db.commit()
+    finally:
+        for running_record in running.values():
+            _release_account_lock(running_record.account_id)
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _start_runnable_records(
+    db: Session,
+    task: PublishTask,
+    executor: ThreadPoolExecutor,
+    running: dict[Future, RunningRecord],
+) -> None:
+    running_accounts = {item.account_id for item in running.values()}
+    blocked_accounts: set[int] = set()
+    slots = MAX_CONCURRENT_RECORDS - len(running)
+    if task.stop_before_publish:
+        slots = min(slots, 1)
+    if slots <= 0:
+        return
+
+    while slots > 0:
+        db.flush()
+        records = list_task_records(db, task.id)
+        next_record = next(
+            (
+                record
+                for record in records
+                if record.status == "pending"
+                and record.account_id not in running_accounts
+                and record.account_id not in blocked_accounts
+            ),
+            None,
+        )
+        if next_record is None:
+            return
+
+        if not _try_acquire_account_lock(next_record.account_id):
+            blocked_accounts.add(next_record.account_id)
+            continue
+
+        try:
+            if not _claim_record(db, task.id, next_record):
+                _release_account_lock(next_record.account_id)
+                continue
+
+            article = _load_article_for_publish(db, next_record.article_id)
+            account = db.get(Account, next_record.account_id)
+            validation_error = _validate_record_inputs(article, account)
+            if validation_error:
+                _mark_record_failed(db, task.id, next_record.id, validation_error)
+                _release_account_lock(next_record.account_id)
+                db.commit()
+                continue
+
+            _detach_record_inputs(db, next_record, article, account)
+            future = executor.submit(_publish_record, next_record, article, account, task.stop_before_publish)
+            running[future] = RunningRecord(next_record.id, next_record.account_id, time.monotonic())
+            running_accounts.add(next_record.account_id)
+            slots -= 1
+            db.commit()
+        except Exception:
+            _release_account_lock(next_record.account_id)
+            raise
+
+
+def _try_acquire_account_lock(account_id: int) -> bool:
+    with _account_locks_lock:
+        lock = _account_locks.setdefault(account_id, threading.Lock())
+    return lock.acquire(blocking=False)
+
+
+def _release_account_lock(account_id: int) -> None:
+    lock = _account_locks.get(account_id)
+    if lock is not None and lock.locked():
+        try:
+            lock.release()
+        except RuntimeError:
+            pass
+
+
+def _claim_record(db: Session, task_id: int, record: PublishRecord) -> bool:
+    now = utcnow()
+    lease_until = now + timedelta(seconds=RECORD_TIMEOUT_SECONDS + 60)
+    stmt = (
+        sa_update(PublishRecord)
+        .where(PublishRecord.id == record.id, PublishRecord.status == "pending")
+        .values(status="running", started_at=now, lease_until=lease_until)
+    )
+    if db.execute(stmt).rowcount == 0:
+        db.commit()
+        return False
+    record.status = "running"
+    record.started_at = now
+    record.lease_until = lease_until
+    _add_log(db, task_id, record.id, "info", f"Record {record.id} started")
+    return True
+
+
+def _load_article_for_publish(db: Session, article_id: int) -> Article | None:
+    return db.execute(
+        select(Article)
+        .where(Article.id == article_id)
+        .options(
+            selectinload(Article.cover_asset),
+            selectinload(Article.body_assets).selectinload(ArticleBodyAsset.asset),
+        )
+    ).scalar_one_or_none()
+
+
+def _validate_record_inputs(article: Article | None, account: Account | None) -> str | None:
+    if article is None or account is None:
+        return "Record article or account not found"
+    if not article.title or not article.title.strip():
+        return "文章标题不能为空"
+    if not article_has_publishable_body(article):
+        return "文章正文不能为空"
+    if article.cover_asset_id is None:
+        return "文章封面不能为空"
+    if account.status != "valid":
+        return f"Account is not valid: {account.id}"
+    return None
+
+
+def _detach_record_inputs(db: Session, record: PublishRecord, article: Article, account: Account) -> None:
+    objects: list[object] = [record, article, account]
+    if article.cover_asset is not None:
+        objects.append(article.cover_asset)
+    for link in article.body_assets:
+        objects.append(link)
+        if link.asset is not None:
+            objects.append(link.asset)
+    for obj in objects:
+        if obj in db:
+            db.expunge(obj)
+
+
+def _publish_record(record: PublishRecord, article: Article, account: Account, stop_before_publish: bool):
+    publisher = build_publisher_for_record(record)
+    return publisher.publish_article(article, account, stop_before_publish=stop_before_publish)
+
+
+def _finish_record_future(db: Session, task: PublishTask, record_id: int, future: Future) -> None:
+    try:
+        result = future.result()
+    except FutureTimeoutError:
+        _mark_record_failed(db, task.id, record_id, "Timeout: record execution exceeded 300s")
+    except ToutiaoPublishError as exc:
+        screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
+        _mark_record_failed(db, task.id, record_id, str(exc), screenshot_asset_id=screenshot_asset_id)
+    except ValueError as exc:
+        _mark_record_failed(db, task.id, record_id, str(exc))
+    except Exception as exc:
+        _mark_record_failed(db, task.id, record_id, f"Unexpected error: {exc}")
+    else:
+        if task.stop_before_publish:
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == record_id, PublishRecord.status == "running")
+                .values(status="waiting_manual_publish", finished_at=utcnow(), lease_until=None)
+            )
+            message = "等待手动确认发布"
+        else:
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == record_id, PublishRecord.status == "running")
+                .values(status="succeeded", publish_url=result.url or None, finished_at=utcnow(), lease_until=None)
+            )
+            message = result.message
+        if db.execute(stmt).rowcount > 0:
+            _add_log(db, task.id, record_id, "info", message)
+
+
+def _mark_record_failed(
+    db: Session,
+    task_id: int,
+    record_id: int,
+    error_message: str,
+    screenshot_asset_id: str | None = None,
+) -> None:
+    stmt = (
+        sa_update(PublishRecord)
+        .where(PublishRecord.id == record_id)
+        .values(status="failed", error_message=error_message, finished_at=utcnow(), lease_until=None)
+    )
+    db.execute(stmt)
+    _add_log(db, task_id, record_id, "error", error_message, screenshot_asset_id=screenshot_asset_id)
+
+
 def _run_next_pending_record(db: Session, task: PublishTask, records: list[PublishRecord] | None = None) -> None:
     if records is None:
         db.flush()
@@ -268,7 +511,14 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
         # Phase 1: Commit running state (short transaction)
         db.commit()
 
-        article = db.get(Article, article_id)
+        article = db.execute(
+            select(Article)
+            .where(Article.id == article_id)
+            .options(
+                selectinload(Article.cover_asset),
+                selectinload(Article.body_assets).selectinload(ArticleBodyAsset.asset),
+            )
+        ).scalar_one_or_none()
         account = db.get(Account, account_id)
         if not (article is not None and account is not None):
             stmt = (
@@ -281,16 +531,26 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
             db.commit()
             continue
 
+        # Phase 2: Playwright execution (no DB transaction wrapping)
+        executor = None
         try:
-            # Phase 2: Playwright execution (no DB transaction wrapping)
+            if not article.title or not article.title.strip():
+                raise ValueError("文章标题不能为空")
+            if not article_has_publishable_body(article):
+                raise ValueError("文章正文不能为空")
+            if article.cover_asset_id is None:
+                raise ValueError("文章封面不能为空")
+            if account.status != "valid":
+                raise ValueError(f"Account is not valid: {account.id}")
+
             publisher = build_publisher_for_record(next_record)
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(
-                    publisher.publish_article,
-                    article, account,
-                    stop_before_publish=task.stop_before_publish,
-                )
-                result = future.result(timeout=RECORD_TIMEOUT_SECONDS)
+            executor = ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                publisher.publish_article,
+                article, account,
+                stop_before_publish=task.stop_before_publish,
+            )
+            result = future.result(timeout=RECORD_TIMEOUT_SECONDS)
         except FutureTimeoutError:
             stmt = (
                 sa_update(PublishRecord)
@@ -312,6 +572,29 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
             _add_log(db, task.id, next_record.id, "error", str(exc), screenshot_asset_id=screenshot_asset_id)
             db.commit()
             continue
+        except ValueError as exc:
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == next_record.id)
+                .values(status="failed", error_message=str(exc), finished_at=utcnow(), lease_until=None)
+            )
+            db.execute(stmt)
+            _add_log(db, task.id, next_record.id, "error", str(exc))
+            db.commit()
+            continue
+        except Exception as exc:
+            _add_log(db, task.id, next_record.id, "error", f"Unexpected error: {exc}")
+            stmt = (
+                sa_update(PublishRecord)
+                .where(PublishRecord.id == next_record.id)
+                .values(status="failed", error_message=str(exc), finished_at=utcnow(), lease_until=None)
+            )
+            db.execute(stmt)
+            db.commit()
+            continue
+        finally:
+            if executor:
+                executor.shutdown(wait=False)
 
         # Phase 3: Conditional update — only if still 'running'
         if task.stop_before_publish:
@@ -329,6 +612,8 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
         if db.execute(stmt).rowcount > 0:
             _add_log(db, task.id, next_record.id, "info", result.message if not task.stop_before_publish else "等待手动确认发布")
         db.commit()
+        if task.stop_before_publish:
+            return
 
 
 # 手动确认发布结果（仅对 waiting_manual_publish 状态的记录有效）
@@ -347,15 +632,16 @@ def manual_confirm_record(
     record.status = outcome
     record.finished_at = utcnow()
     if outcome == "succeeded":
-        record.publish_url = publish_url
+        record.publish_url = str(publish_url) if publish_url else None
         _add_log(db, record.task_id, record.id, "info", "Record manually confirmed as succeeded")
     else:
         record.error_message = error_message or "Manually marked as failed"
         _add_log(db, record.task_id, record.id, "warn", "Record manually confirmed as failed")
 
     task = get_task(db, record.task_id)
-    if task is not None and task.status not in TERMINAL_TASK_STATUSES:
-        _run_next_pending_record(db, task)
+    if task is not None:
+        records = list_task_records(db, task.id)
+        _aggregate_task_status(task, records)
 
     db.flush()
     return record

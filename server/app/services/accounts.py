@@ -270,6 +270,16 @@ def rename_account(db: Session, account: Account, display_name: str) -> Account:
 # 删除账号（先清除关联记录，避免 NOT NULL FK 约束阻塞）
 def delete_account(db: Session, account: Account) -> None:
     account_id = account.id
+
+    active = db.execute(
+        select(PublishRecord.id).where(
+            PublishRecord.account_id == account_id,
+            PublishRecord.status.in_(["pending", "running", "waiting_manual_publish"]),
+        )
+    ).scalars().all()
+    if active:
+        raise ValueError("存在未完成发布记录，无法删除账号")
+
     db.execute(sa_delete(PublishTaskAccount).where(PublishTaskAccount.account_id == account_id))
     record_ids = list(
         db.execute(select(PublishRecord.id).where(PublishRecord.account_id == account_id)).scalars()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -25,6 +25,112 @@ function makeEmptyDraft(): Draft {
     version: null,
   };
 }
+
+type EditorDoc = Record<string, unknown>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractLocalAssetId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const marker = "/api/assets/";
+  const markerIndex = value.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const tail = value.slice(markerIndex + marker.length);
+  const assetId = tail.split(/[?#/]/)[0];
+  return assetId || null;
+}
+
+function normalizeEditorDocument(value: unknown, mode: "display" | "save"): EditorDoc {
+  const normalized = normalizeEditorNode(value, mode);
+  const doc = isRecord(normalized) ? normalized : { ...emptyDoc };
+  return isEmptyEditorDocument(doc) ? { ...emptyDoc } : doc;
+}
+
+function normalizeEditorNode(value: unknown, mode: "display" | "save"): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeEditorNode(item, mode));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const next: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "content") {
+      next.content = Array.isArray(child) ? child.map((item) => normalizeEditorNode(item, mode)) : child;
+    } else if (key === "attrs") {
+      const attrs = cleanEditorAttrs(child);
+      if (Object.keys(attrs).length > 0) next.attrs = attrs;
+    } else {
+      next[key] = child;
+    }
+  }
+
+  if (next.type === "image") {
+    const attrs = isRecord(next.attrs) ? { ...next.attrs } : {};
+    const assetId =
+      (typeof attrs.assetId === "string" && attrs.assetId) ||
+      (typeof attrs.asset_id === "string" && attrs.asset_id) ||
+      (typeof attrs.dataAssetId === "string" && attrs.dataAssetId) ||
+      extractLocalAssetId(attrs.src);
+    if (assetId) {
+      attrs.assetId = assetId;
+      attrs.src = mode === "display" ? assetSrc(assetId) ?? `/api/assets/${assetId}` : `/api/assets/${assetId}`;
+      next.attrs = attrs;
+    }
+  }
+
+  return next;
+}
+
+function cleanEditorAttrs(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  return Object.entries(value).reduce<Record<string, unknown>>((acc, [key, child]) => {
+    if (child !== null && child !== undefined && child !== "") acc[key] = child;
+    return acc;
+  }, {});
+}
+
+function isEmptyEditorDocument(value: EditorDoc): boolean {
+  if (value.type !== "doc") return false;
+  const content = value.content;
+  if (!Array.isArray(content) || content.length === 0) return true;
+  return content.every((node) => {
+    if (!isRecord(node) || node.type !== "paragraph") return false;
+    const paragraphContent = node.content;
+    const attrs = isRecord(node.attrs) ? node.attrs : {};
+    return (!Array.isArray(paragraphContent) || paragraphContent.length === 0) && Object.keys(attrs).length === 0;
+  });
+}
+
+function editorBodyState(editor: { getJSON: () => unknown }): string {
+  return stableStringify(normalizeEditorDocument(editor.getJSON(), "save"));
+}
+
+function cleanLocalAssetUrlsInHtml(html: string): string {
+  return html.replace(/(src=["'])\/api\/assets\/([^"'?/]+)(?:\?[^"']*)?(["'])/g, "$1/api/assets/$2$3");
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValue);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.keys(value).sort().reduce<Record<string, unknown>>((acc, key) => {
+    acc[key] = sortJsonValue(value[key]);
+    return acc;
+  }, {});
+}
+
+const EMPTY_BODY_STATE = stableStringify(normalizeEditorDocument(emptyDoc, "save"));
 
 const CustomTextStyle = TextStyle.extend({
   addAttributes() {
@@ -120,14 +226,18 @@ const CustomImage = Image.extend({
   },
 });
 
-const LIST_PAGE_SIZE = 20;
+const LIST_PAGE_SIZE = 10;
 const ARTICLE_FETCH_LIMIT = 200;
 
 type UnifiedListItem =
   | { type: "article"; article: ArticleSummary; sortTime: number }
   | { type: "group"; group: ArticleGroup; sortTime: number };
 
-export function ContentWorkspace() {
+interface Props {
+  dirtyCheckRef?: MutableRefObject<() => boolean>;
+}
+
+export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   const [articles, setArticles] = useState<ArticleSummary[]>([]);
   const [groups, setGroups] = useState<ArticleGroup[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -144,6 +254,7 @@ export function ContentWorkspace() {
   const [groupPickerSelectedId, setGroupPickerSelectedId] = useState<number | null>(null);
 
   const pasteImageRef = useRef<(file: File) => void>(() => {});
+  const [charCount, setCharCount] = useState(0);
 
   const editor = useEditor({
     extensions: [
@@ -157,6 +268,9 @@ export function ContentWorkspace() {
       TextAlign.configure({ types: ["heading", "paragraph"] }),
     ],
     content: emptyDoc,
+    onUpdate({ editor }) {
+      setCharCount(editor.getText().replace(/\s/g, "").length);
+    },
     editorProps: {
       attributes: {
         class: "editorSurface",
@@ -175,6 +289,30 @@ export function ContentWorkspace() {
       },
     },
   });
+
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
+  const latestEditor = useRef(editor);
+  latestEditor.current = editor;
+  const savedStateRef = useRef<{ title: string; author: string; cover_asset_id: number | string | null; bodyState: string } | null>(null);
+
+  if (dirtyCheckRef) {
+    dirtyCheckRef.current = () => {
+      const d = latestDraft.current;
+      const e = latestEditor.current;
+      const s = savedStateRef.current;
+      const currentBodyState = e ? editorBodyState(e) : EMPTY_BODY_STATE;
+      if (!s) {
+        return d.title.trim() !== "" || d.author.trim() !== "" || d.cover_asset_id !== null || currentBodyState !== EMPTY_BODY_STATE;
+      }
+      return (
+        d.title.trim() !== s.title ||
+        d.author.trim() !== s.author ||
+        d.cover_asset_id !== s.cover_asset_id ||
+        currentBodyState !== s.bodyState
+      );
+    };
+  }
 
   const groupedArticleIdSet = useMemo(() => {
     const ids = new Set<number>();
@@ -236,6 +374,7 @@ export function ContentWorkspace() {
     setSelectedArticle(null);
     editor?.commands.setContent(emptyDoc);
     setSelectedArticleIds([]);
+    savedStateRef.current = null;
   }
 
   async function loadArticle(article: ArticleSummary) {
@@ -251,7 +390,17 @@ export function ContentWorkspace() {
         status: detail.status,
         version: detail.version,
       });
-      editor?.commands.setContent(detail.content_json || emptyDoc);
+      const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
+      editor?.commands.setContent(displayDoc);
+      const bodyState = editor
+        ? editorBodyState(editor)
+        : stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save"));
+      savedStateRef.current = {
+        title: detail.title?.trim() ?? "",
+        author: detail.author?.trim() ?? "",
+        cover_asset_id: detail.cover_asset_id,
+        bodyState,
+      };
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "加载文章失败");
     } finally {
@@ -313,12 +462,13 @@ export function ContentWorkspace() {
     }
     setLoading(true);
     try {
+      const contentJson = normalizeEditorDocument(editor.getJSON(), "save");
       const payload = {
         title: draft.title.trim(),
         author: draft.author.trim() || null,
         cover_asset_id: draft.cover_asset_id,
-        content_json: editor.getJSON(),
-        content_html: editor.getHTML(),
+        content_json: contentJson,
+        content_html: cleanLocalAssetUrlsInHtml(editor.getHTML()),
         plain_text: editor.getText(),
         word_count: countWords(editor.getText()),
         status: draft.status,
@@ -335,6 +485,12 @@ export function ContentWorkspace() {
             }),
           );
       if (!saved) return;
+      savedStateRef.current = {
+        title: draft.title.trim(),
+        author: draft.author.trim() || "",
+        cover_asset_id: draft.cover_asset_id,
+        bodyState: stableStringify(contentJson),
+      };
       await refreshArticles();
       resetDraft();
       setNotice("文章已保存");
@@ -493,7 +649,7 @@ export function ContentWorkspace() {
         </div>
         <div className="topActions">
           {notice ? <span className="status">{notice}</span> : null}
-          <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => void deleteCurrentArticle()}>
+          <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => { if (window.confirm("确定要删除这篇文章吗？此操作不可撤销。")) void deleteCurrentArticle(); }}>
             <Trash2 size={16} />
             删除
           </button>
@@ -501,7 +657,7 @@ export function ContentWorkspace() {
             <Save size={16} />
             保存
           </button>
-          <button className="secondaryButton" disabled={loading} type="button" onClick={resetDraft}>
+          <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (!(dirtyCheckRef?.current?.() ?? false) || window.confirm("当前文章有未保存内容，确定要放弃吗？")) resetDraft(); }}>
             <Plus size={16} />
             新建
           </button>
@@ -640,7 +796,7 @@ export function ContentWorkspace() {
                 <button type="button" onClick={() => { setEditingGroupId(null); setGroupName(""); setSelectedArticleIds([]); }}>
                   取消编辑
                 </button>
-                <button type="button" onClick={deleteEditingGroup}>
+                <button type="button" onClick={() => { if (window.confirm("确定要删除该分组吗？此操作不可撤销。")) deleteEditingGroup(); }}>
                   删除分组
                 </button>
               </div>
@@ -683,6 +839,10 @@ export function ContentWorkspace() {
           <EditorToolbar editor={editor} onImageUpload={handleBodyImageUpload} />
           <div className="editorWrap">
             <EditorContent editor={editor} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, padding: "4px 8px", fontSize: 12, color: charCount < 300 ? "#e67e22" : "#888" }}>
+            <span>正文字数：{charCount} 字</span>
+            {charCount < 300 && <span>（建议不少于 300 字）</span>}
           </div>
 
         </section>

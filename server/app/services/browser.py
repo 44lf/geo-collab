@@ -25,7 +25,7 @@ def managed_browser_context(
             **launch_options(channel, executable_path),
         )
         context.set_default_navigation_timeout(30000)
-        yield playwright, context, context.pages[0] if context.pages else context.new_page()
+        yield playwright, context, context.new_page()
     finally:
         if context:
             try:

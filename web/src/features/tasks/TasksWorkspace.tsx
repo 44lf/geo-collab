@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, newClientRequestId, singleFlight } from "../../api/client";
 import type { Task, Account, ArticleGroup, ArticleSummary, PublishRecord, TaskLog, AssignmentPreview } from "../../types";
 import { TERMINAL_STATUSES, statusLabel } from "../../types";
-import { CheckCircle2, Plus, RefreshCw, Send } from "lucide-react";
+import { Plus, RefreshCw, Send } from "lucide-react";
 
-const TASK_PAGE_SIZE = 20;
+const TASK_PAGE_SIZE = 10;
 
 export function TasksWorkspace() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -18,6 +18,7 @@ export function TasksWorkspace() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  const [autoRefreshTaskIds, setAutoRefreshTaskIds] = useState<Set<number>>(new Set());
 
   const [formName, setFormName] = useState("");
   const [formType, setFormType] = useState<"single" | "group_round_robin">("single");
@@ -25,11 +26,14 @@ export function TasksWorkspace() {
   const [formGroupId, setFormGroupId] = useState<number | null>(null);
   const [formAccountIds, setFormAccountIds] = useState<number[]>([]);
   const [preview, setPreview] = useState<AssignmentPreview | null>(null);
+  const [formError, setFormError] = useState("");
 
   const lastLogIdRef = useRef(0);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
-  const taskIsRunning = selectedTask?.status === "running";
+  const shouldPollSelectedTask =
+    selectedTaskId !== null &&
+    (selectedTask?.status === "running" || autoRefreshTaskIds.has(selectedTaskId));
   const articleMap = useMemo(() => Object.fromEntries(articles.map((a) => [a.id, a])), [articles]);
   const accountMap = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a])), [accounts]);
   const sortedTasks = useMemo(
@@ -44,12 +48,12 @@ export function TasksWorkspace() {
   }, []);
 
   useEffect(() => {
-    if (!selectedTaskId || !taskIsRunning) return;
+    if (!selectedTaskId || !shouldPollSelectedTask) return;
     const interval = setInterval(() => {
       void refreshDetail(selectedTaskId);
     }, 2500);
     return () => clearInterval(interval);
-  }, [selectedTaskId, taskIsRunning]);
+  }, [selectedTaskId, shouldPollSelectedTask]);
 
   useEffect(() => {
     if (taskPage >= totalTaskPages) {
@@ -82,6 +86,15 @@ export function TasksWorkspace() {
       lastLogIdRef.current = Math.max(...ls.map((l) => l.id));
     }
     setTasks(ts);
+    const currentTask = ts.find((task) => task.id === taskId);
+    if (!currentTask || TERMINAL_STATUSES.has(currentTask.status)) {
+      setAutoRefreshTaskIds((prev) => {
+        if (!prev.has(taskId)) return prev;
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+    }
   }
 
   async function selectTask(taskId: number) {
@@ -92,16 +105,17 @@ export function TasksWorkspace() {
   }
 
   async function createTask() {
+    setFormError("");
     if (!formName.trim() || formAccountIds.length === 0) {
-      setNotice("请填写任务名称并选择账号");
+      setFormError("请填写任务名称并选择账号");
       return;
     }
     if (formType === "single" && !formArticleId) {
-      setNotice("请选择文章");
+      setFormError("请选择文章");
       return;
     }
     if (formType === "group_round_robin" && !formGroupId) {
-      setNotice("请选择分组");
+      setFormError("请选择分组");
       return;
     }
     setLoading(true);
@@ -126,12 +140,15 @@ export function TasksWorkspace() {
       setFormArticleId(null);
       setFormGroupId(null);
       setFormAccountIds([]);
+      setFormError("");
       setPreview(null);
       setTaskPage(0);
       setNotice("任务已创建");
       await selectTask(task.id);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "创建失败");
+      const msg = error instanceof Error ? error.message : "创建失败";
+      setNotice(msg);
+      setFormError(msg);
     } finally {
       setLoading(false);
     }
@@ -148,6 +165,7 @@ export function TasksWorkspace() {
           task_type: "group_round_robin",
           group_id: formGroupId,
           accounts: formAccountIds.map((id, index) => ({ account_id: id, sort_order: index })),
+          stop_before_publish: false,
         }),
       });
       setPreview(result);
@@ -162,6 +180,7 @@ export function TasksWorkspace() {
     if (!selectedTaskId) return;
     setLoading(true);
     try {
+      setAutoRefreshTaskIds((prev) => new Set(prev).add(selectedTaskId));
       await singleFlight(`task-execute-${selectedTaskId}`, () =>
         api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" }),
       );
@@ -181,6 +200,12 @@ export function TasksWorkspace() {
       await singleFlight(`task-cancel-${selectedTaskId}`, () =>
         api<Task>(`/api/tasks/${selectedTaskId}/cancel`, { method: "POST" }),
       );
+      setAutoRefreshTaskIds((prev) => {
+        if (!prev.has(selectedTaskId)) return prev;
+        const next = new Set(prev);
+        next.delete(selectedTaskId);
+        return next;
+      });
       await refreshDetail(selectedTaskId);
       setNotice("已取消");
     } catch (error) {
@@ -197,6 +222,7 @@ export function TasksWorkspace() {
         api<PublishRecord>(`/api/publish-records/${recordId}/retry`, { method: "POST" }),
       );
       if (selectedTaskId) {
+        setAutoRefreshTaskIds((prev) => new Set(prev).add(selectedTaskId));
         await singleFlight(`task-execute-${selectedTaskId}`, () =>
           api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" }),
         );
@@ -210,33 +236,19 @@ export function TasksWorkspace() {
     }
   }
 
-  async function manualConfirm(recordId: number, outcome: "succeeded" | "failed") {
-    setLoading(true);
-    try {
-      await singleFlight(`record-confirm-${recordId}`, () =>
-        api<PublishRecord>(`/api/publish-records/${recordId}/manual-confirm`, {
-          method: "POST",
-          body: JSON.stringify({ outcome }),
-        }),
-      );
-      if (selectedTaskId) await refreshDetail(selectedTaskId);
-      setNotice(outcome === "succeeded" ? "已标记为发布成功" : "已标记为发布失败");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "操作失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function toggleAccount(accountId: number) {
-    setFormAccountIds((prev) =>
-      prev.includes(accountId) ? prev.filter((id) => id !== accountId) : [...prev, accountId],
-    );
+    if (formType === "single") {
+      setFormAccountIds([accountId]);
+    } else {
+      setFormAccountIds((prev) =>
+        prev.includes(accountId) ? prev.filter((id) => id !== accountId) : [...prev, accountId],
+      );
+    }
     setPreview(null);
   }
 
   const validAccounts = accounts.filter((a) => a.status === "valid");
-  const canExecute = selectedTask && !TERMINAL_STATUSES.has(selectedTask.status);
+  const canExecute = selectedTask && selectedTask.status === "pending";
   const canCancel = selectedTask && (selectedTask.status === "running" || selectedTask.status === "pending");
 
   return (
@@ -336,6 +348,11 @@ export function TasksWorkspace() {
                       </span>
                     </div>
                   ))}
+                </div>
+              ) : null}
+              {formError ? (
+                <div style={{ padding: "8px 12px", background: "var(--red-soft)", color: "var(--red)", borderRadius: "var(--r)", fontSize: 13 }}>
+                  {formError}
                 </div>
               ) : null}
               <button className="primaryButton" style={{ width: "100%" }} type="button" disabled={loading} onClick={() => void createTask()}>
@@ -447,27 +464,6 @@ export function TasksWorkspace() {
                         <RefreshCw size={13} />
                         重试
                       </button>
-                    ) : null}
-                    {record.status === "waiting_manual_publish" ? (
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button
-                          className="primaryButton"
-                          type="button"
-                          disabled={loading}
-                          onClick={() => void manualConfirm(record.id, "succeeded")}
-                        >
-                          <CheckCircle2 size={13} />
-                          已发布
-                        </button>
-                        <button
-                          className="dangerButton"
-                          type="button"
-                          disabled={loading}
-                          onClick={() => void manualConfirm(record.id, "failed")}
-                        >
-                          发布失败
-                        </button>
-                      </div>
                     ) : null}
                   </div>
                 );

@@ -18,7 +18,7 @@ class TaskCreate(BaseModel):
     group_id: int | None = None  # 分组轮询时必填
     platform_code: str = "toutiao"
     accounts: list[TaskAccountInput]
-    stop_before_publish: bool = True  # 默认需要手动确认
+    stop_before_publish: bool = False  # 默认自动确认发布结果并继续下一条
 
 
 # 任务详情中的账号信息

@@ -18,6 +18,7 @@ from server.app.schemas.task import (
     TaskStatusRead,
 )
 from server.app.services.tasks import (
+    TERMINAL_TASK_STATUSES,
     cancel_task,
     create_task,
     execute_task,
@@ -72,6 +73,8 @@ def execute_existing_task(task_id: int, db: Session = Depends(get_db)) -> dict:
     task = get_task(db, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
+    if task.status in TERMINAL_TASK_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Task is already terminal: {task.status}")
 
     def _run() -> None:
         from server.app.db.session import SessionLocal as _SL

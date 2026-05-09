@@ -50,16 +50,33 @@ def create_account(client, data_dir, account_key: str, display_name: str) -> int
     return response.json()["id"]
 
 
-def create_article(client, title: str) -> int:
+def create_article(client, title: str, *, plain_text: str = "", cover_asset_id: str | None = None) -> int:
     response = client.post(
         "/api/articles",
         json={
             "title": title,
             "content_json": {"type": "doc", "content": []},
+            "plain_text": plain_text,
+            "cover_asset_id": cover_asset_id,
         },
     )
     assert response.status_code == 200
     return response.json()["id"]
+
+
+def _upload_cover_image(client) -> str:
+    from io import BytesIO
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f"
+        b"\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    resp = client.post(
+        "/api/assets",
+        files={"file": ("cover.png", BytesIO(png_bytes), "image/png")},
+    )
+    assert resp.status_code == 200
+    return resp.json()["id"]
 
 
 def test_create_single_task_generates_one_publish_record(monkeypatch):
@@ -282,7 +299,8 @@ def test_execute_single_task_auto_succeeds(monkeypatch):
             "server.app.services.tasks.build_publisher_for_record",
             lambda record: FakePublisher(),
         )
-        article_id = create_article(client, "Article A")
+        cover_id = _upload_cover_image(client)
+        article_id = create_article(client, "Article A", plain_text="Article body text", cover_asset_id=cover_id)
         account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
         task = client.post(
             "/api/tasks",
@@ -291,9 +309,9 @@ def test_execute_single_task_auto_succeeds(monkeypatch):
                 "task_type": "single",
                 "article_id": article_id,
                 "accounts": [{"account_id": account_id}],
-                "stop_before_publish": False,
             },
         ).json()
+        assert task["stop_before_publish"] is False
 
         executed = _execute_and_wait(client, task['id'])
 
@@ -321,9 +339,10 @@ def test_execute_group_task_auto_completes_all_records(monkeypatch):
             "server.app.services.tasks.build_publisher_for_record",
             lambda record: FakePublisher(),
         )
-        article_1 = create_article(client, "Article A")
-        article_2 = create_article(client, "Article B")
-        article_3 = create_article(client, "Article C")
+        cover_id = _upload_cover_image(client)
+        article_1 = create_article(client, "Article A", plain_text="Body A", cover_asset_id=cover_id)
+        article_2 = create_article(client, "Article B", plain_text="Body B", cover_asset_id=cover_id)
+        article_3 = create_article(client, "Article C", plain_text="Body C", cover_asset_id=cover_id)
         account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
 
         group = client.post("/api/article-groups", json={"name": "Batch"}).json()
@@ -397,7 +416,8 @@ def test_execute_task_records_publisher_failure_with_screenshot(monkeypatch):
             "server.app.services.tasks.build_publisher_for_record",
             lambda record: FakePublisher(error=ToutiaoPublishError("Toutiao title field not found", screenshot=b"png")),
         )
-        article_id = create_article(client, "Article A")
+        cover_id = _upload_cover_image(client)
+        article_id = create_article(client, "Article A", plain_text="Article body", cover_asset_id=cover_id)
         account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
         task = client.post(
             "/api/tasks",
@@ -440,8 +460,9 @@ def test_publisher_failure_in_group_task_auto_advances_to_next_record(monkeypatc
 
         monkeypatch.setattr("server.app.services.tasks.build_publisher_for_record", make_publisher)
 
-        article_1 = create_article(client, "Article A")
-        article_2 = create_article(client, "Article B")
+        cover_id = _upload_cover_image(client)
+        article_1 = create_article(client, "Article A", plain_text="Body A", cover_asset_id=cover_id)
+        article_2 = create_article(client, "Article B", plain_text="Body B", cover_asset_id=cover_id)
         account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
 
         group = client.post("/api/article-groups", json={"name": "G"}).json()

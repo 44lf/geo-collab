@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { navItems } from "./types";
 import type { NavKey } from "./types";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -10,6 +10,14 @@ import "./styles.css";
 
 export default function App() {
   const [activeNav, setActiveNav] = useState<NavKey>("content");
+  const contentDirtyRef = useRef<() => boolean>(() => false);
+
+  function handleNavClick(key: NavKey) {
+    if (activeNav === "content" && key !== "content" && contentDirtyRef.current()) {
+      if (!window.confirm("当前文章有未保存内容，确定要切换页面吗？未保存的修改将丢失。")) return;
+    }
+    setActiveNav(key);
+  }
 
   return (
     <main className="shell">
@@ -29,7 +37,7 @@ export default function App() {
                 className={`navItem ${activeNav === item.key ? "active" : ""}`}
                 key={item.key}
                 type="button"
-                onClick={() => setActiveNav(item.key)}
+                onClick={() => handleNavClick(item.key)}
               >
                 <Icon size={17} />
                 <span>{item.label}</span>
@@ -40,10 +48,10 @@ export default function App() {
         </nav>
       </aside>
       <section className="workspace">
-        <div key={activeNav} className="workspaceInner">
+        <div className="workspaceInner">
           {activeNav === "content" && (
             <ErrorBoundary fallback={<p role="alert">内容管理出错，请刷新重试</p>}>
-              <ContentWorkspace />
+              <ContentWorkspace dirtyCheckRef={contentDirtyRef} />
             </ErrorBoundary>
           )}
           {activeNav === "media" && (
