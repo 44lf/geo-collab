@@ -4,7 +4,7 @@ Revision ID: 0001_create_platforms
 Revises:
 Create Date: 2026-05-06
 """
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Sequence, Union
 
 from alembic import op
@@ -43,7 +43,7 @@ def upgrade() -> None:
                 "name": "头条号",
                 "base_url": "https://mp.toutiao.com",
                 "enabled": True,
-                "created_at": datetime.now(UTC).replace(tzinfo=None),
+                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
             }
         ],
     )

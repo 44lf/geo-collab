@@ -171,7 +171,7 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(), nullable=True),
         sa.Column("finished_at", sa.DateTime(), nullable=True),
         sa.CheckConstraint(
-            "status in ('pending', 'running', 'waiting_manual_publish', 'succeeded', 'failed', 'cancelled')",
+            "status in ('pending', 'running', 'waiting_manual_publish', 'waiting_user_input', 'succeeded', 'failed', 'cancelled')",
             name="ck_publish_records_status",
         ),
         sa.ForeignKeyConstraint(["account_id"], ["accounts.id"]),
@@ -240,4 +240,3 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_assets_sha256"), table_name="assets")
     op.drop_index(op.f("ix_assets_mime_type"), table_name="assets")
     op.drop_table("assets")
-

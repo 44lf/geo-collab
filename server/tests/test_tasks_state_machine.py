@@ -3,7 +3,7 @@ import time as _time
 from unittest.mock import patch
 
 from server.app.models import PublishRecord
-from server.app.services.toutiao_publisher import PublishFillResult, ToutiaoPublishError
+from server.app.services.toutiao_publisher import PublishFillResult, ToutiaoPublishError, ToutiaoUserInputRequired
 from server.tests.utils import build_test_app
 
 
@@ -120,6 +120,120 @@ def test_stop_before_publish_enters_waiting_state(monkeypatch):
         assert records[0]["publish_url"] is None
         task_detail = client.get(f"/api/tasks/{task['id']}").json()
         assert task_detail["status"] == "running"
+    finally:
+        test_app.cleanup()
+
+
+def test_user_input_required_pauses_record(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    class NeedsUserInputPublisher:
+        def publish_article(self, article, account, stop_before_publish=False):
+            raise ToutiaoUserInputRequired("login verification required")
+
+    try:
+        monkeypatch.setattr(
+            "server.app.services.tasks.build_publisher_for_record",
+            lambda record: NeedsUserInputPublisher(),
+        )
+        cover_id = _upload_cover_image(client)
+        article_id = _create_article(client, "Article Needs Input", plain_text="Body", cover_asset_id=cover_id)
+        account_id = _create_account(client, test_app.data_dir, "account-needs-input", "Needs Input")
+        task = client.post(
+            "/api/tasks",
+            json={
+                "name": "user input task",
+                "task_type": "single",
+                "article_id": article_id,
+                "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
+            },
+        ).json()
+
+        resp = client.post(f"/api/tasks/{task['id']}/execute")
+        assert resp.status_code == 202
+
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline:
+            records = client.get(f"/api/tasks/{task['id']}/records").json()
+            if records[0]["status"] == "waiting_user_input":
+                break
+            _time.sleep(0.05)
+        else:
+            raise AssertionError("Record did not enter waiting_user_input")
+
+        assert records[0]["error_message"] == "login verification required"
+        assert client.get(f"/api/tasks/{task['id']}").json()["status"] == "running"
+    finally:
+        test_app.cleanup()
+
+
+def test_resolve_user_input_requeues_and_continues(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+    attempts = 0
+
+    class LoginThenSuccessPublisher:
+        def publish_article(self, article, account, stop_before_publish=False):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ToutiaoUserInputRequired("scan login required")
+            return PublishFillResult(
+                url=f"https://example.com/article/{article.id}",
+                title=article.title,
+                message=f"published {article.id}",
+            )
+
+    try:
+        monkeypatch.setattr(
+            "server.app.services.tasks.build_publisher_for_record",
+            lambda record: LoginThenSuccessPublisher(),
+        )
+        cover_id = _upload_cover_image(client)
+        article_id = _create_article(client, "Article Resume", plain_text="Body", cover_asset_id=cover_id)
+        account_id = _create_account(client, test_app.data_dir, "account-resume", "Resume Account")
+        task = client.post(
+            "/api/tasks",
+            json={
+                "name": "resume user input",
+                "task_type": "single",
+                "article_id": article_id,
+                "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
+            },
+        ).json()
+
+        resp = client.post(f"/api/tasks/{task['id']}/execute")
+        assert resp.status_code == 202
+
+        deadline = _time.time() + 5.0
+        record = None
+        while _time.time() < deadline:
+            record = client.get(f"/api/tasks/{task['id']}/records").json()[0]
+            if record["status"] == "waiting_user_input":
+                break
+            _time.sleep(0.05)
+        else:
+            raise AssertionError("Record did not pause for user input")
+
+        resume = client.post(f"/api/publish-records/{record['id']}/resolve-user-input")
+        assert resume.status_code == 200
+        assert resume.json()["status"] == "pending"
+
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline:
+            task_detail = client.get(f"/api/tasks/{task['id']}").json()
+            if task_detail["status"] == "succeeded":
+                break
+            _time.sleep(0.05)
+        else:
+            raise AssertionError("Task did not resume after user input")
+
+        records = client.get(f"/api/tasks/{task['id']}/records").json()
+        assert records[0]["status"] == "succeeded"
+        assert attempts == 2
     finally:
         test_app.cleanup()
 
@@ -534,18 +648,18 @@ def test_group_task_runs_different_accounts_concurrently_with_cap(monkeypatch):
         cover_id = _upload_cover_image(client)
         article_ids = [
             _create_article(client, f"Article {index}", plain_text=f"Body {index}", cover_asset_id=cover_id)
-            for index in range(4)
+            for index in range(6)
         ]
         account_ids = [
             _create_account(client, test_app.data_dir, f"account-{index}", f"Account {index}")
-            for index in range(4)
+            for index in range(6)
         ]
         task = _create_group_task(client, "concurrent cap", article_ids, account_ids)
 
         task_detail = _execute_and_wait(client, task["id"], max_wait=10.0)
 
         assert task_detail["status"] == "succeeded"
-        assert max_active == 3
+        assert max_active == 5
         assert all(record["status"] == "succeeded" for record in client.get(f"/api/tasks/{task['id']}/records").json())
     finally:
         test_app.cleanup()

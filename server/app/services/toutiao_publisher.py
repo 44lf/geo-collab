@@ -45,6 +45,10 @@ class ToutiaoPublishError(Exception):
         self.screenshot = screenshot
 
 
+class ToutiaoUserInputRequired(ToutiaoPublishError):
+    pass
+
+
 # 头条号 Playwright 自动发布器
 class ToutiaoPublisher:
     def __init__(
@@ -86,16 +90,21 @@ class ToutiaoPublisher:
                     pass
                 self._ensure_publish_page(page)
                 self._close_ai_drawer(page)
+                self._dismiss_blocking_popups(page)
                 self._fill_title(page, article.title)
+                self._dismiss_blocking_popups(page)
                 self._handle_cover(page, article)
+                self._dismiss_blocking_popups(page)
                 self._fill_body(page, article)
+                self._dismiss_blocking_popups(page)
                 self._wait_publish_images_ready(page)
                 publish_url = self._click_publish_and_wait(page, stop_before_publish)
                 context.storage_state(path=str(state_path))
+                message = "已进入发布预览，等待手动确认" if stop_before_publish else f"发布成功: {publish_url}"
                 return PublishFillResult(
                     url=publish_url,
                     title=article.title,
-                    message=f"发布成功: {publish_url}",
+                    message=message,
                 )
             except ToutiaoPublishError:
                 raise
@@ -112,6 +121,90 @@ class ToutiaoPublisher:
                 page.wait_for_timeout(500)
         except Exception:
             logger.warning("Failed to close AI drawer", exc_info=True)
+
+    def _dismiss_blocking_popups(self, page: Any) -> None:
+        """Best-effort close for marketing/help popups that block the editor."""
+        workflow_text_re = re.compile(
+            r"确认发布|预览并发布|本地上传|已上传|选择封面|裁剪封面|封面设置|发布设置|定时发布"
+        )
+        close_text_re = re.compile(r"关闭|取消|我知道了|稍后再说|暂不|以后再说|跳过|不再提示|×|✕")
+
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(200)
+        except Exception:
+            logger.debug("Failed to press Escape while dismissing popups", exc_info=True)
+
+        for _ in range(3):
+            try:
+                closed = bool(
+                    page.evaluate(
+                        """
+                        ({ workflowPattern, closePattern }) => {
+                          const workflowRe = new RegExp(workflowPattern);
+                          const closeRe = new RegExp(closePattern, "i");
+                          const visible = (node) => {
+                            if (!node || !node.getBoundingClientRect) return false;
+                            const style = window.getComputedStyle(node);
+                            const rect = node.getBoundingClientRect();
+                            return style.display !== "none" &&
+                              style.visibility !== "hidden" &&
+                              rect.width > 0 &&
+                              rect.height > 0;
+                          };
+                          const roots = Array.from(document.querySelectorAll([
+                            "[role='dialog']",
+                            "[aria-modal='true']",
+                            "[class*='modal']",
+                            "[class*='dialog']",
+                            "[class*='popup']",
+                            "[class*='popover']",
+                            "[class*='drawer']"
+                          ].join(","))).filter(visible);
+                          for (const root of roots) {
+                            const text = String(root.innerText || "");
+                            if (workflowRe.test(text)) continue;
+                            const candidates = Array.from(root.querySelectorAll([
+                              "button",
+                              "[role='button']",
+                              "a",
+                              "span",
+                              "i",
+                              "svg",
+                              "[class*='close']",
+                              "[aria-label*='关闭']",
+                              "[title*='关闭']"
+                            ].join(","))).filter(visible);
+                            for (const node of candidates) {
+                              const haystack = [
+                                node.innerText,
+                                node.getAttribute("aria-label"),
+                                node.getAttribute("title"),
+                                node.getAttribute("class")
+                              ].join(" ");
+                              if (!closeRe.test(String(haystack || ""))) continue;
+                              node.click();
+                              return true;
+                            }
+                          }
+                          return false;
+                        }
+                        """,
+                        {
+                            "workflowPattern": workflow_text_re.pattern,
+                            "closePattern": close_text_re.pattern,
+                        },
+                    )
+                )
+            except Exception:
+                logger.debug("Failed to dismiss blocking popup via DOM", exc_info=True)
+                return
+            if not closed:
+                return
+            try:
+                page.wait_for_timeout(500)
+            except Exception:
+                return
 
     def _fill_title(self, page: Any, title: str) -> None:
         """填充文章标题（最多 30 字）。"""
@@ -276,11 +369,11 @@ class ToutiaoPublisher:
 
         before_count = self._body_image_count(page)
 
-        self._set_clipboard_files([image_path])
-        page.keyboard.press("Control+V")
-
         try:
-            self._wait_body_image_ready(page, before_count)
+            self._open_body_image_drawer(page)
+            self._upload_body_image_in_drawer(page, image_path)
+            self._confirm_body_image_drawer(page)
+            self._wait_body_image_inserted(page, before_count)
         except Exception as exc:
             after_count = self._body_image_count(page)
             page_closed = self._page_is_closed(page)
@@ -293,6 +386,66 @@ class ToutiaoPublisher:
                 ),
                 screenshot,
             ) from exc
+
+    def _open_body_image_drawer(self, page: Any) -> None:
+        candidates = [
+            "div.syl-toolbar-tool.image.static",
+            ".syl-toolbar-tool.image",
+            "[class*='syl-toolbar-tool'][class*='image']",
+        ]
+        last_error: Exception | None = None
+        for selector in candidates:
+            try:
+                button = page.locator(selector).first
+                button.wait_for(state="visible", timeout=5000)
+                button.click(timeout=5000)
+                page.locator(".mp-ic-img-drawer").wait_for(state="visible", timeout=10000)
+                return
+            except Exception as exc:
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        raise ToutiaoPublishError("未找到正文图片上传入口")
+
+    def _upload_body_image_in_drawer(self, page: Any, image_path: Path) -> None:
+        drawer = page.locator(".mp-ic-img-drawer").last
+        file_input = drawer.locator("input[type='file'][accept*='image']").first
+        file_input.wait_for(state="attached", timeout=10000)
+        file_input.set_input_files(str(image_path))
+        try:
+            drawer.get_by_text(re.compile(r"已上传\s*\d+\s*张图片")).wait_for(timeout=60000)
+        except Exception as exc:
+            raise ToutiaoPublishError(f"正文图片上传超时（60s）: {exc}") from exc
+
+    def _confirm_body_image_drawer(self, page: Any) -> None:
+        drawer = page.locator(".mp-ic-img-drawer").last
+        candidates = [
+            drawer.get_by_role("button", name="确定"),
+            drawer.locator("button:has-text('确定')").last,
+            page.locator(".byte-drawer button:has-text('确定')").last,
+        ]
+        last_error: Exception | None = None
+        for candidate in candidates:
+            try:
+                candidate.wait_for(state="visible", timeout=10000)
+                candidate.click(timeout=5000)
+                page.wait_for_timeout(1000)
+                return
+            except Exception as exc:
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        raise ToutiaoPublishError("未找到正文图片确认按钮")
+
+    def _wait_body_image_inserted(self, page: Any, before_count: int, timeout_ms: int = 30000) -> None:
+        page.wait_for_function(
+            "count => document.querySelectorAll(\"[contenteditable='true'] img\").length > count",
+            arg=before_count,
+            timeout=timeout_ms,
+        )
+        page.wait_for_timeout(1000)
 
     def _wait_body_image_ready(self, page: Any, before_count: int, timeout_ms: int = 30000) -> None:
         page.wait_for_function(
@@ -608,11 +761,13 @@ class ToutiaoPublisher:
 
         # 第一步：点击"预览并发布"
         try:
+            self._dismiss_blocking_popups(page)
             page.get_by_role("button", name="预览并发布").click()
         except Exception as exc:
             raise ToutiaoPublishError(f"无法点击「预览并发布」按钮: {exc}") from exc
 
         page.wait_for_timeout(1500)
+        self._dismiss_blocking_popups(page)
 
         # stop_before_publish=True 时停在预览状态，等待手动确认
         if stop_before_publish:
@@ -673,7 +828,7 @@ class ToutiaoPublisher:
         body = page.locator("body").inner_text(timeout=3000)
         haystack = f"{page.url}\n{page.title()}\n{body}"
         if any(hint in haystack for hint in LOGIN_HINTS):
-            raise ToutiaoPublishError("Toutiao account appears logged out")
+            raise ToutiaoUserInputRequired("Toutiao account appears logged out; user login or verification is required")
         if "mp.toutiao.com" not in page.url or not any(hint in haystack for hint in PUBLISH_HINTS):
             raise ToutiaoPublishError("Toutiao publish page not detected")
 

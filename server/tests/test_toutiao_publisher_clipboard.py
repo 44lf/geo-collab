@@ -16,7 +16,7 @@ def test_build_hdrop_payload_uses_wide_file_list() -> None:
     assert payload[20:] == (path + "\0\0").encode("utf-16le")
 
 
-def test_paste_body_image_uses_file_clipboard_and_ctrl_v(monkeypatch, tmp_path: Path) -> None:
+def test_paste_body_image_uses_toutiao_upload_drawer(monkeypatch, tmp_path: Path) -> None:
     image_path = tmp_path / "image.png"
     image_path.write_bytes(b"fake image")
     asset = Asset(
@@ -32,20 +32,18 @@ def test_paste_body_image_uses_file_clipboard_and_ctrl_v(monkeypatch, tmp_path: 
     )
     page = FakePage()
     publisher = ToutiaoPublisher()
-    copied_paths: list[Path] = []
 
     monkeypatch.setattr(publisher_module, "resolve_asset_path", lambda _: image_path)
-    monkeypatch.setattr(publisher, "_set_clipboard_files", lambda paths: copied_paths.extend(paths))
 
     publisher._paste_body_image(page, asset)
 
-    assert copied_paths == [image_path]
-    assert page.keyboard.pressed == ["Control+V"]
-    assert page.evaluate_calls == 0
+    assert page.clicked == ["div.syl-toolbar-tool.image.static", "drawer-confirm-role"]
+    assert page.uploaded_files == [str(image_path)]
+    assert page.waited_for_uploaded_text is True
     assert page.waited_for_image_count == 0
     assert page.wait_arg_was_keyword is True
-    assert page.wait_for_function_timeouts == [30000, 30000]
-    assert page.waited_after_success_ms == 4000
+    assert page.wait_for_function_timeouts == [30000]
+    assert page.waited_after_success_ms == [1000, 1000]
 
 
 def test_wait_publish_images_ready_waits_for_non_temporary_uri() -> None:
@@ -86,34 +84,62 @@ def test_wait_publish_images_ready_waits_for_non_temporary_uri() -> None:
     assert page.waits == [2000, 2000, 500]
 
 
-class FakeKeyboard:
-    def __init__(self) -> None:
-        self.pressed: list[str] = []
-
-    def press(self, key: str) -> None:
-        self.pressed.append(key)
-
-
 class FakeLocator:
+    def __init__(self, page: "FakePage", name: str) -> None:
+        self.page = page
+        self.name = name
+
+    @property
+    def first(self):
+        return self
+
+    @property
+    def last(self):
+        return self
+
     def count(self) -> int:
         return 0
+
+    def wait_for(self, **_kwargs) -> None:
+        if self.name == "uploaded-text":
+            self.page.waited_for_uploaded_text = True
+
+    def click(self, **_kwargs) -> None:
+        self.page.clicked.append(self.name)
+
+    def locator(self, selector: str) -> "FakeLocator":
+        if selector == "input[type='file'][accept*='image']":
+            return FakeLocator(self.page, "drawer-file-input")
+        if selector == "button:has-text('确定')":
+            return FakeLocator(self.page, "drawer-confirm-css")
+        return FakeLocator(self.page, selector)
+
+    def get_by_text(self, _pattern) -> "FakeLocator":
+        return FakeLocator(self.page, "uploaded-text")
+
+    def get_by_role(self, _role: str, *, name: str) -> "FakeLocator":
+        assert name == "确定"
+        return FakeLocator(self.page, "drawer-confirm-role")
+
+    def set_input_files(self, path: str) -> None:
+        self.page.uploaded_files.append(path)
 
 
 class FakePage:
     def __init__(self) -> None:
-        self.keyboard = FakeKeyboard()
-        self.evaluate_calls = 0
+        self.clicked: list[str] = []
+        self.uploaded_files: list[str] = []
+        self.waited_for_uploaded_text = False
         self.waited_for_image_count: int | None = None
         self.wait_arg_was_keyword = False
         self.wait_for_function_timeouts: list[int] = []
-        self.waited_after_success_ms: int | None = None
+        self.waited_after_success_ms: list[int] = []
 
     def locator(self, selector: str) -> FakeLocator:
-        assert selector == "[contenteditable='true'] img"
-        return FakeLocator()
+        return FakeLocator(self, selector)
 
     def evaluate(self, *_args, **_kwargs) -> None:
-        self.evaluate_calls += 1
+        return None
 
     def wait_for_function(self, _script: str, *, arg: int, timeout: int) -> None:
         self.wait_for_function_timeouts.append(timeout)
@@ -121,7 +147,7 @@ class FakePage:
         self.wait_arg_was_keyword = True
 
     def wait_for_timeout(self, timeout: int) -> None:
-        self.waited_after_success_ms = timeout
+        self.waited_after_success_ms.append(timeout)
 
 
 class PublishImageStatePage:

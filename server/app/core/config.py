@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     app_name: str = "Geo Collab"
     app_version: str = "0.1.0"
     data_dir: Path | None = None  # 数据目录，默认走 %LOCALAPPDATA%/GeoCollab
+    publish_max_concurrent_records: int = 5
+    publish_browser_channel: str = "chrome"
+    publish_browser_executable_path: str | None = None
 
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env")
 

@@ -2,7 +2,7 @@ from server.app.models import PublishRecord, PublishTask
 from server.app.services.accounts import get_or_create_toutiao_platform
 from server.tests.utils import build_test_app
 
-ACTIVE_STATUSES = ["pending", "running", "waiting_manual_publish"]
+ACTIVE_STATUSES = ["pending", "running", "waiting_manual_publish", "waiting_user_input"]
 
 
 def _create_article(client, title: str = "Test Article") -> int:

@@ -534,3 +534,49 @@ def test_retry_failed_record_creates_pending_record_and_resets_task(monkeypatch)
         assert records_after[1]["status"] == "pending"
     finally:
         test_app.cleanup()
+
+
+def test_retry_record_cannot_create_duplicate_retry_chain(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    try:
+        monkeypatch.setattr(
+            "server.app.services.tasks.build_publisher_for_record",
+            lambda record: FakePublisher(error=ToutiaoPublishError("Fill failed")),
+        )
+        article_id = create_article(client, "Article A")
+        account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
+        task = client.post(
+            "/api/tasks",
+            json={
+                "name": "single publish",
+                "task_type": "single",
+                "article_id": article_id,
+                "accounts": [{"account_id": account_id}],
+                "stop_before_publish": False,
+            },
+        ).json()
+        _execute_and_wait(client, task["id"])
+
+        original = client.get(f"/api/tasks/{task['id']}/records").json()[0]
+        retried = client.post(f"/api/publish-records/{original['id']}/retry")
+        assert retried.status_code == 200
+
+        duplicate_retry = client.post(f"/api/publish-records/{original['id']}/retry")
+        assert duplicate_retry.status_code == 400
+        assert "already has retry record" in duplicate_retry.json()["detail"]
+
+        _execute_and_wait(client, task["id"])
+        records = client.get(f"/api/tasks/{task['id']}/records").json()
+        assert len(records) == 2
+        assert records[1]["status"] == "failed"
+
+        retry_of_retry = client.post(f"/api/publish-records/{records[1]['id']}/retry")
+        assert retry_of_retry.status_code == 400
+        assert "Retry records cannot be retried again" in retry_of_retry.json()["detail"]
+
+        records_after = client.get(f"/api/tasks/{task['id']}/records").json()
+        assert len(records_after) == 2
+    finally:
+        test_app.cleanup()

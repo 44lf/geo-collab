@@ -232,7 +232,7 @@ def delete_article(db: Session, article: Article) -> None:
     active = db.execute(
         select(PublishRecord.id).where(
             PublishRecord.article_id == article_id,
-            PublishRecord.status.in_(["pending", "running", "waiting_manual_publish"]),
+            PublishRecord.status.in_(["pending", "running", "waiting_manual_publish", "waiting_user_input"]),
         )
     ).scalars().all()
     if active:

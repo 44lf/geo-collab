@@ -7,6 +7,7 @@ from datetime import timedelta
 from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.orm import Session, selectinload
 
+from server.app.core.config import get_settings
 from server.app.core.time import utcnow
 from server.app.models import (
     Account,
@@ -22,7 +23,7 @@ from server.app.models import (
 )
 from server.app.services.assets import store_bytes
 from server.app.services.articles import article_has_publishable_body
-from server.app.services.toutiao_publisher import ToutiaoPublisher, ToutiaoPublishError
+from server.app.services.toutiao_publisher import ToutiaoPublisher, ToutiaoPublishError, ToutiaoUserInputRequired
 from server.app.schemas.task import (
     PublishRecordRead,
     TaskAccountInput,
@@ -37,9 +38,10 @@ from server.app.schemas.task import (
 # 常量定义
 VALID_TASK_TYPES = {"single", "group_round_robin"}
 TERMINAL_TASK_STATUSES = {"succeeded", "partial_failed", "failed", "cancelled"}
-ACTIVE_RECORD_STATUSES = {"running"}
+PAUSED_RECORD_STATUSES = {"waiting_manual_publish", "waiting_user_input"}
+ACTIVE_RECORD_STATUSES = {"running", *PAUSED_RECORD_STATUSES}
 CAN_RETRY_TASK_STATUSES = {"failed", "partial_failed", "succeeded", "cancelled"}
-MAX_CONCURRENT_RECORDS = 3
+MAX_CONCURRENT_RECORDS = 5
 
 # 任务级互斥锁，防止同一任务被并发执行
 # 锁对象永久保留（不 pop），避免 race condition
@@ -51,6 +53,10 @@ _task_locks_lock = threading.Lock()  # 仅在测试中用于批量 clean
 # 任务硬取消标志
 _task_cancel: dict[int, threading.Event] = {}
 RECORD_TIMEOUT_SECONDS = 300
+
+
+def _max_concurrent_records() -> int:
+    return max(1, min(int(get_settings().publish_max_concurrent_records), MAX_CONCURRENT_RECORDS))
 
 
 @dataclass(frozen=True)
@@ -243,7 +249,7 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
 def _run_pending_records(db: Session, task: PublishTask) -> None:
     cancel_evt = _task_cancel.get(task.id)
     running: dict[Future, RunningRecord] = {}
-    executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_RECORDS)
+    executor = ThreadPoolExecutor(max_workers=_max_concurrent_records())
 
     try:
         while True:
@@ -256,6 +262,12 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
                 if any(record.status == "waiting_manual_publish" for record in records):
                     db.commit()
                     return
+            else:
+                records = list_task_records(db, task.id)
+
+            if any(record.status == "waiting_user_input" for record in records):
+                db.commit()
+                return
 
             _start_runnable_records(db, task, executor, running)
 
@@ -299,7 +311,7 @@ def _start_runnable_records(
 ) -> None:
     running_accounts = {item.account_id for item in running.values()}
     blocked_accounts: set[int] = set()
-    slots = MAX_CONCURRENT_RECORDS - len(running)
+    slots = _max_concurrent_records() - len(running)
     if task.stop_before_publish:
         slots = min(slots, 1)
     if slots <= 0:
@@ -431,6 +443,9 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
         result = future.result()
     except FutureTimeoutError:
         _mark_record_failed(db, task.id, record_id, "Timeout: record execution exceeded 300s")
+    except ToutiaoUserInputRequired as exc:
+        screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
+        _mark_record_waiting_user_input(db, task.id, record_id, str(exc), screenshot_asset_id=screenshot_asset_id)
     except ToutiaoPublishError as exc:
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
         _mark_record_failed(db, task.id, record_id, str(exc), screenshot_asset_id=screenshot_asset_id)
@@ -471,6 +486,22 @@ def _mark_record_failed(
     )
     db.execute(stmt)
     _add_log(db, task_id, record_id, "error", error_message, screenshot_asset_id=screenshot_asset_id)
+
+
+def _mark_record_waiting_user_input(
+    db: Session,
+    task_id: int,
+    record_id: int,
+    message: str,
+    screenshot_asset_id: str | None = None,
+) -> None:
+    stmt = (
+        sa_update(PublishRecord)
+        .where(PublishRecord.id == record_id, PublishRecord.status == "running")
+        .values(status="waiting_user_input", error_message=message, finished_at=None, lease_until=None)
+    )
+    db.execute(stmt)
+    _add_log(db, task_id, record_id, "warn", message, screenshot_asset_id=screenshot_asset_id)
 
 
 def _run_next_pending_record(db: Session, task: PublishTask, records: list[PublishRecord] | None = None) -> None:
@@ -561,6 +592,11 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
             _add_log(db, task.id, next_record.id, "error", "Timeout: record execution exceeded 300s")
             db.commit()
             continue
+        except ToutiaoUserInputRequired as exc:
+            screenshot_asset_id = _store_failure_screenshot(db, task.id, next_record.id, exc.screenshot)
+            _mark_record_waiting_user_input(db, task.id, next_record.id, str(exc), screenshot_asset_id=screenshot_asset_id)
+            db.commit()
+            continue
         except ToutiaoPublishError as exc:
             screenshot_asset_id = _store_failure_screenshot(db, task.id, next_record.id, exc.screenshot)
             stmt = (
@@ -648,9 +684,53 @@ def manual_confirm_record(
 
 
 # 重试失败的发布记录
+def resolve_user_input_record(db: Session, record: PublishRecord) -> PublishRecord:
+    if record.status != "waiting_user_input":
+        raise ValueError(f"Record is not waiting for user input: {record.status}")
+
+    record.status = "pending"
+    record.error_message = None
+    record.started_at = None
+    record.finished_at = None
+    record.lease_until = None
+    _add_log(db, record.task_id, record.id, "info", "User input resolved; record requeued")
+
+    task = get_task(db, record.task_id)
+    if task is not None and task.status not in TERMINAL_TASK_STATUSES:
+        task.status = "running"
+        task.finished_at = None
+
+    db.flush()
+    return record
+
+
 def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
     if record.status != "failed":
         raise ValueError(f"Only failed records can be retried: {record.status}")
+    if record.retry_of_record_id is not None:
+        raise ValueError("Retry records cannot be retried again; create a new task after checking the platform result")
+
+    existing_retry = db.execute(
+        select(PublishRecord).where(PublishRecord.retry_of_record_id == record.id)
+    ).scalar_one_or_none()
+    if existing_retry is not None:
+        raise ValueError(f"Record {record.id} already has retry record {existing_retry.id}")
+
+    conflicting_record = db.execute(
+        select(PublishRecord)
+        .where(
+            PublishRecord.task_id == record.task_id,
+            PublishRecord.article_id == record.article_id,
+            PublishRecord.account_id == record.account_id,
+            PublishRecord.id != record.id,
+            PublishRecord.status.in_(["pending", "running", "waiting_manual_publish", "waiting_user_input", "succeeded"]),
+        )
+        .order_by(PublishRecord.id.asc())
+    ).scalar_one_or_none()
+    if conflicting_record is not None:
+        raise ValueError(
+            f"Article/account already has record {conflicting_record.id} in status {conflicting_record.status}"
+        )
 
     new_record = PublishRecord(
         task_id=record.task_id,
@@ -674,7 +754,11 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
 
 # 为记录构建发布器实例（由子类或 mock 重写）
 def build_publisher_for_record(record: PublishRecord) -> ToutiaoPublisher:
-    return ToutiaoPublisher()
+    settings = get_settings()
+    return ToutiaoPublisher(
+        channel=settings.publish_browser_channel,
+        executable_path=settings.publish_browser_executable_path,
+    )
 
 
 # 存储失败截图并返回资源 ID
@@ -710,7 +794,7 @@ def cancel_task(db: Session, task: PublishTask) -> PublishTask:
     task.status = "cancelled"
     task.finished_at = now
     for record in records:
-        if record.status in {"pending", "running"}:
+        if record.status in {"pending", "running", "waiting_user_input"}:
             record.status = "cancelled"
             record.finished_at = now
     _add_log(db, task.id, None, "warn", "Task cancelled")
@@ -725,7 +809,7 @@ def _aggregate_task_status(task: PublishTask, records: list[PublishRecord]) -> N
         task.status = "failed"
         task.finished_at = now
         return
-    if any(r.status in {"pending", "running", "waiting_manual_publish"} for r in records):
+    if any(r.status in {"pending", "running", "waiting_manual_publish", "waiting_user_input"} for r in records):
         return  # 任务尚未结束，保持当前状态
     if all(r.status == "succeeded" for r in records):
         task.status = "succeeded"

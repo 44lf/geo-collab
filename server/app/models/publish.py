@@ -59,7 +59,7 @@ class PublishRecord(Base):
     __tablename__ = "publish_records"
     __table_args__ = (
         CheckConstraint(
-            "status in ('pending', 'running', 'waiting_manual_publish', 'succeeded', 'failed', 'cancelled')",
+            "status in ('pending', 'running', 'waiting_manual_publish', 'waiting_user_input', 'succeeded', 'failed', 'cancelled')",
             name="ck_publish_records_status",
         ),
     )

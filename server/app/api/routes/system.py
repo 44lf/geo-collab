@@ -18,6 +18,9 @@ _CHROME_CANDIDATES = [
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
     "chrome",
     "google-chrome",
+    "chromium",
+    "chromium-browser",
+    "/usr/bin/chromium-browser",
 ]
 
 

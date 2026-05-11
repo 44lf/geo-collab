@@ -1,4 +1,4 @@
-h{
+{
   "name": "geo-collab",
   "private": true,
   "packageManager": "pnpm@10.4.0",
@@ -9,4 +9,3 @@ h{
   },
   "devDependencies": {}
 }
-

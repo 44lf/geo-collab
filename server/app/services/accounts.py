@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -94,11 +95,15 @@ def launch_options(channel: str, executable_path: str | None) -> dict[str, Any]:
         "headless": False,
         "viewport": {"width": 1440, "height": 900},
     }
+    if sys.platform != "win32":
+        options["args"] = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
     if channel:
         options["channel"] = channel
     if executable_path:
-        if not VALID_EXE_RE.match(executable_path):
+        if sys.platform == "win32" and not VALID_EXE_RE.match(executable_path):
             raise ValueError(f"Invalid executable_path: {executable_path}")
+        if sys.platform != "win32" and not Path(executable_path).is_absolute():
+            raise ValueError(f"Executable path must be absolute: {executable_path}")
         if not Path(executable_path).is_file():
             raise ValueError(f"Executable not found: {executable_path}")
         options["executable_path"] = executable_path
@@ -274,7 +279,7 @@ def delete_account(db: Session, account: Account) -> None:
     active = db.execute(
         select(PublishRecord.id).where(
             PublishRecord.account_id == account_id,
-            PublishRecord.status.in_(["pending", "running", "waiting_manual_publish"]),
+            PublishRecord.status.in_(["pending", "running", "waiting_manual_publish", "waiting_user_input"]),
         )
     ).scalars().all()
     if active:
