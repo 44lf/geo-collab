@@ -35,10 +35,12 @@ def build_test_app(monkeypatch) -> TestApp:
     # 清理全局任务锁和取消标志（避免跨测试污染）
     from server.app.services import tasks as _tasks_mod
     _tasks_mod._task_locks.clear()
-    _tasks_mod._task_locks_lock = threading.Lock()
     _tasks_mod._account_locks.clear()
     _tasks_mod._account_locks_lock = threading.Lock()
     _tasks_mod._task_cancel.clear()
+
+    from server.app.services import browser_sessions as _bs_mod
+    _bs_mod._reset_globals()
 
     db_path = data_dir / "test.db"
     engine = create_engine(

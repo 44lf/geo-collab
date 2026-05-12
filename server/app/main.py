@@ -58,7 +58,7 @@ from server.app.api.routes.system import router as system_router
 from server.app.api.routes.tasks import router as tasks_router
 from server.app.core.paths import ensure_data_dirs
 from server.app.core.security import require_local_token
-from server.app.services.errors import ConflictError
+from server.app.services.errors import AccountError, ConflictError, ValidationError
 
 # PyInstaller 打包后 sys._MEIPASS 指向解压目录
 # 开发模式下从当前文件路径（server/app/main.py）上溯到项目根目录
@@ -69,6 +69,9 @@ WEB_DIST_DIR = str(_BASE_DIR / "web" / "dist")
 def create_app() -> FastAPI:
     # 确保数据目录存在（assets/ browser_states/ logs/ exports/）
     ensure_data_dirs()
+
+    from server.app.services.browser_sessions import _start_idle_cleanup
+    _start_idle_cleanup()
 
     app = FastAPI(
         title="Geo Collab API",
@@ -104,6 +107,14 @@ def create_app() -> FastAPI:
     @app.exception_handler(ConflictError)
     async def _conflict_error_handler(request: Request, exc: ConflictError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @app.exception_handler(ValidationError)
+    async def _validation_error_handler(request: Request, exc: ValidationError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(AccountError)
+    async def _account_error_handler(request: Request, exc: AccountError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     # 无鉴权端点：前端启动时拉取本次会话 token
     @app.get("/api/bootstrap", include_in_schema=False)

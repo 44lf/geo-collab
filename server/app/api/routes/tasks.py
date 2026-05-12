@@ -3,7 +3,7 @@
 
 核心流程：
   1. POST /api/tasks — 创建任务，返回 TaskRead（含 records 数量）
-  2. POST /api/tasks/{id}/execute — 启动后台执行（threading），立即返回 {"queued": true}
+  2. POST /api/tasks/{id}/execute — 启动后台线程立即执行（非队列模式），返回 {"queued": true} + 202
   3. GET  /api/tasks/{id}/records — 获取发布记录列表（含 novnc_url）
   4. GET  /api/tasks/{id}/logs — 增量拉取日志
 
@@ -28,8 +28,8 @@ from server.app.schemas.task import (
     TaskCreate,
     TaskLogRead,
     TaskRead,
-    TaskStatusRead,
 )
+from server.app.services.serializers import to_log_read, to_record_read, to_task_read
 from server.app.services.tasks import (
     TERMINAL_TASK_STATUSES,
     cancel_task,
@@ -40,9 +40,6 @@ from server.app.services.tasks import (
     list_task_records,
     list_tasks,
     preview_task_assignment,
-    to_log_read,
-    to_record_read,
-    to_task_read,
 )
 
 router = APIRouter()
@@ -53,8 +50,12 @@ bg_session_factory: Any = None
 
 # 获取所有任务列表
 @router.get("", response_model=list[TaskRead])
-def read_tasks(db: Session = Depends(get_db)) -> list[TaskRead]:
-    return [to_task_read(task) for task in list_tasks(db)]
+def read_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> list[TaskRead]:
+    return [to_task_read(task) for task in list_tasks(db, skip=skip, limit=limit)]
 
 
 # 创建新任务
@@ -80,14 +81,16 @@ def preview_task_assignment_endpoint(payload: TaskCreate, db: Session = Depends(
     return preview_task_assignment(db, payload)
 
 
-# 执行任务（启动 Playwright 自动发布，后台异步执行）
+# 执行任务（启动后台线程立即执行，非队列模式）
+# 返回 202 表示后台线程已启动，用 GET /api/tasks/{id} 轮询状态
+# 若任务已处于 terminal 状态则返回 400
 @router.post("/{task_id}/execute", status_code=202)
-def execute_existing_task(task_id: int, db: Session = Depends(get_db)) -> dict:
+def start_task_execution(task_id: int, db: Session = Depends(get_db)) -> dict:
     task = get_task(db, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     if task.status in TERMINAL_TASK_STATUSES:
-        raise HTTPException(status_code=400, detail=f"Task is already terminal: {task.status}")
+        raise HTTPException(status_code=409, detail=f"Task is already terminal: {task.status}")
 
     def _run() -> None:
         from server.app.db.session import SessionLocal as _SL
@@ -108,18 +111,6 @@ def execute_existing_task(task_id: int, db: Session = Depends(get_db)) -> dict:
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     return {"queued": True}
-
-
-# 获取任务执行状态（含租约信息）
-@router.get("/{task_id}/status", response_model=TaskStatusRead)
-def read_task_status(task_id: int, db: Session = Depends(get_db)) -> TaskStatusRead:
-    task = get_task(db, task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    records = list_task_records(db, task_id)
-    active = next((r for r in records if r.status == "running"), None)
-    lease_until = active.lease_until if active else None
-    return TaskStatusRead(id=task.id, status=task.status, lease_until=lease_until)
 
 
 # 取消任务

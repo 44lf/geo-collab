@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from server.app.db.session import get_db
 from server.app.schemas.task import ManualConfirmInput, PublishRecordRead
+from server.app.services.serializers import to_record_read
 from server.app.services.tasks import (
     TERMINAL_TASK_STATUSES,
     execute_task,
@@ -14,7 +15,6 @@ from server.app.services.tasks import (
     manual_confirm_record,
     resolve_user_input_record,
     retry_record,
-    to_record_read,
 )
 
 router = APIRouter()
@@ -80,4 +80,7 @@ def retry_record_endpoint(record_id: int, db: Session = Depends(get_db)) -> Publ
     record = get_record(db, record_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Record not found")
-    return to_record_read(retry_record(db, record))
+    result = retry_record(db, record)
+    db.commit()
+    _start_background_execute(record.task_id)
+    return to_record_read(result)

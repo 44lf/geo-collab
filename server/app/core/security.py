@@ -9,7 +9,7 @@ async def require_local_token(request: Request) -> None:
     if not token:
         return
 
-    received = request.headers.get("X-Geo-Token") or request.query_params.get("token")
+    received = request.headers.get("X-Geo-Token")
     if not received:
         raise HTTPException(status_code=401, detail="Missing X-Geo-Token header")
 

@@ -437,12 +437,12 @@ def test_execute_task_records_publisher_failure_with_screenshot(monkeypatch):
         assert executed["status"] == "failed"
         records = client.get(f"/api/tasks/{task['id']}/records").json()
         assert records[0]["status"] == "failed"
-        assert records[0]["error_message"] == "Toutiao title field not found"
+        assert records[0]["error_message"].startswith("Toutiao title field not found")
 
         logs = client.get(f"/api/tasks/{task['id']}/logs").json()
-        assert logs[-1]["level"] == "error"
-        assert logs[-1]["screenshot_asset_id"] is not None
-        assert client.get(f"/api/assets/{logs[-1]['screenshot_asset_id']}/meta").status_code == 200
+        error_log = next(log for log in logs if log["level"] == "error")
+        assert error_log["screenshot_asset_id"] is not None
+        assert client.get(f"/api/assets/{error_log['screenshot_asset_id']}/meta").status_code == 200
     finally:
         test_app.cleanup()
 
@@ -524,16 +524,24 @@ def test_retry_failed_record_creates_pending_record_and_resets_task(monkeypatch)
 
         retried = client.post(f"/api/publish-records/{records_before[0]['id']}/retry")
         assert retried.status_code == 200
-        assert retried.json()["status"] == "pending"
         assert retried.json()["retry_of_record_id"] == records_before[0]["id"]
 
+        # Wait for auto-execute to complete (FakePublisher always fails)
+        import time as _time
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline:
+            task_status = client.get(f"/api/tasks/{task['id']}").json()
+            if task_status["status"] in ("failed", "partial_failed", "succeeded", "cancelled"):
+                break
+            _time.sleep(0.1)
+
         task_after = client.get(f"/api/tasks/{task['id']}").json()
-        assert task_after["status"] == "running"
+        assert task_after["status"] == "failed"
 
         records_after = client.get(f"/api/tasks/{task['id']}/records").json()
         assert len(records_after) == 2
         assert records_after[0]["status"] == "failed"
-        assert records_after[1]["status"] == "pending"
+        assert records_after[1]["status"] == "failed"
     finally:
         test_app.cleanup()
 
@@ -569,7 +577,15 @@ def test_retry_record_cannot_create_duplicate_retry_chain(monkeypatch):
         assert duplicate_retry.status_code == 400
         assert "already has retry record" in duplicate_retry.json()["detail"]
 
-        _execute_and_wait(client, task["id"])
+        # Poll for auto-execute completion instead of POST execute
+        import time as _time
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline:
+            task_status = client.get(f"/api/tasks/{task['id']}").json()
+            if task_status["status"] in ("failed", "partial_failed", "succeeded", "cancelled"):
+                break
+            _time.sleep(0.1)
+
         records = client.get(f"/api/tasks/{task['id']}/records").json()
         assert len(records) == 2
         assert records[1]["status"] == "failed"

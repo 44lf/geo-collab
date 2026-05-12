@@ -6,9 +6,7 @@ from server.app.models import Article, ArticleGroup, ArticleGroupItem
 from server.app.services.errors import ConflictError
 from server.app.schemas.article_group import (
     ArticleGroupCreate,
-    ArticleGroupItemRead,
     ArticleGroupItemsUpdate,
-    ArticleGroupRead,
     ArticleGroupUpdate,
 )
 
@@ -93,21 +91,4 @@ def delete_group(db: Session, group: ArticleGroup) -> None:
     db.flush()
 
 
-# 将 ORM ArticleGroup 转为响应体
-def to_group_read(group: ArticleGroup) -> ArticleGroupRead:
-    items = sorted(group.items, key=lambda item: item.sort_order)
-    return ArticleGroupRead(
-        id=group.id,
-        name=group.name,
-        description=group.description,
-        version=group.version,
-        items=[
-            ArticleGroupItemRead(
-                article_id=item.article_id,
-                sort_order=item.sort_order,
-            )
-            for item in items
-        ],
-        created_at=group.created_at,
-        updated_at=group.updated_at,
-    )
+

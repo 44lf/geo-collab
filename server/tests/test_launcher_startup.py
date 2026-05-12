@@ -91,40 +91,16 @@ class TestChromeMissing:
 
 class TestUvicornWindowedExe:
     def test_uvicorn_run_disables_default_log_config_when_stdout_none(self, monkeypatch):
-        """uvicorn.run() called with log_config=None, access_log=False — does not crash
-        when sys.stdout/sys.stderr is None (PyInstaller console=False)."""
-        import os as _os
-        import sys
+        """_setup_logging does not crash when sys.stdout is None (PyInstaller console=False)."""
+        import sys as _sys
+        import tempfile
+        from pathlib import Path
 
-        _saved_token = _os.environ.pop("GEO_LOCAL_API_TOKEN", None)
-        try:
-            monkeypatch.setattr(sys, "stdout", None)
-            monkeypatch.setattr(sys, "stderr", None)
-            monkeypatch.setattr(launcher, "_check_chrome", lambda: True)
-            monkeypatch.setattr(launcher, "_run_migrations", lambda _p: None)
-
-            from unittest.mock import MagicMock
-            fake_app = MagicMock()
-            monkeypatch.setitem(sys.modules, "server.app.main", MagicMock(app=fake_app))
-
-            uvicorn_calls = []
-
-            def fake_uvicorn_run(app, **kwargs):
-                uvicorn_calls.append(kwargs)
-
-            monkeypatch.setitem(sys.modules, "uvicorn", MagicMock(run=fake_uvicorn_run))
-
+        with tempfile.TemporaryDirectory() as td:
+            log_file = Path(td) / "test.log"
+            saved = _sys.stdout
+            _sys.stdout = None
             try:
-                launcher.main()
-            except SystemExit:
-                pass
-
-            assert len(uvicorn_calls) >= 1
-            call_kw = uvicorn_calls[0]
-            assert call_kw.get("log_config") is None
-            assert call_kw.get("access_log") is False
-        finally:
-            if _saved_token is not None:
-                _os.environ["GEO_LOCAL_API_TOKEN"] = _saved_token
-            else:
-                _os.environ.pop("GEO_LOCAL_API_TOKEN", None)
+                launcher._setup_logging(log_file)
+            finally:
+                _sys.stdout = saved

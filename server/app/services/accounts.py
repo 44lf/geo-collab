@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import re
 import sys
 import tempfile
@@ -19,10 +20,12 @@ from server.app.core.config import get_settings
 from server.app.core.paths import ensure_data_dirs, get_data_dir
 from server.app.core.time import utcnow
 from server.app.models import Account, Platform, PublishRecord, PublishTaskAccount, TaskLog
-from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, AccountRead, ToutiaoLoginRequest
+from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, ToutiaoLoginRequest
 
 TOUTIAO_HOME = "https://mp.toutiao.com"
 LOGIN_HINTS = ("login", "passport", "sso", "验证码", "扫码", "登录")
+
+_logger = logging.getLogger(__name__)
 
 
 # 浏览器检查结果
@@ -138,6 +141,7 @@ def run_toutiao_browser_check(
         try:
             page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
+            _logger.warning("Browser check failed for account %s", account_key, exc_info=True)
             pass
 
         deadline = wait_seconds * 1000
@@ -153,6 +157,7 @@ def run_toutiao_browser_check(
                 title = page.title()
                 body = page.locator("body").inner_text(timeout=3000)
             except Exception:
+                _logger.warning("Browser check iteration failed", exc_info=True)
                 continue
             logged_in = detect_login_state_text(url, title, body)
             if logged_in:
@@ -379,6 +384,8 @@ def import_accounts_auth_package(db: Session, zip_bytes: bytes) -> dict[str, lis
 
             dest = state_path_for_key(account_key)
             dest.parent.mkdir(parents=True, exist_ok=True)
+            if not dest.resolve().is_relative_to(get_data_dir().resolve()):
+                raise ValueError(f"ZIP entry path escapes data directory: {state_path_rel}")
             dest.write_bytes(archive.read(archive_state_path))
 
             platform = get_or_create_toutiao_platform(db)
@@ -462,19 +469,4 @@ def _account_export_payload(account: Account) -> dict[str, Any]:
     }
 
 
-# 将 ORM Account 转为响应体
-def to_account_read(account: Account) -> AccountRead:
-    return AccountRead(
-        id=account.id,
-        platform_code=account.platform.code,
-        platform_name=account.platform.name,
-        display_name=account.display_name,
-        platform_user_id=account.platform_user_id,
-        status=account.status,
-        last_checked_at=account.last_checked_at,
-        last_login_at=account.last_login_at,
-        state_path=account.state_path,
-        note=account.note,
-        created_at=account.created_at,
-        updated_at=account.updated_at,
-    )
+

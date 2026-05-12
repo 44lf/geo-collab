@@ -2,14 +2,34 @@ from __future__ import annotations
 
 import logging
 import re
-import struct
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+import atexit
+
+_launched_contexts: list = []
+
+
+def _register_context_for_cleanup(context) -> None:
+    """Track browser context for atexit cleanup."""
+    _launched_contexts.append(context)
+
+
+def _cleanup_all_contexts() -> None:
+    """atexit handler: try to close all tracked browser contexts."""
+    for ctx in _launched_contexts:
+        try:
+            ctx.close()
+        except Exception:
+            pass
+    _launched_contexts.clear()
+
+
+atexit.register(_cleanup_all_contexts)
 
 import contextlib
 from server.app.core.paths import get_data_dir
@@ -125,6 +145,7 @@ class ToutiaoPublisher:
                     user_data_dir=str(profile_dir_for_key(account_key)),
                     **launch_options(self.channel, self.executable_path),
                 )
+                _register_context_for_cleanup(context)
                 context.set_default_navigation_timeout(30000)
                 page = context.new_page()
                 try:
@@ -139,9 +160,11 @@ class ToutiaoPublisher:
                 finally:
                     if not _keep_browser:
                         try: context.close()
-                        except: pass
+                        except Exception: pass
+                        if context in _launched_contexts:
+                            _launched_contexts.remove(context)
                         try: pw.stop()
-                        except: pass
+                        except Exception: pass
             else:
                 # ---- 本地开发路径 ----
                 # 使用 managed_browser_context 自动管理浏览器，
@@ -625,111 +648,6 @@ class ToutiaoPublisher:
             }
             """
         )
-
-    @staticmethod
-    def _set_clipboard_files(paths: list[Path]) -> None:
-        """将文件路径写入 Windows 剪贴板（CF_HDROP），模拟资源管理器复制文件。"""
-        if sys.platform != "win32":
-            raise ToutiaoPublishError("正文图片粘贴仅支持 Windows 文件剪贴板")
-
-        absolute_paths = [str(path.resolve()) for path in paths]
-        if not absolute_paths:
-            raise ToutiaoPublishError("正文图片粘贴文件列表为空")
-
-        import ctypes
-        from ctypes import wintypes
-
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-        user32.OpenClipboard.argtypes = [wintypes.HWND]
-        user32.OpenClipboard.restype = wintypes.BOOL
-        user32.EmptyClipboard.argtypes = []
-        user32.EmptyClipboard.restype = wintypes.BOOL
-        user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
-        user32.SetClipboardData.restype = wintypes.HANDLE
-        user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
-        user32.RegisterClipboardFormatW.restype = wintypes.UINT
-        user32.CloseClipboard.argtypes = []
-        user32.CloseClipboard.restype = wintypes.BOOL
-
-        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-        kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
-        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
-        kernel32.GlobalLock.restype = wintypes.LPVOID
-        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
-        kernel32.GlobalUnlock.restype = wintypes.BOOL
-        kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
-        kernel32.GlobalFree.restype = wintypes.HGLOBAL
-
-        cf_hdrop = 15
-        preferred_drop_effect = user32.RegisterClipboardFormatW("Preferred DropEffect")
-        gmem_moveable = 0x0002
-        gmem_zeroinit = 0x0040
-        payload = ToutiaoPublisher._build_hdrop_payload(absolute_paths)
-        drop_effect_payload = struct.pack("<I", 1)
-
-        handle = kernel32.GlobalAlloc(gmem_moveable | gmem_zeroinit, len(payload))
-        if not handle:
-            raise ToutiaoPublishError("无法分配正文图片剪贴板内存")
-        drop_effect_handle = kernel32.GlobalAlloc(gmem_moveable | gmem_zeroinit, len(drop_effect_payload))
-        if not drop_effect_handle:
-            kernel32.GlobalFree(handle)
-            raise ToutiaoPublishError("无法分配正文图片剪贴板操作内存")
-
-        locked = kernel32.GlobalLock(handle)
-        if not locked:
-            kernel32.GlobalFree(handle)
-            kernel32.GlobalFree(drop_effect_handle)
-            raise ToutiaoPublishError("无法锁定正文图片剪贴板内存")
-
-        try:
-            ctypes.memmove(locked, payload, len(payload))
-        finally:
-            kernel32.GlobalUnlock(handle)
-
-        locked = kernel32.GlobalLock(drop_effect_handle)
-        if not locked:
-            kernel32.GlobalFree(handle)
-            kernel32.GlobalFree(drop_effect_handle)
-            raise ToutiaoPublishError("无法锁定正文图片剪贴板操作内存")
-
-        try:
-            ctypes.memmove(locked, drop_effect_payload, len(drop_effect_payload))
-        finally:
-            kernel32.GlobalUnlock(drop_effect_handle)
-
-        opened = False
-        try:
-            for _ in range(10):
-                if user32.OpenClipboard(None):
-                    opened = True
-                    break
-                time.sleep(0.05)
-            if not opened:
-                raise ToutiaoPublishError("无法打开 Windows 剪贴板")
-
-            if not user32.EmptyClipboard():
-                raise ToutiaoPublishError("无法清空 Windows 剪贴板")
-            if not user32.SetClipboardData(cf_hdrop, handle):
-                raise ToutiaoPublishError("无法写入正文图片文件到 Windows 剪贴板")
-            if not preferred_drop_effect or not user32.SetClipboardData(preferred_drop_effect, drop_effect_handle):
-                raise ToutiaoPublishError("无法写入正文图片剪贴板复制标记")
-            handle = None
-            drop_effect_handle = None
-        finally:
-            if opened:
-                user32.CloseClipboard()
-            if handle:
-                kernel32.GlobalFree(handle)
-            if drop_effect_handle:
-                kernel32.GlobalFree(drop_effect_handle)
-
-    @staticmethod
-    def _build_hdrop_payload(absolute_paths: list[str]) -> bytes:
-        dropfiles_header = struct.pack("<IiiII", 20, 0, 0, 0, 1)
-        file_list = ("\0".join(absolute_paths) + "\0\0").encode("utf-16le")
-        return dropfiles_header + file_list
 
     def _handle_cover(self, page: Any, article: Article) -> None:
         """上传封面图片。封面图是必填项。"""

@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { api, authHeaders } from "../../api/client";
-import type { Account } from "../../types";
+import type { Account, AccountLoginPayload } from "../../types";
 import { CheckCircle2, Download, Plus, RefreshCw, Trash2, Upload, UserPlus, X } from "lucide-react";
+import { useToast } from "../../components/Toast";
 
 export function AccountsWorkspace() {
+  const { toast } = useToast();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [displayName, setDisplayName] = useState("头条号账号");
   const [accountKey, setAccountKey] = useState("");
-  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -24,24 +25,23 @@ export function AccountsWorkspace() {
 
   async function login(useBrowser: boolean) {
     setLoading(true);
-    setNotice(useBrowser ? "已打开浏览器，请完成登录" : "正在复用已保存状态");
+    toast(useBrowser ? "已打开浏览器，请完成登录" : "正在复用已保存状态", "info");
     try {
+      const payload: AccountLoginPayload = {
+        display_name: displayName,
+        account_key: accountKey,
+        use_browser: useBrowser,
+      };
       await api<Account>("/api/accounts/toutiao/login", {
         method: "POST",
-        body: JSON.stringify({
-          display_name: displayName,
-          account_key: accountKey,
-          channel: "chrome",
-          wait_seconds: 180,
-          use_browser: useBrowser,
-        }),
+        body: JSON.stringify({ ...payload, channel: "chrome", wait_seconds: 180 }),
       });
       await refreshAccounts();
       setDisplayName("头条号账号");
       setAccountKey("");
-      setNotice("账号已添加");
+      toast("账号已添加", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "添加账号失败");
+      toast(error instanceof Error ? error.message : "添加账号失败", "error");
     } finally {
       setLoading(false);
     }
@@ -55,9 +55,9 @@ export function AccountsWorkspace() {
         body: JSON.stringify({ channel: "chrome", wait_seconds: 30, use_browser: true }),
       });
       await refreshAccounts();
-      setNotice("校验完成");
+      toast("校验完成", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "校验失败");
+      toast(error instanceof Error ? error.message : "校验失败", "error");
     } finally {
       setLoading(false);
     }
@@ -65,16 +65,16 @@ export function AccountsWorkspace() {
 
   async function relogin(account: Account) {
     setLoading(true);
-    setNotice("已打开浏览器，请完成重新登录");
+    toast("已打开浏览器，请完成重新登录", "info");
     try {
       await api<Account>(`/api/accounts/${account.id}/relogin`, {
         method: "POST",
         body: JSON.stringify({ channel: "chrome", wait_seconds: 180, use_browser: true }),
       });
       await refreshAccounts();
-      setNotice("重新登录完成");
+      toast("重新登录完成", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "重新登录失败");
+      toast(error instanceof Error ? error.message : "重新登录失败", "error");
     } finally {
       setLoading(false);
     }
@@ -85,9 +85,9 @@ export function AccountsWorkspace() {
     try {
       await api<void>(`/api/accounts/${account.id}`, { method: "DELETE" });
       await refreshAccounts();
-      setNotice("账号已删除");
+      toast("账号已删除", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "删除失败");
+      toast(error instanceof Error ? error.message : "删除失败", "error");
     } finally {
       setLoading(false);
     }
@@ -101,9 +101,9 @@ export function AccountsWorkspace() {
       const result = await api<{ imported: string[]; skipped: string[] }>("/api/accounts/import", { method: "POST", body: formData });
       await refreshAccounts();
       const msg = `导入完成：${result.imported.length} 个新增${result.skipped.length ? `，${result.skipped.length} 个已存在跳过` : ""}`;
-      setNotice(msg);
+      toast(msg, "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "导入失败");
+      toast(error instanceof Error ? error.message : "导入失败", "error");
     } finally {
       setLoading(false);
     }
@@ -119,9 +119,9 @@ export function AccountsWorkspace() {
       });
       await refreshAccounts();
       setRenamingId(null);
-      setNotice("已重命名");
+      toast("已重命名", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "重命名失败");
+      toast(error instanceof Error ? error.message : "重命名失败", "error");
     } finally {
       setLoading(false);
     }
@@ -154,9 +154,9 @@ export function AccountsWorkspace() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      setNotice(exportPath ? `已导出：${exportPath}` : "授权包已导出");
+      toast(exportPath ? `已导出：${exportPath}` : "授权包已导出", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "导出授权包失败");
+      toast(error instanceof Error ? error.message : "导出授权包失败", "error");
     } finally {
       setLoading(false);
     }
@@ -170,7 +170,6 @@ export function AccountsWorkspace() {
           <h1>头条号授权</h1>
         </div>
         <div className="topActions">
-          {notice ? <span className="status">{notice}</span> : null}
           <label className="secondaryButton" style={{ cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.5 : 1 }}>
             <Upload size={16} />
             导入授权包

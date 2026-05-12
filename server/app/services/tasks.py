@@ -34,13 +34,15 @@
     recover_stuck_records() 在启动时运行
     → 将 lease_until < now 的 running 记录重置为 pending
 """
+import logging
 import threading
 import time
+import traceback
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, wait
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import delete as sa_delete, select, update as sa_update
+from sqlalchemy import delete as sa_delete, inspect as sa_inspect, select, update as sa_update
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.config import get_settings
@@ -65,16 +67,13 @@ from server.app.services.browser_sessions import (
     get_session_for_record,
     stop_remote_browser_session,
 )
+from server.app.services.errors import AccountError, ConflictError, ValidationError
 from server.app.services.toutiao_publisher import ToutiaoPublisher, ToutiaoPublishError, ToutiaoUserInputRequired
 from server.app.schemas.task import (
-    PublishRecordRead,
     TaskAccountInput,
-    TaskAccountRead,
     TaskAssignmentPreviewItemRead,
     TaskAssignmentPreviewRead,
     TaskCreate,
-    TaskLogRead,
-    TaskRead,
 )
 
 # 常量定义
@@ -86,15 +85,14 @@ CAN_RETRY_TASK_STATUSES = {"failed", "partial_failed", "succeeded", "cancelled"}
 MAX_CONCURRENT_RECORDS = 5
 
 # 任务级互斥锁，防止同一任务被并发执行
-# 锁对象永久保留（不 pop），避免 race condition
 _task_locks: dict[int, threading.Lock] = {}
 _account_locks: dict[int, threading.Lock] = {}
 _account_locks_lock = threading.Lock()
-_task_locks_lock = threading.Lock()  # 仅在测试中用于批量 clean
 
 # 任务硬取消标志
 _task_cancel: dict[int, threading.Event] = {}
-RECORD_TIMEOUT_SECONDS = 300
+
+_logger = logging.getLogger(__name__)
 
 
 def _max_concurrent_records() -> int:
@@ -126,7 +124,7 @@ class AssignmentItem:
 
 
 # 获取所有任务列表
-def list_tasks(db: Session) -> list[PublishTask]:
+def list_tasks(db: Session, skip: int = 0, limit: int = 100) -> list[PublishTask]:
     stmt = (
         select(PublishTask)
         .options(
@@ -135,6 +133,8 @@ def list_tasks(db: Session) -> list[PublishTask]:
             selectinload(PublishTask.records),
         )
         .order_by(PublishTask.created_at.desc())
+        .offset(skip)
+        .limit(limit)
     )
     return list(db.execute(stmt).scalars().all())
 
@@ -260,14 +260,14 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
     lock = _task_locks.setdefault(task.id, threading.Lock())
     locked = lock.acquire(blocking=False)
     if not locked:
-        raise ValueError(f"Task {task.id} is already being executed")
+        raise ConflictError(f"Task {task.id} is already being executed")
 
     cancel_event = threading.Event()
     _task_cancel[task.id] = cancel_event
 
     try:
         if task.status in TERMINAL_TASK_STATUSES:
-            raise ValueError(f"Task is already terminal: {task.status}")
+            raise ConflictError(f"Task is already terminal: {task.status}")
 
         now = utcnow()
         if task.status == "pending":
@@ -286,14 +286,18 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
                 task.status = "running"
                 task.started_at = now
             _add_log(db, task.id, None, "info", "Task started")
+            _logger.info("Task %d started", task.id)
 
         _run_pending_records(db, task)
         db.flush()
-        return get_task(db, task.id) or task
+        result = get_task(db, task.id) or task
+        _logger.info("Task %d finished with status %s", task.id, result.status)
+        return result
     finally:
+        _task_locks.pop(task.id, None)
+        _task_cancel.pop(task.id, None)
         if locked:
             lock.release()
-        _task_cancel.pop(task.id, None)
 
 
 # 内部方法：循环执行待处理的发布记录
@@ -308,24 +312,22 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
                 _add_log(db, task.id, None, "warn", "Task cancelled during execution")
                 break
 
+            records = list_task_records(db, task.id)
+
             if task.stop_before_publish:
-                records = list_task_records(db, task.id)
                 if any(record.status == "waiting_manual_publish" for record in records):
                     db.commit()
                     return
-            else:
-                records = list_task_records(db, task.id)
 
             if any(record.status == "waiting_user_input" for record in records):
                 db.commit()
                 return
 
-            _start_runnable_records(db, task, executor, running)
+            _start_runnable_records(db, task, executor, running, records)
 
             if not running:
-                records = list_task_records(db, task.id)
                 if not any(record.status == "pending" for record in records):
-                    _aggregate_task_status(task, records)
+                    _aggregate_task_status(db, task, records)
                     db.commit()
                     return
                 db.commit()
@@ -336,12 +338,17 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
             timed_out = [
                 future
                 for future, running_record in running.items()
-                if time.monotonic() - running_record.started_monotonic > RECORD_TIMEOUT_SECONDS
+                if time.monotonic() - running_record.started_monotonic > get_settings().publish_record_timeout_seconds
             ]
             for future in set(done) | set(timed_out):
                 running_record = running.pop(future)
                 if future in timed_out and not future.done():
                     _mark_record_failed(db, task.id, running_record.record_id, "Timeout: record execution exceeded 300s")
+                    future.cancel()
+                    try:
+                        future.result(timeout=5)
+                    except Exception:
+                        pass
                     _release_account_lock(running_record.account_id)
                     db.commit()
                     continue
@@ -359,6 +366,7 @@ def _start_runnable_records(
     task: PublishTask,
     executor: ThreadPoolExecutor,
     running: dict[Future, RunningRecord],
+    records: list[PublishRecord],
 ) -> None:
     running_accounts = {item.account_id for item in running.values()}
     blocked_accounts: set[int] = set()
@@ -370,7 +378,6 @@ def _start_runnable_records(
 
     while slots > 0:
         db.flush()
-        records = list_task_records(db, task.id)
         next_record = next(
             (
                 record
@@ -430,7 +437,7 @@ def _release_account_lock(account_id: int) -> None:
 
 def _claim_record(db: Session, task_id: int, record: PublishRecord) -> bool:
     now = utcnow()
-    lease_until = now + timedelta(seconds=RECORD_TIMEOUT_SECONDS + 60)
+    lease_until = now + timedelta(seconds=get_settings().publish_record_timeout_seconds + 60)
     stmt = (
         sa_update(PublishRecord)
         .where(PublishRecord.id == record.id, PublishRecord.status == "pending")
@@ -447,6 +454,8 @@ def _claim_record(db: Session, task_id: int, record: PublishRecord) -> bool:
 
 
 def _load_article_for_publish(db: Session, article_id: int) -> Article | None:
+    # ALL relationships accessed by publish_article (via ToutiaoPublisher) must be eagerly loaded here.
+    # Missing selectinload will be caught by _detach_record_inputs at detach time.
     return db.execute(
         select(Article)
         .where(Article.id == article_id)
@@ -483,8 +492,29 @@ def _detach_record_inputs(db: Session, record: PublishRecord, article: Article, 
         if obj in db:
             db.expunge(obj)
 
+    for obj in objects:
+        if isinstance(obj, PublishRecord):
+            continue
+        insp = sa_inspect(obj)
+        if insp is None:
+            continue
+        unloaded = insp.unloaded
+        if isinstance(obj, Article):
+            if "cover_asset" in unloaded or "body_assets" in unloaded:
+                raise RuntimeError(
+                    f"Detached Article has unloaded attributes: {unloaded}. "
+                    f"Add selectinload to _load_article_for_publish or _detach_record_inputs."
+                )
+        elif isinstance(obj, ArticleBodyAsset):
+            if "asset" in unloaded:
+                raise RuntimeError(
+                    f"Detached ArticleBodyAsset has unloaded attributes: {unloaded}. "
+                    f"Add selectinload to _load_article_for_publish or _detach_record_inputs."
+                )
+
 
 def _publish_record(record: PublishRecord, article: Article, account: Account, stop_before_publish: bool):
+    _logger.info("Publishing record %d for article %d to account %d", record.id, article.id, account.id)
     publisher = build_publisher_for_record(record)
     return publisher.publish_article(article, account, stop_before_publish=stop_before_publish)
 
@@ -502,20 +532,25 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
         result = future.result()
     except FutureTimeoutError:
         _mark_record_failed(db, task.id, record_id, "Timeout: record execution exceeded 300s")
+        _logger.warning("Record %d timed out", record_id)
     except ToutiaoUserInputRequired as exc:
         # 人工介入：保持浏览器打开，将 session 关联到 record
         # 前端会读取 record.novnc_url 展示"打开远程浏览器"按钮
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
-        _mark_record_waiting_user_input(db, task.id, record_id, str(exc), screenshot_asset_id=screenshot_asset_id)
+        _mark_record_waiting_user_input(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
         if exc.session_id:
             associate_record_with_session(record_id, exc.session_id)
+        _logger.info("Record %d waiting user input", record_id)
     except ToutiaoPublishError as exc:
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
-        _mark_record_failed(db, task.id, record_id, str(exc), screenshot_asset_id=screenshot_asset_id)
+        _mark_record_failed(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
+        _logger.error("Record %d publish error: %s", record_id, exc)
     except ValueError as exc:
-        _mark_record_failed(db, task.id, record_id, str(exc))
+        _mark_record_failed(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}")
+        _logger.error("Record %d value error: %s", record_id, exc)
     except Exception as exc:
-        _mark_record_failed(db, task.id, record_id, f"Unexpected error: {exc}")
+        _mark_record_failed(db, task.id, record_id, f"Unexpected error: {exc}\n{traceback.format_exc()}")
+        _logger.error("Record %d unexpected error", record_id, exc_info=True)
     else:
         if task.stop_before_publish:
             stmt = (
@@ -533,6 +568,7 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
             message = result.message
         if db.execute(stmt).rowcount > 0:
             _add_log(db, task.id, record_id, "info", message)
+        _logger.info("Record %d succeeded", record_id)
 
 
 def _mark_record_failed(
@@ -567,156 +603,6 @@ def _mark_record_waiting_user_input(
     _add_log(db, task_id, record_id, "warn", message, screenshot_asset_id=screenshot_asset_id)
 
 
-def _run_next_pending_record(db: Session, task: PublishTask, records: list[PublishRecord] | None = None) -> None:
-    if records is None:
-        db.flush()
-        records = list_task_records(db, task.id)
-
-    cancel_evt = _task_cancel.get(task.id)
-
-    while True:
-        if cancel_evt and cancel_evt.is_set():
-            _add_log(db, task.id, None, "warn", "Task cancelled during execution")
-            break
-
-        next_record = next((r for r in records if r.status == "pending"), None)
-        if next_record is None:
-            _aggregate_task_status(task, records)
-            return
-
-        now = utcnow()
-        record_id = next_record.id
-        article_id = next_record.article_id
-        account_id = next_record.account_id
-        lease_until = utcnow() + timedelta(minutes=10)
-        stmt = (
-            sa_update(PublishRecord)
-            .where(PublishRecord.id == record_id, PublishRecord.status == "pending")
-            .values(status="running", started_at=now, lease_until=lease_until)
-        )
-        if db.execute(stmt).rowcount == 0:
-            db.commit()
-            records = list_task_records(db, task.id)
-            continue
-        next_record.status = "running"
-        next_record.started_at = now
-        next_record.lease_until = lease_until
-        _add_log(db, task.id, next_record.id, "info", f"Record {next_record.id} started")
-        # Phase 1: Commit running state (short transaction)
-        db.commit()
-
-        article = db.execute(
-            select(Article)
-            .where(Article.id == article_id)
-            .options(
-                selectinload(Article.cover_asset),
-                selectinload(Article.body_assets).selectinload(ArticleBodyAsset.asset),
-            )
-        ).scalar_one_or_none()
-        account = db.get(Account, account_id)
-        if not (article is not None and account is not None):
-            stmt = (
-                sa_update(PublishRecord)
-                .where(PublishRecord.id == next_record.id)
-                .values(status="failed", error_message="Record article or account not found", finished_at=utcnow(), lease_until=None)
-            )
-            db.execute(stmt)
-            _add_log(db, task.id, next_record.id, "error", "Record article or account not found")
-            db.commit()
-            continue
-
-        # Phase 2: Playwright execution (no DB transaction wrapping)
-        executor = None
-        try:
-            if not article.title or not article.title.strip():
-                raise ValueError("文章标题不能为空")
-            if not article_has_publishable_body(article):
-                raise ValueError("文章正文不能为空")
-            if article.cover_asset_id is None:
-                raise ValueError("文章封面不能为空")
-            if account.status != "valid":
-                raise ValueError(f"Account is not valid: {account.id}")
-
-            publisher = build_publisher_for_record(next_record)
-            executor = ThreadPoolExecutor(max_workers=1)
-            future = executor.submit(
-                publisher.publish_article,
-                article, account,
-                stop_before_publish=task.stop_before_publish,
-            )
-            result = future.result(timeout=RECORD_TIMEOUT_SECONDS)
-        except FutureTimeoutError:
-            stmt = (
-                sa_update(PublishRecord)
-                .where(PublishRecord.id == next_record.id)
-                .values(status="failed", error_message="Timeout: record execution exceeded 300s", finished_at=utcnow(), lease_until=None)
-            )
-            db.execute(stmt)
-            _add_log(db, task.id, next_record.id, "error", "Timeout: record execution exceeded 300s")
-            db.commit()
-            continue
-        except ToutiaoUserInputRequired as exc:
-            screenshot_asset_id = _store_failure_screenshot(db, task.id, next_record.id, exc.screenshot)
-            _mark_record_waiting_user_input(db, task.id, next_record.id, str(exc), screenshot_asset_id=screenshot_asset_id)
-            if exc.session_id:
-                associate_record_with_session(next_record.id, exc.session_id)
-            db.commit()
-            continue
-        except ToutiaoPublishError as exc:
-            screenshot_asset_id = _store_failure_screenshot(db, task.id, next_record.id, exc.screenshot)
-            stmt = (
-                sa_update(PublishRecord)
-                .where(PublishRecord.id == next_record.id)
-                .values(status="failed", error_message=str(exc), finished_at=utcnow(), lease_until=None)
-            )
-            db.execute(stmt)
-            _add_log(db, task.id, next_record.id, "error", str(exc), screenshot_asset_id=screenshot_asset_id)
-            db.commit()
-            continue
-        except ValueError as exc:
-            stmt = (
-                sa_update(PublishRecord)
-                .where(PublishRecord.id == next_record.id)
-                .values(status="failed", error_message=str(exc), finished_at=utcnow(), lease_until=None)
-            )
-            db.execute(stmt)
-            _add_log(db, task.id, next_record.id, "error", str(exc))
-            db.commit()
-            continue
-        except Exception as exc:
-            _add_log(db, task.id, next_record.id, "error", f"Unexpected error: {exc}")
-            stmt = (
-                sa_update(PublishRecord)
-                .where(PublishRecord.id == next_record.id)
-                .values(status="failed", error_message=str(exc), finished_at=utcnow(), lease_until=None)
-            )
-            db.execute(stmt)
-            db.commit()
-            continue
-        finally:
-            if executor:
-                executor.shutdown(wait=False)
-
-        # Phase 3: Conditional update — only if still 'running'
-        if task.stop_before_publish:
-            stmt = (
-                sa_update(PublishRecord)
-                .where(PublishRecord.id == next_record.id, PublishRecord.status == "running")
-                .values(status="waiting_manual_publish", finished_at=utcnow(), lease_until=None)
-            )
-        else:
-            stmt = (
-                sa_update(PublishRecord)
-                .where(PublishRecord.id == next_record.id, PublishRecord.status == "running")
-                .values(status="succeeded", publish_url=result.url or None, finished_at=utcnow(), lease_until=None)
-            )
-        if db.execute(stmt).rowcount > 0:
-            _add_log(db, task.id, next_record.id, "info", result.message if not task.stop_before_publish else "等待手动确认发布")
-        db.commit()
-        if task.stop_before_publish:
-            return
-
-
 # 手动确认发布结果（仅对 waiting_manual_publish 状态的记录有效）
 def manual_confirm_record(
     db: Session,
@@ -742,7 +628,7 @@ def manual_confirm_record(
     task = get_task(db, record.task_id)
     if task is not None:
         records = list_task_records(db, task.id)
-        _aggregate_task_status(task, records)
+        _aggregate_task_status(db, task, records)
 
     db.flush()
     return record
@@ -883,15 +769,24 @@ def cancel_task(db: Session, task: PublishTask) -> PublishTask:
             disassociate_record(record.id)
     _add_log(db, task.id, None, "warn", "Task cancelled")
     db.flush()
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        refreshed = get_task(db, task.id)
+        if refreshed is None or refreshed.status in TERMINAL_TASK_STATUSES:
+            break
+        time.sleep(0.1)
+
     return get_task(db, task.id) or task
 
 
 # 根据所有记录的状态聚合计算任务级状态
-def _aggregate_task_status(task: PublishTask, records: list[PublishRecord]) -> None:
+def _aggregate_task_status(db: Session, task: PublishTask, records: list[PublishRecord]) -> None:
     now = utcnow()
     if not records:
         task.status = "failed"
         task.finished_at = now
+        _add_log(db, task.id, None, "warn", "Task finished with status: failed")
         return
     if any(r.status in {"pending", "running", "waiting_manual_publish", "waiting_user_input"} for r in records):
         return  # 任务尚未结束，保持当前状态
@@ -901,6 +796,8 @@ def _aggregate_task_status(task: PublishTask, records: list[PublishRecord]) -> N
     elif any(r.status == "failed" for r in records):
         task.status = "partial_failed" if any(r.status == "succeeded" for r in records) else "failed"
         task.finished_at = now
+    if task.status in TERMINAL_TASK_STATUSES:
+        _add_log(db, task.id, None, "info" if task.status == "succeeded" else "warn", f"Task finished with status: {task.status}")
 
 
 # 添加任务日志
@@ -926,7 +823,7 @@ def _add_log(
 # 校验任务输入参数
 def _validated_task_inputs(db: Session, payload: TaskCreate) -> TaskInputs:
     if payload.task_type not in VALID_TASK_TYPES:
-        raise ValueError(f"Invalid task_type: {payload.task_type}")
+        raise ValidationError(f"Invalid task_type: {payload.task_type}")
 
     platform = db.execute(select(Platform).where(Platform.code == payload.platform_code)).scalar_one_or_none()
     if platform is None:
@@ -937,7 +834,7 @@ def _validated_task_inputs(db: Session, payload: TaskCreate) -> TaskInputs:
     _validate_unique_articles(article_ids)
 
     if payload.task_type == "single" and len(ordered_accounts) != 1:
-        raise ValueError("Single task requires exactly one account")
+        raise ValidationError("Single task requires exactly one account")
 
     return TaskInputs(platform=platform, accounts=ordered_accounts, article_ids=article_ids)
 
@@ -962,13 +859,13 @@ def _validated_accounts(
     account_inputs: list[TaskAccountInput],
 ) -> list[tuple[int, Account]]:
     if not account_inputs:
-        raise ValueError("At least one account is required")
+        raise ValidationError("At least one account is required")
 
     seen: set[int] = set()
     ordered_inputs: list[tuple[int, int]] = []
     for index, item in enumerate(account_inputs):
         if item.account_id in seen:
-            raise ValueError(f"Duplicate account_id: {item.account_id}")
+            raise ValidationError(f"Duplicate account_id: {item.account_id}")
         seen.add(item.account_id)
         ordered_inputs.append((item.sort_order if item.sort_order is not None else index, item.account_id))
     ordered_inputs.sort(key=lambda item: item[0])
@@ -982,11 +879,11 @@ def _validated_accounts(
     for sort_order, account_id in ordered_inputs:
         account = accounts.get(account_id)
         if account is None:
-            raise ValueError(f"Account not found: {account_id}")
+            raise AccountError(f"Account not found: {account_id}")
         if account.platform_id != platform_id:
-            raise ValueError(f"Account platform mismatch: {account_id}")
+            raise AccountError(f"Account platform mismatch: {account_id}")
         if account.status != "valid":
-            raise ValueError(f"Account is not valid: {account_id}")
+            raise AccountError(f"Account is not valid: {account_id}")
         ordered_accounts.append((sort_order, account))
     return ordered_accounts
 
@@ -994,7 +891,7 @@ def _validated_accounts(
 # 校验文章 ID 不重复
 def _validate_unique_articles(article_ids: list[int]) -> None:
     if len(article_ids) != len(set(article_ids)):
-        raise ValueError("Duplicate article_id in task assignment")
+        raise ValidationError("Duplicate article_id in task assignment")
 
 
 # 根据任务类型获取文章 ID 列表
@@ -1021,78 +918,8 @@ def _article_ids_for_task(db: Session, payload: TaskCreate) -> list[int]:
         .all()
     )
     if not items:
-        raise ValueError("Article group has no articles")
+        raise ValidationError("Article group has no articles")
     return [item.article_id for item in items]
-
-
-# 将 ORM PublishTask 转为响应体
-def to_task_read(task: PublishTask) -> TaskRead:
-    accounts = sorted(task.accounts, key=lambda item: item.sort_order)
-    return TaskRead(
-        id=task.id,
-        name=task.name,
-        task_type=task.task_type,
-        status=task.status,
-        platform_id=task.platform_id,
-        platform_code=task.platform.code,
-        article_id=task.article_id,
-        group_id=task.group_id,
-        stop_before_publish=task.stop_before_publish,
-        accounts=[
-            TaskAccountRead(
-                account_id=item.account_id,
-                sort_order=item.sort_order,
-                display_name=item.account.display_name,
-                status=item.account.status,
-            )
-            for item in accounts
-        ],
-        record_count=len(task.records),
-        created_at=task.created_at,
-        started_at=task.started_at,
-        finished_at=task.finished_at,
-    )
-
-
-# 将 ORM PublishRecord 转为响应体
-def to_record_read(record: PublishRecord) -> PublishRecordRead:
-    """
-    序列化 PublishRecord → PublishRecordRead（API 响应）。
-
-    额外填充 remote_browser_session_id 和 novnc_url：
-      从 _record_to_session 映射中查找 record 关联的远程浏览器 session，
-      如果有则暴露 novnc_url 给前端显示"打开远程浏览器"按钮。
-    """
-    session = get_session_for_record(record.id)
-    return PublishRecordRead(
-        id=record.id,
-        task_id=record.task_id,
-        article_id=record.article_id,
-        platform_id=record.platform_id,
-        account_id=record.account_id,
-        status=record.status,
-        publish_url=record.publish_url,
-        error_message=record.error_message,
-        retry_of_record_id=record.retry_of_record_id,
-        started_at=record.started_at,
-        finished_at=record.finished_at,
-        lease_until=record.lease_until,
-        remote_browser_session_id=session.id if session else None,
-        novnc_url=session.novnc_url if session else None,
-    )
-
-
-# 将 ORM TaskLog 转为响应体
-def to_log_read(log: TaskLog) -> TaskLogRead:
-    return TaskLogRead(
-        id=log.id,
-        task_id=log.task_id,
-        record_id=log.record_id,
-        level=log.level,
-        message=log.message,
-        screenshot_asset_id=log.screenshot_asset_id,
-        created_at=log.created_at,
-    )
 
 
 def recover_stuck_records(db: Session) -> None:
@@ -1110,4 +937,5 @@ def recover_stuck_records(db: Session) -> None:
         record.status = "pending"
         record.lease_until = None
     if records:
+        _logger.warning("Recovered %d stuck records: %s", len(records), [r.id for r in records])
         db.commit()

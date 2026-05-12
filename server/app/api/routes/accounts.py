@@ -14,8 +14,8 @@ from server.app.services.accounts import (
     login_toutiao,
     rename_account,
     relogin_account,
-    to_account_read,
 )
+from server.app.services.serializers import to_account_read
 
 router = APIRouter()
 

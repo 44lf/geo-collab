@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, newClientRequestId, singleFlight } from "../../api/client";
-import type { Task, Account, ArticleGroup, ArticleSummary, PublishRecord, TaskLog, AssignmentPreview } from "../../types";
+import type { Task, TaskCreatePayload, Account, ArticleGroup, ArticleSummary, PublishRecord, TaskLog, AssignmentPreview } from "../../types";
 import { TERMINAL_STATUSES, statusLabel } from "../../types";
 import { Plus, RefreshCw, Send } from "lucide-react";
+import { useToast } from "../../components/Toast";
+import { Pagination } from "../../components/Pagination";
 
 const TASK_PAGE_SIZE = 10;
 
 export function TasksWorkspace() {
+  const { toast } = useToast();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskPage, setTaskPage] = useState(0);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
@@ -16,7 +19,6 @@ export function TasksWorkspace() {
   const [articles, setArticles] = useState<ArticleSummary[]>([]);
   const [groups, setGroups] = useState<ArticleGroup[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [autoRefreshTaskIds, setAutoRefreshTaskIds] = useState<Set<number>>(new Set());
 
@@ -29,6 +31,8 @@ export function TasksWorkspace() {
   const [formError, setFormError] = useState("");
 
   const lastLogIdRef = useRef(0);
+  const prevRecordsJsonRef = useRef<string>("");
+  const prevTasksJsonRef = useRef<string>("");
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
   const hasActiveRecords = records.some(r =>
@@ -53,8 +57,10 @@ export function TasksWorkspace() {
   useEffect(() => {
     if (!selectedTaskId || !shouldPollSelectedTask) return;
     const interval = setInterval(() => {
-      void refreshDetail(selectedTaskId);
-    }, 2500);
+      if (document.visibilityState === "visible") {
+        void refreshDetail(selectedTaskId);
+      }
+    }, 5000);
     return () => clearInterval(interval);
   }, [selectedTaskId, shouldPollSelectedTask]);
 
@@ -83,12 +89,20 @@ export function TasksWorkspace() {
       api<TaskLog[]>(`/api/tasks/${taskId}/logs?after_id=${lastLogIdRef.current}`),
       api<Task[]>("/api/tasks"),
     ]);
-    setRecords(rs);
+    const rsJson = JSON.stringify(rs);
+    if (rsJson !== prevRecordsJsonRef.current) {
+      setRecords(rs);
+      prevRecordsJsonRef.current = rsJson;
+    }
     if (ls.length > 0) {
       setLogs((prev) => [...prev, ...ls]);
       lastLogIdRef.current = Math.max(...ls.map((l) => l.id));
     }
-    setTasks(ts);
+    const tsJson = JSON.stringify(ts);
+    if (tsJson !== prevTasksJsonRef.current) {
+      setTasks(ts);
+      prevTasksJsonRef.current = tsJson;
+    }
     const currentTask = ts.find((task) => task.id === taskId);
     if (!currentTask || TERMINAL_STATUSES.has(currentTask.status)) {
       setAutoRefreshTaskIds((prev) => {
@@ -123,18 +137,19 @@ export function TasksWorkspace() {
     }
     setLoading(true);
     try {
+      const payload: TaskCreatePayload = {
+        name: formName.trim(),
+        client_request_id: newClientRequestId("task"),
+        task_type: formType,
+        article_id: formType === "single" ? formArticleId : null,
+        group_id: formType === "group_round_robin" ? formGroupId : null,
+        accounts: formAccountIds.map((id, index) => ({ account_id: id, sort_order: index })),
+        stop_before_publish: false,
+      };
       const task = await singleFlight("task-create", () =>
         api<Task>("/api/tasks", {
           method: "POST",
-          body: JSON.stringify({
-            name: formName.trim(),
-            client_request_id: newClientRequestId("task"),
-            task_type: formType,
-            article_id: formType === "single" ? formArticleId : null,
-            group_id: formType === "group_round_robin" ? formGroupId : null,
-            accounts: formAccountIds.map((id, index) => ({ account_id: id, sort_order: index })),
-            stop_before_publish: false,
-          }),
+          body: JSON.stringify(payload),
         }),
       );
       if (!task) return;
@@ -146,11 +161,11 @@ export function TasksWorkspace() {
       setFormError("");
       setPreview(null);
       setTaskPage(0);
-      setNotice("任务已创建");
+      toast("任务已创建", "success");
       await selectTask(task.id);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "创建失败";
-      setNotice(msg);
+      toast(msg, "error");
       setFormError(msg);
     } finally {
       setLoading(false);
@@ -173,7 +188,7 @@ export function TasksWorkspace() {
       });
       setPreview(result);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "预览失败");
+      toast(error instanceof Error ? error.message : "预览失败", "error");
     } finally {
       setLoading(false);
     }
@@ -188,9 +203,9 @@ export function TasksWorkspace() {
         api<Task>(`/api/tasks/${selectedTaskId}/execute`, { method: "POST" }),
       );
       await refreshDetail(selectedTaskId);
-      setNotice("已启动");
+      toast("已启动", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "启动失败");
+      toast(error instanceof Error ? error.message : "启动失败", "error");
     } finally {
       setLoading(false);
     }
@@ -210,9 +225,9 @@ export function TasksWorkspace() {
         return next;
       });
       await refreshDetail(selectedTaskId);
-      setNotice("已取消");
+      toast("已取消", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "取消失败");
+      toast(error instanceof Error ? error.message : "取消失败", "error");
     } finally {
       setLoading(false);
     }
@@ -231,9 +246,9 @@ export function TasksWorkspace() {
         );
         await refreshDetail(selectedTaskId);
       }
-      setNotice("重试已启动");
+      toast("重试已启动", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "重试失败");
+      toast(error instanceof Error ? error.message : "重试失败", "error");
     } finally {
       setLoading(false);
     }
@@ -262,7 +277,6 @@ export function TasksWorkspace() {
           <h1>任务管理</h1>
         </div>
         <div className="topActions">
-          {notice ? <span className="status">{notice}</span> : null}
         </div>
       </header>
 
@@ -386,19 +400,13 @@ export function TasksWorkspace() {
             ))}
             {tasks.length === 0 ? <p className="emptyText">暂无任务</p> : null}
           </div>
-          <div className="pagerRow">
-            <button type="button" disabled={taskPage === 0 || loading} onClick={() => setTaskPage((page) => Math.max(0, page - 1))}>
-              上一页
-            </button>
-            <span>第 {taskPage + 1} / {totalTaskPages} 页</span>
-            <button
-              type="button"
-              disabled={taskPage >= totalTaskPages - 1 || loading}
-              onClick={() => setTaskPage((page) => Math.min(totalTaskPages - 1, page + 1))}
-            >
-              下一页
-            </button>
-          </div>
+          <Pagination
+            page={taskPage}
+            totalPages={totalTaskPages}
+            loading={loading}
+            onPrev={() => setTaskPage((page) => Math.max(0, page - 1))}
+            onNext={() => setTaskPage((page) => Math.min(totalTaskPages - 1, page + 1))}
+          />
         </div>
 
         {selectedTask ? (

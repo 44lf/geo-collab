@@ -3,13 +3,14 @@ from pathlib import Path
 
 from server.app.models import Asset
 from server.app.services import toutiao_publisher as publisher_module
+from server.app.services.clipboard import build_hdrop_payload, set_clipboard_files
 from server.app.services.toutiao_publisher import ToutiaoPublisher
 
 
 def test_build_hdrop_payload_uses_wide_file_list() -> None:
     path = r"C:\Users\Administrator\AppData\Local\GeoCollab\assets\2026\05\image.png"
 
-    payload = ToutiaoPublisher._build_hdrop_payload([path])
+    payload = build_hdrop_payload([path])
     p_files, x, y, fnc, f_wide = struct.unpack("<IiiII", payload[:20])
 
     assert (p_files, x, y, fnc, f_wide) == (20, 0, 0, 0, 1)

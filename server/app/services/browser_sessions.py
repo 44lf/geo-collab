@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import re
+import logging
 import shutil
 import socket
 import subprocess
@@ -35,6 +36,8 @@ from typing import BinaryIO, Iterator
 
 from server.app.core.config import get_settings
 from server.app.core.paths import get_data_dir
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -152,7 +155,9 @@ def managed_remote_browser_session(account_key: str) -> Iterator[RemoteBrowserSe
     try:
         yield session
     finally:
-        if session.id not in _session_keep_alive:
+        with _sessions_lock:
+            keep = session.id not in _session_keep_alive
+        if keep:
             stop_remote_browser_session(session.id)
 
 
@@ -429,7 +434,7 @@ def _cleanup_stale_sessions(idle_timeout: int) -> None:
         try:
             stop_remote_browser_session(session_id)
         except Exception:
-            pass
+            _logger.warning("Failed to stop stale session %s", session_id, exc_info=True)
         # 解除所有关联 record 的绑定
         with _sessions_lock:
             stale_records = [rid for rid, sid in _record_to_session.items() if sid == session_id]
@@ -458,5 +463,14 @@ def _is_windows_runtime() -> bool:
 def _novnc_url(host: str, port: int) -> str:
     return f"http://{host}:{port}/vnc.html?host={host}&port={port}"
 
-# 启动空闲超时清理线程
-_start_idle_cleanup()
+def _reset_globals() -> None:
+    """Reset all module-level state (for test cleanup)."""
+    global _active_sessions, _record_to_session, _session_keep_alive
+    global _reserved_displays, _reserved_vnc_ports, _reserved_novnc_ports
+    with _sessions_lock:
+        _active_sessions.clear()
+        _record_to_session.clear()
+        _session_keep_alive.clear()
+        _reserved_displays.clear()
+        _reserved_vnc_ports.clear()
+        _reserved_novnc_ports.clear()

@@ -136,6 +136,60 @@ export type SystemStatus = {
   browser_ready: boolean;
 };
 
+// API Request Bodies
+export type ArticleCreatePayload = {
+  title: string;
+  author?: string | null;
+  cover_asset_id?: string | null;
+  content_json: Record<string, unknown>;
+  content_html?: string;
+  plain_text?: string;
+  word_count?: number;
+  status?: string;
+  version?: number | null;
+  client_request_id?: string;
+};
+
+export type ArticleUpdatePayload = {
+  title?: string;
+  author?: string | null;
+  cover_asset_id?: string | null;
+  content_json?: Record<string, unknown>;
+  content_html?: string;
+  plain_text?: string;
+  word_count?: number;
+  status?: string;
+  version?: number | null;
+  client_request_id?: string;
+};
+
+export type TaskCreatePayload = {
+  name: string;
+  client_request_id: string;
+  task_type: "single" | "group_round_robin";
+  article_id?: number | null;
+  group_id?: number | null;
+  accounts: { account_id: number; sort_order: number }[];
+  stop_before_publish?: boolean;
+  platform_code?: string;
+};
+
+export type AccountLoginPayload = {
+  display_name: string;
+  account_key: string;
+  use_browser?: boolean;
+};
+
+export type ArticleGroupUpdateItemsPayload = {
+  items: { article_id: number; sort_order: number }[];
+};
+
+export type ManualConfirmPayload = {
+  outcome: "succeeded" | "failed";
+  publish_url?: string | null;
+  error_message?: string | null;
+};
+
 export function statusLabel(status: string): string {
   const labels: Record<string, string> = {
     pending: "待执行",

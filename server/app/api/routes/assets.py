@@ -1,6 +1,5 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from server.app.db.session import get_db
@@ -30,10 +29,11 @@ def to_asset_read(asset: Asset) -> AssetRead:
 
 # 上传资源文件（图片等）
 @router.post("", response_model=AssetRead)
-async def upload_asset(file: UploadFile = File(...), db: Session = Depends(get_db)) -> JSONResponse:
+async def upload_asset(file: UploadFile = File(...), db: Session = Depends(get_db)) -> Response:
     stored = await store_upload(db, file)
-    return JSONResponse(
-        content=jsonable_encoder(to_asset_read(stored.asset)),
+    return Response(
+        content=to_asset_read(stored.asset).model_dump_json(),
+        media_type="application/json",
         headers={"X-Content-Type-Options": "nosniff"},
     )
 

@@ -26,6 +26,8 @@ def managed_browser_context(
             **launch_options(channel, executable_path),
         )
         context.set_default_navigation_timeout(30000)
+        from server.app.services.toutiao_publisher import _register_context_for_cleanup
+        _register_context_for_cleanup(context)
         yield playwright, context, context.new_page()
     finally:
         if close_on_exit:
@@ -34,6 +36,9 @@ def managed_browser_context(
                     context.close()
                 except Exception:
                     pass
+                from server.app.services.toutiao_publisher import _launched_contexts
+                if context in _launched_contexts:
+                    _launched_contexts.remove(context)
             if playwright:
                 try:
                     playwright.stop()

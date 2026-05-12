@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     data_dir: Path | None = None
     publish_max_concurrent_records: int = 5
+    publish_record_timeout_seconds: int = 300
     publish_browser_channel: str = "chrome"
     publish_browser_executable_path: str | None = None
     publish_remote_browser_enabled: bool = False

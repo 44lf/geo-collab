@@ -9,11 +9,14 @@ import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
-import { Plus, Save, Search, Trash2, Upload, ChevronRight, X } from "lucide-react";
+import { Plus, Save, Search, Trash2, Upload, ChevronRight } from "lucide-react";
+import { useToast } from "../../components/Toast";
 import { api, assetSrc, countWords, emptyDoc, newClientRequestId, singleFlight, withAssetToken } from "../../api/client";
-import type { Article, ArticleGroup, ArticleSummary, Asset, Draft } from "../../types";
+import type { Article, ArticleCreatePayload, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleSummary, ArticleUpdatePayload, Asset, Draft } from "../../types";
 import { EditorToolbar } from "../../components/editor/EditorToolbar";
 import { ArticleListItem } from "../../components/ArticleListItem";
+import { Modal } from "../../components/Modal";
+import { Pagination } from "../../components/Pagination";
 
 function makeEmptyDraft(): Draft {
   return {
@@ -238,6 +241,7 @@ interface Props {
 }
 
 export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
+  const { toast } = useToast();
   const [articles, setArticles] = useState<ArticleSummary[]>([]);
   const [groups, setGroups] = useState<ArticleGroup[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -245,7 +249,6 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   const [query, setQuery] = useState("");
   const [articlePage, setArticlePage] = useState(0);
   const [draft, setDraft] = useState<Draft>(makeEmptyDraft);
-  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
@@ -405,7 +408,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         bodyState,
       };
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "加载文章失败");
+      toast(error instanceof Error ? error.message : "加载文章失败", "error");
     } finally {
       setLoading(false);
     }
@@ -423,9 +426,9 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     try {
       const asset = await uploadAsset(file);
       setDraft((current) => ({ ...current, cover_asset_id: asset.id }));
-      setNotice("封面已上传");
+      toast("封面已上传", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "封面上传失败");
+      toast(error instanceof Error ? error.message : "封面上传失败", "error");
     } finally {
       setLoading(false);
     }
@@ -449,9 +452,9 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
           },
         })
         .run();
-      setNotice("正文图片已插入");
+      toast("正文图片已插入", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "正文图片上传失败");
+      toast(error instanceof Error ? error.message : "正文图片上传失败", "error");
     } finally {
       setLoading(false);
     }
@@ -460,13 +463,13 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
 
   async function saveArticle() {
     if (!editor || !draft.title.trim()) {
-      setNotice("标题不能为空");
+      toast("标题不能为空", "error");
       return;
     }
     setLoading(true);
     try {
       const contentJson = normalizeEditorDocument(editor.getJSON(), "save");
-      const payload = {
+      const base = {
         title: draft.title.trim(),
         author: draft.author.trim() || null,
         cover_asset_id: draft.cover_asset_id,
@@ -478,15 +481,18 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         version: draft.version,
       };
       const saved = draft.id
-        ? await singleFlight(`article-save-${draft.id}`, () =>
-            api<Article>(`/api/articles/${draft.id}`, { method: "PUT", body: JSON.stringify(payload) }),
-          )
-        : await singleFlight("article-create", () =>
-            api<Article>("/api/articles", {
-              method: "POST",
-              body: JSON.stringify({ ...payload, client_request_id: newClientRequestId("article") }),
-            }),
-          );
+        ? (() => {
+            const payload: ArticleUpdatePayload = { ...base };
+            return singleFlight(`article-save-${draft.id}`, () =>
+              api<Article>(`/api/articles/${draft.id}`, { method: "PUT", body: JSON.stringify(payload) }),
+            );
+          })()
+        : (() => {
+            const payload: ArticleCreatePayload = { ...base, client_request_id: newClientRequestId("article") };
+            return singleFlight("article-create", () =>
+              api<Article>("/api/articles", { method: "POST", body: JSON.stringify(payload) }),
+            );
+          })();
       if (!saved) return;
       savedStateRef.current = {
         title: draft.title.trim(),
@@ -496,9 +502,9 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       };
       await refreshArticles();
       resetDraft();
-      setNotice("文章已保存");
+      toast("文章已保存", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "保存失败");
+      toast(error instanceof Error ? error.message : "保存失败", "error");
     } finally {
       setLoading(false);
     }
@@ -511,9 +517,9 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       await api<void>(`/api/articles/${draft.id}`, { method: "DELETE" });
       resetDraft();
       await refreshArticles();
-      setNotice("文章已删除");
+      toast("文章已删除", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "删除失败");
+      toast(error instanceof Error ? error.message : "删除失败", "error");
     } finally {
       setLoading(false);
     }
@@ -522,7 +528,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   async function saveGroupFromSelection() {
     const name = groupName.trim();
     if (!name) {
-      setNotice("请输入分组名称");
+      toast("请输入分组名称", "error");
       return;
     }
     setLoading(true);
@@ -537,21 +543,21 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
             body: JSON.stringify({ name }),
           });
       if (!editingGroupId && selectedArticleIds.length > 0) {
+        const payload: ArticleGroupUpdateItemsPayload = {
+          items: selectedArticleIds.map((articleId, index) => ({ article_id: articleId, sort_order: index })),
+        };
         await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
           method: "PUT",
-          body: JSON.stringify({
-            items: selectedArticleIds.map((articleId, index) => ({ article_id: articleId, sort_order: index })),
-            version: group.version,
-          }),
+          body: JSON.stringify({ ...payload, version: group.version }),
         });
       }
       setGroupName("");
       setEditingGroupId(null);
       setSelectedArticleIds([]);
       await refreshGroups();
-      setNotice(editingGroupId ? "分组已更新" : "分组已创建");
+      toast(editingGroupId ? "分组已更新" : "分组已创建", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "保存分组失败");
+      toast(error instanceof Error ? error.message : "保存分组失败", "error");
     } finally {
       setLoading(false);
     }
@@ -566,9 +572,9 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       setGroupName("");
       setSelectedArticleIds([]);
       await refreshGroups();
-      setNotice("分组已删除");
+      toast("分组已删除", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "删除分组失败");
+      toast(error instanceof Error ? error.message : "删除分组失败", "error");
     } finally {
       setLoading(false);
     }
@@ -597,22 +603,22 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     if (!group) return;
     setLoading(true);
     try {
+      const payload: ArticleGroupUpdateItemsPayload = {
+        items: [
+          ...group.items.map((item) => ({ article_id: item.article_id, sort_order: item.sort_order })),
+          { article_id: groupPickerArticle.id, sort_order: group.items.length },
+        ],
+      };
       await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
         method: "PUT",
-        body: JSON.stringify({
-          items: [
-            ...group.items.map((item) => ({ article_id: item.article_id, sort_order: item.sort_order })),
-            { article_id: groupPickerArticle.id, sort_order: group.items.length },
-          ],
-          version: group.version,
-        }),
+        body: JSON.stringify({ ...payload, version: group.version }),
       });
       setGroupPickerArticle(null);
       setGroupPickerSelectedId(null);
       await refreshGroups();
-      setNotice("文章已加入分组");
+      toast("文章已加入分组", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "加入分组失败");
+      toast(error instanceof Error ? error.message : "加入分组失败", "error");
     } finally {
       setLoading(false);
     }
@@ -621,19 +627,19 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   async function removeArticleFromGroup(group: ArticleGroup, articleId: number) {
     setLoading(true);
     try {
+      const payload: ArticleGroupUpdateItemsPayload = {
+        items: group.items
+          .filter((item) => item.article_id !== articleId)
+          .map((item, index) => ({ article_id: item.article_id, sort_order: index })),
+      };
       await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
         method: "PUT",
-        body: JSON.stringify({
-          items: group.items
-            .filter((item) => item.article_id !== articleId)
-            .map((item, index) => ({ article_id: item.article_id, sort_order: index })),
-          version: group.version,
-        }),
+        body: JSON.stringify({ ...payload, version: group.version }),
       });
       await refreshGroups();
-      setNotice("文章已移出分组");
+      toast("文章已移出分组", "success");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "移出分组失败");
+      toast(error instanceof Error ? error.message : "移出分组失败", "error");
     } finally {
       setLoading(false);
     }
@@ -651,7 +657,6 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
           <h1>图文工作台</h1>
         </div>
         <div className="topActions">
-          {notice ? <span className="status">{notice}</span> : null}
           <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
             <Trash2 size={16} />
             删除
@@ -773,15 +778,13 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
             {unifiedList.length === 0 ? <p className="emptyText">暂无文章</p> : null}
           </div>
 
-          <div className="pagerRow">
-            <button type="button" disabled={articlePage === 0 || loading} onClick={() => void changeArticlePage(articlePage - 1)}>
-              上一页
-            </button>
-            <span>第 {articlePage + 1} / {totalArticlePages} 页</span>
-            <button type="button" disabled={articlePage >= totalArticlePages - 1 || loading} onClick={() => void changeArticlePage(articlePage + 1)}>
-              下一页
-            </button>
-          </div>
+          <Pagination
+            page={articlePage}
+            totalPages={totalArticlePages}
+            loading={loading}
+            onPrev={() => void changeArticlePage(articlePage - 1)}
+            onNext={() => void changeArticlePage(articlePage + 1)}
+          />
 
           <section className="groupBox">
             <h2>文章分组</h2>
@@ -852,101 +855,82 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       </section>
 
       {groupPickerArticle ? (
-        <div className="modalBackdrop" role="presentation" onMouseDown={() => setGroupPickerArticle(null)}>
-          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-            <header className="modalHeader">
-              <div>
-                <h2>加入分组</h2>
-                <p>{groupPickerArticle.title}</p>
-              </div>
-              <button type="button" aria-label="关闭" onClick={() => setGroupPickerArticle(null)}>
-                <X size={16} />
-              </button>
-            </header>
-            <div className="groupPickerList">
-              {groups.map((group) => (
-                <label className="groupPickerOption" key={group.id}>
-                  <input
-                    checked={groupPickerSelectedId === group.id}
-                    name="targetGroup"
-                    type="radio"
-                    onChange={() => setGroupPickerSelectedId(group.id)}
-                  />
-                  <span>{group.name}</span>
-                  <small>{group.items.length} 篇</small>
-                </label>
-              ))}
-              {groups.length === 0 ? <p className="emptyText">暂无分组</p> : null}
-            </div>
-            <footer className="modalActions">
+        <Modal
+          title="加入分组"
+          onClose={() => setGroupPickerArticle(null)}
+          footer={
+            <>
               <button type="button" onClick={() => setGroupPickerArticle(null)}>
                 取消
               </button>
               <button type="button" disabled={!groupPickerSelectedId || loading} onClick={() => void addArticleToGroup()}>
                 加入
               </button>
-            </footer>
-          </section>
-        </div>
+            </>
+          }
+        >
+          <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>{groupPickerArticle.title}</p>
+          <div className="groupPickerList">
+            {groups.map((group) => (
+              <label className="groupPickerOption" key={group.id}>
+                <input
+                  checked={groupPickerSelectedId === group.id}
+                  name="targetGroup"
+                  type="radio"
+                  onChange={() => setGroupPickerSelectedId(group.id)}
+                />
+                <span>{group.name}</span>
+                <small>{group.items.length} 篇</small>
+              </label>
+            ))}
+            {groups.length === 0 ? <p className="emptyText">暂无分组</p> : null}
+          </div>
+        </Modal>
       ) : null}
 
       {confirmDeleteArticle ? (
-        <div className="modalBackdrop" role="presentation" onMouseDown={() => setConfirmDeleteArticle(false)}>
-          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-            <header className="modalHeader">
-              <div>
-                <h2>确认删除文章？</h2>
-                <p>《{draft.title}》删除后不可恢复</p>
-              </div>
-              <button type="button" aria-label="关闭" onClick={() => setConfirmDeleteArticle(false)}>
-                <X size={16} />
-              </button>
-            </header>
-            <footer className="modalActions">
+        <Modal
+          title="确认删除文章？"
+          onClose={() => setConfirmDeleteArticle(false)}
+          footer={
+            <>
               <button type="button" onClick={() => setConfirmDeleteArticle(false)}>取消</button>
               <button type="button" className="dangerButton" disabled={loading} onClick={() => { setConfirmDeleteArticle(false); void deleteCurrentArticle(); }}>确认删除</button>
-            </footer>
-          </section>
-        </div>
+            </>
+          }
+        >
+          <p>《{draft.title}》删除后不可恢复</p>
+        </Modal>
       ) : null}
 
       {confirmDeleteGroup ? (
-        <div className="modalBackdrop" role="presentation" onMouseDown={() => setConfirmDeleteGroup(false)}>
-          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-            <header className="modalHeader">
-              <div>
-                <h2>确认删除分组？</h2>
-                <p>分组下文章的关联将被移除，文章本身不受影响</p>
-              </div>
-              <button type="button" aria-label="关闭" onClick={() => setConfirmDeleteGroup(false)}>
-                <X size={16} />
-              </button>
-            </header>
-            <footer className="modalActions">
+        <Modal
+          title="确认删除分组？"
+          onClose={() => setConfirmDeleteGroup(false)}
+          footer={
+            <>
               <button type="button" onClick={() => setConfirmDeleteGroup(false)}>取消</button>
               <button type="button" className="dangerButton" disabled={loading} onClick={() => { setConfirmDeleteGroup(false); void deleteEditingGroup(); }}>确认删除</button>
-            </footer>
-          </section>
-        </div>
+            </>
+          }
+        >
+          <p>分组下文章的关联将被移除，文章本身不受影响</p>
+        </Modal>
       ) : null}
 
       {confirmUnsavedNew ? (
-        <div className="modalBackdrop" role="presentation" onMouseDown={() => setConfirmUnsavedNew(false)}>
-          <section className="groupPickerModal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-            <header className="modalHeader">
-              <div>
-                <h2>当前有未保存的内容，确认放弃？</h2>
-              </div>
-              <button type="button" aria-label="关闭" onClick={() => setConfirmUnsavedNew(false)}>
-                <X size={16} />
-              </button>
-            </header>
-            <footer className="modalActions">
+        <Modal
+          title="当前有未保存的内容，确认放弃？"
+          onClose={() => setConfirmUnsavedNew(false)}
+          footer={
+            <>
               <button type="button" onClick={() => setConfirmUnsavedNew(false)}>取消</button>
               <button type="button" className="primaryButton" onClick={() => { setConfirmUnsavedNew(false); resetDraft(); }}>确认放弃</button>
-            </footer>
-          </section>
-        </div>
+            </>
+          }
+        >
+          {null}
+        </Modal>
       ) : null}
     </>
   );

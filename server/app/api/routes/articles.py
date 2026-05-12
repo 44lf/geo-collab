@@ -13,9 +13,9 @@ from server.app.services.articles import (
     get_article,
     list_articles,
     set_article_cover,
-    to_article_read,
     update_article,
 )
+from server.app.services.serializers import to_article_read
 
 router = APIRouter()
 

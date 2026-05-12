@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -10,8 +11,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
 from server.app.models import Article, ArticleBodyAsset, ArticleGroupItem, Asset, PublishRecord, TaskLog
-from server.app.schemas.article import ArticleBodyAssetRead, ArticleCreate, ArticleRead, ArticleUpdate
+from server.app.schemas.article import ArticleCreate, ArticleUpdate
 from server.app.services.errors import ConflictError
+
+_logger = logging.getLogger(__name__)
 
 VALID_ARTICLE_STATUSES = {"draft", "ready", "archived"}
 
@@ -149,7 +152,7 @@ def list_articles(db: Session, query: str | None = None, skip: int = 0, limit: i
                     return []
                 fts_ok = True
             except Exception:
-                pass
+                _logger.debug("FTS search unavailable, falling back to LIKE query", exc_info=True)
         if not fts_ok:
             like = f"%{query}%"
             stmt = stmt.where((Article.title.like(like)) | (Article.author.like(like)))
@@ -249,30 +252,5 @@ def delete_article(db: Session, article: Article) -> None:
     db.flush()
 
 
-# 将 ORM Article 转为响应体
-def to_article_read(article: Article, published_count: int = 0) -> ArticleRead:
-    body_assets = sorted(article.body_assets, key=lambda item: item.position)
-    return ArticleRead(
-        id=article.id,
-        title=article.title,
-        author=article.author,
-        cover_asset_id=article.cover_asset_id,
-        content_json=loads_content_json(article.content_json),
-        content_html=article.content_html,
-        plain_text=article.plain_text,
-        word_count=article.word_count,
-        status=article.status,
-        version=article.version,
-        published_count=published_count,
-        body_assets=[
-            ArticleBodyAssetRead(
-                asset_id=item.asset_id,
-                position=item.position,
-                editor_node_id=item.editor_node_id,
-            )
-            for item in body_assets
-        ],
-        created_at=article.created_at,
-        updated_at=article.updated_at,
-    )
+
 

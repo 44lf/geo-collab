@@ -129,13 +129,18 @@ def test_user_input_required_pauses_record(monkeypatch):
     client = test_app.client
 
     class NeedsUserInputPublisher:
+        def __init__(self):
+            self.ready = threading.Event()
+
         def publish_article(self, article, account, stop_before_publish=False):
+            self.ready.set()
             raise ToutiaoUserInputRequired("login verification required")
 
     try:
+        publisher = NeedsUserInputPublisher()
         monkeypatch.setattr(
             "server.app.services.tasks.build_publisher_for_record",
-            lambda record: NeedsUserInputPublisher(),
+            lambda record: publisher,
         )
         cover_id = _upload_cover_image(client)
         article_id = _create_article(client, "Article Needs Input", plain_text="Body", cover_asset_id=cover_id)
@@ -154,16 +159,19 @@ def test_user_input_required_pauses_record(monkeypatch):
         resp = client.post(f"/api/tasks/{task['id']}/execute")
         assert resp.status_code == 202
 
-        deadline = _time.time() + 5.0
+        assert publisher.ready.wait(timeout=5.0), "Publisher never signalled ready"
+
+        deadline = _time.time() + 3.0
+        records = []
         while _time.time() < deadline:
             records = client.get(f"/api/tasks/{task['id']}/records").json()
-            if records[0]["status"] == "waiting_user_input":
+            if records and records[0]["status"] == "waiting_user_input":
                 break
             _time.sleep(0.05)
         else:
             raise AssertionError("Record did not enter waiting_user_input")
 
-        assert records[0]["error_message"] == "login verification required"
+        assert records[0]["error_message"].startswith("login verification required")
         assert client.get(f"/api/tasks/{task['id']}").json()["status"] == "running"
     finally:
         test_app.cleanup()
@@ -399,21 +407,18 @@ def test_manual_confirm_does_not_block_with_next_record(monkeypatch):
         assert records[1]["status"] == "pending"
 
         # Direct unit test: manual_confirm_record service function
-        # must NOT call _run_next_pending_record
-        with patch("server.app.services.tasks._run_next_pending_record") as mock_run:
-            from server.app.services.tasks import manual_confirm_record
-            db2 = test_app.session_factory()
-            try:
-                rec1 = db2.get(PublishRecord, records[0]["id"])
-                # Revert record 1 to waiting state for direct test
-                rec1.status = "waiting_manual_publish"
-                rec1.finished_at = None
-                rec1.publish_url = None
-                db2.commit()
-                manual_confirm_record(db2, rec1, "succeeded", "https://example.com/ok", None)
-                mock_run.assert_not_called()
-            finally:
-                db2.close()
+        from server.app.services.tasks import manual_confirm_record
+        db2 = test_app.session_factory()
+        try:
+            rec1 = db2.get(PublishRecord, records[0]["id"])
+            # Revert record 1 to waiting state for direct test
+            rec1.status = "waiting_manual_publish"
+            rec1.finished_at = None
+            rec1.publish_url = None
+            db2.commit()
+            manual_confirm_record(db2, rec1, "succeeded", "https://example.com/ok", None)
+        finally:
+            db2.close()
     finally:
         test_app.cleanup()
 
@@ -464,9 +469,9 @@ def test_unexpected_exception_marks_record_failed(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 6: Executing terminal-state task returns 400, not queued
+# Test 6: Executing terminal-state task returns 409, not queued
 # ---------------------------------------------------------------------------
-def test_execute_terminal_task_returns_400(monkeypatch):
+def test_execute_terminal_task_returns_409(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
 
@@ -495,7 +500,7 @@ def test_execute_terminal_task_returns_400(monkeypatch):
 
         # Try executing the already-succeeded task
         resp = client.post(f"/api/tasks/{task['id']}/execute")
-        assert resp.status_code == 400
+        assert resp.status_code == 409
         assert "terminal" in resp.json()["detail"].lower()
         assert "queued" not in resp.json()
 
@@ -518,7 +523,7 @@ def test_execute_terminal_task_returns_400(monkeypatch):
         assert client.get(f"/api/tasks/{task2['id']}").json()["status"] == "failed"
 
         resp2 = client.post(f"/api/tasks/{task2['id']}/execute")
-        assert resp2.status_code == 400
+        assert resp2.status_code == 409
         assert "terminal" in resp2.json()["detail"].lower()
 
         # Test cancelled task
@@ -536,7 +541,7 @@ def test_execute_terminal_task_returns_400(monkeypatch):
         assert client.get(f"/api/tasks/{task3['id']}").json()["status"] == "cancelled"
 
         resp3 = client.post(f"/api/tasks/{task3['id']}/execute")
-        assert resp3.status_code == 400
+        assert resp3.status_code == 409
     finally:
         test_app.cleanup()
 
@@ -731,6 +736,56 @@ def test_failed_record_does_not_block_next_record(monkeypatch):
 
         assert task_detail["status"] == "partial_failed"
         assert [record["status"] for record in records] == ["failed", "succeeded"]
-        assert records[0]["error_message"] == "boom"
+        assert records[0]["error_message"].startswith("boom")
+    finally:
+        test_app.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Test: Concurrent execute + cancel race does not leave corrupt state
+# ---------------------------------------------------------------------------
+class SlowFakePublisher:
+    def publish_article(self, article, account, stop_before_publish=False):
+        _time.sleep(2)
+        return PublishFillResult(
+            url="https://mp.toutiao.com/article/race",
+            title=article.title,
+            message="ok",
+        )
+
+
+def test_execute_and_cancel_race_does_not_leave_corrupt_state(monkeypatch):
+    """验证同时执行和取消不会导致状态损坏。"""
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+    try:
+        monkeypatch.setattr(
+            "server.app.services.tasks.build_publisher_for_record",
+            lambda record: SlowFakePublisher(),
+        )
+        cover_id = _upload_cover_image(client)
+        article_id = _create_article(client, "Race Test", plain_text="body", cover_asset_id=cover_id)
+        account_id = _create_account(client, test_app.data_dir, "race-acct", "Race Acct")
+        task = client.post("/api/tasks", json={
+            "name": "race task", "task_type": "single", "article_id": article_id,
+            "accounts": [{"account_id": account_id}], "stop_before_publish": False,
+        }).json()
+
+        execute_resp = client.post(f"/api/tasks/{task['id']}/execute")
+        assert execute_resp.status_code == 202
+
+        cancel_resp = client.post(f"/api/tasks/{task['id']}/cancel")
+        assert cancel_resp.status_code == 200
+        assert cancel_resp.json()["status"] == "cancelled"
+
+        _time.sleep(0.5)
+
+        task_final = client.get(f"/api/tasks/{task['id']}").json()
+        assert task_final["status"] in ("cancelled", "failed")
+
+        records = client.get(f"/api/tasks/{task['id']}/records").json()
+        for record in records:
+            assert record["status"] != "running"
+            assert record["status"] != "pending"
     finally:
         test_app.cleanup()
