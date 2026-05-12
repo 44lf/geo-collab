@@ -1,3 +1,23 @@
+"""
+远程浏览器会话管理（Linux 专用，仅用于云端部署）。
+
+在 Linux 服务器上启动以下进程链：
+  Xvfb (虚拟显示) → x11vnc (VNC Server) → websockify (WebSocket → VNC) → noVNC (Web 客户端)
+
+示意图：
+  用户浏览器 ──websockify──→ x11vnc ──→ Xvfb (:99)
+                                      ──→ Chromium (Playwright, DISPLAY=:99)
+
+当记录进入 waiting_user_input 状态时，session 被标记为 keep_alive，
+不会在 context manager 退出时 stop。前端通过 PublishRecord.novnc_url
+拿到 noVNC 地址，用户可直接在浏览器中操作远程 Chrome。
+
+注意事项：
+  - 仅支持 Linux（sys.platform == "win32" 时抛出 RuntimeError）
+  - display/VNC port/noVNC port 基于配置中的 base 递增分配
+  - 所有日志写入 data_dir/logs/browser-sessions/<account_key>-<session_id>/
+  - 当前无空闲超时自动清理（需要外部进程或定时器）
+"""
 from __future__ import annotations
 
 import re
@@ -43,17 +63,21 @@ _reserved_displays: set[int] = set()
 _reserved_vnc_ports: set[int] = set()
 _reserved_novnc_ports: set[int] = set()
 
-# record_id → session_id mapping for waiting_user_input records
+# 人工介入（waiting_user_input）时的关联记录：
+# record_id → session_id — 知道哪个 record 关联到哪个远程浏览器
 _record_to_session: dict[int, str] = {}
+# session_ids that survive context manager exit（不随 finally 清理）
 _session_keep_alive: set[str] = set()
 
 
 def associate_record_with_session(record_id: int, session_id: str) -> None:
+    """将发布记录关联到远程浏览器 session（用于 waiting_user_input 场景）。"""
     with _sessions_lock:
         _record_to_session[record_id] = session_id
 
 
 def get_session_for_record(record_id: int) -> RemoteBrowserSession | None:
+    """根据 record_id 查找关联的远程浏览器 session。"""
     session_id = _record_to_session.get(record_id)
     if session_id is None:
         return None
@@ -61,16 +85,19 @@ def get_session_for_record(record_id: int) -> RemoteBrowserSession | None:
 
 
 def get_session(session_id: str) -> RemoteBrowserSession | None:
+    """通过 session_id 查找活跃的远程浏览器 session。"""
     with _sessions_lock:
         return _active_sessions.get(session_id)
 
 
 def disassociate_record(record_id: int) -> None:
+    """取消 record 与 session 的关联（record 完成/取消时调用）。"""
     with _sessions_lock:
         _record_to_session.pop(record_id, None)
 
 
 def keep_session_alive(session_id: str) -> None:
+    """标记 session 为"保持存活"，context manager exit 时不自动 stop。"""
     with _sessions_lock:
         _session_keep_alive.add(session_id)
 
@@ -106,6 +133,13 @@ def remote_browser_runtime_status() -> dict[str, object]:
 
 @contextmanager
 def managed_remote_browser_session(account_key: str) -> Iterator[RemoteBrowserSession | None]:
+    """
+    上下文管理器：进入时启动远程浏览器 session（Xvfb + x11vnc + websockify），
+    正常情况下退出时自动停机清理。
+
+    特殊情况：如果 session 被 keep_session_alive() 标记（waiting_user_input 场景），
+    则 exit 时不 stop，由调用方（cancel_task / resolve_user_input_record）显式清理。
+    """
     if not remote_browser_enabled():
         yield None
         return

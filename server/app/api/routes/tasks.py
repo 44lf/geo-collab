@@ -1,3 +1,16 @@
+"""
+任务相关 API 路由。
+
+核心流程：
+  1. POST /api/tasks — 创建任务，返回 TaskRead（含 records 数量）
+  2. POST /api/tasks/{id}/execute — 启动后台执行（threading），立即返回 {"queued": true}
+  3. GET  /api/tasks/{id}/records — 获取发布记录列表（含 novnc_url）
+  4. GET  /api/tasks/{id}/logs — 增量拉取日志
+
+后台执行：
+  - 使用独立 DB Session（bg_session_factory）避免与请求 Session 冲突
+  - 测试时 bg_session_factory 被 monkeypatch 为 TestingSessionLocal
+"""
 import logging
 import threading
 from typing import Any

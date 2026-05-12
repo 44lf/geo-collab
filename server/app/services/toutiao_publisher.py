@@ -74,7 +74,17 @@ class ToutiaoPublisher:
         self.active_session_novnc_url: str | None = None
 
     def publish_article(self, article: Article, account: Account, stop_before_publish: bool = False) -> PublishFillResult:
-        """填充文章表单并点击发布，完成后关闭浏览器。"""
+        """
+        填充文章表单并点击发布。
+
+        两条路径：
+          1. 本地开发（默认）— 使用 managed_browser_context() 自动管理浏览器生命周期
+          2. 远程浏览器（Linux）— 先启动 Xvfb + noVNC 基础设施，再手动管理 Playwright
+
+        当遇到 ToutiaoUserInputRequired（扫码/验证码/登录失效）时：
+          - 远程模式下：keep_session_alive → 浏览器不关闭 → session 关联到 record
+          - 本地模式下：正常抛出，浏览器由 context manager 自动清理
+        """
         if not article.title or not article.title.strip():
             raise ToutiaoPublishError("标题不能为空")
         if not article_has_publishable_body(article):
@@ -106,6 +116,9 @@ class ToutiaoPublisher:
             _keep_browser = False
 
             if remote_session:
+                # ---- 远程浏览器路径 ----
+                # 手动管理 Playwright 生命周期（不用 context manager），
+                # 因为 waiting_user_input 时不能让浏览器被自动 close
                 from playwright.sync_api import sync_playwright
                 pw = sync_playwright().start()
                 context = pw.chromium.launch_persistent_context(
@@ -117,6 +130,7 @@ class ToutiaoPublisher:
                 try:
                     return self._do_publish(page, context, article, account, state_path, stop_before_publish)
                 except ToutiaoUserInputRequired as exc:
+                    # 用户需要人工介入 → 浏览器保持打开，session 标记为 keep-alive
                     _keep_browser = True
                     keep_session_alive(remote_session.id)
                     exc.session_id = remote_session.id
@@ -129,6 +143,9 @@ class ToutiaoPublisher:
                         try: pw.stop()
                         except: pass
             else:
+                # ---- 本地开发路径 ----
+                # 使用 managed_browser_context 自动管理浏览器，
+                # 错误时自动 close，与改前行为完全一致
                 with managed_browser_context(
                     account_key=account_key,
                     channel=self.channel,
@@ -137,6 +154,13 @@ class ToutiaoPublisher:
                     return self._do_publish(_page, _context, article, account, state_path, stop_before_publish)
 
     def _do_publish(self, page, context, article, account, state_path, stop_before_publish):
+        """
+        核心发布逻辑（两个路径共用）。
+
+        步骤：
+          1. 打开头条发布页 → 2. 填标题 → 3. 上传封面 → 4. 填正文 → 5. 等待图片就绪 → 6. 点击发布
+        每步之间尝试关闭阻塞弹窗（营销/引导弹窗会遮挡操作区域）。
+        """
         page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
         try:
             page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=20000)

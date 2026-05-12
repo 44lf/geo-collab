@@ -1,3 +1,39 @@
+"""
+任务执行引擎 — Geo Collab 的核心。
+
+架构概览：
+
+  Route handler (POST /api/tasks/{id}/execute)
+    → threading.Thread (后台异步执行)
+      → execute_task()
+        → _run_pending_records()
+          并发循环：
+            ThreadPoolExecutor (max 5 workers)
+            → _start_runnable_records → _publish_record (后台线程)
+              → ToutiaoPublisher.publish_article()
+            → _finish_record_future() 处理结果
+            → 继续处理下一条 pending record
+
+  并发控制：
+    - 每个任务一把 threading.Lock → 防止同一任务被同时执行
+    - 每个账号一把 threading.Lock → 同一账号的 records 串行处理
+    - 全局上限 MAX_CONCURRENT_RECORDS = 5
+
+  状态流转：
+    pending → _claim_record() → running → _finish_record_future()
+      → succeeded / failed / waiting_manual_publish / waiting_user_input
+      → _aggregate_task_status() 聚合为任务级状态
+
+  人工介入（waiting_user_input）：
+    ToutiaoUserInputRequired → 浏览器不关闭 → session 关联到 record
+    → 用户处理完后 POST /api/publish-records/{id}/resolve-user-input
+      → resolve_user_input_record() → stop 浏览器 → record 回到 pending
+      → 后台自动继续执行
+
+  崩溃恢复：
+    recover_stuck_records() 在启动时运行
+    → 将 lease_until < now 的 running 记录重置为 pending
+"""
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, wait
@@ -210,8 +246,17 @@ def get_record(db: Session, record_id: int) -> PublishRecord | None:
     return db.get(PublishRecord, record_id)
 
 
-# 执行任务：依次处理每条待处理的发布记录
+# 执行任务：并发处理所有待处理的发布记录
 def execute_task(db: Session, task: PublishTask) -> PublishTask:
+    """
+    任务执行入口。
+
+    同步方法（在后台线程中调用）：
+      1. 获取任务锁（threading.Lock），防止并发执行同一任务
+      2. 状态 pending → running（通过 UPDATE ... WHERE status='pending' 保证原子性）
+      3. 调用 _run_pending_records() 并发处理 records
+      4. 执行完后 _aggregate_task_status() 聚合任务级状态
+    """
     lock = _task_locks.setdefault(task.id, threading.Lock())
     locked = lock.acquire(blocking=False)
     if not locked:
@@ -445,11 +490,21 @@ def _publish_record(record: PublishRecord, article: Article, account: Account, s
 
 
 def _finish_record_future(db: Session, task: PublishTask, record_id: int, future: Future) -> None:
+    """
+    处理单条 record 的发布结果。
+
+    ThreadPoolExecutor 的 future 完成后调用此方法：
+      - 正常结束 → 标记 succeeded / waiting_manual_publish
+      - ToutiaoUserInputRequired → 标记 waiting_user_input + 关联 remote session
+      - 其他异常 → 标记 failed（附失败截图 asset_id）
+    """
     try:
         result = future.result()
     except FutureTimeoutError:
         _mark_record_failed(db, task.id, record_id, "Timeout: record execution exceeded 300s")
     except ToutiaoUserInputRequired as exc:
+        # 人工介入：保持浏览器打开，将 session 关联到 record
+        # 前端会读取 record.novnc_url 展示"打开远程浏览器"按钮
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
         _mark_record_waiting_user_input(db, task.id, record_id, str(exc), screenshot_asset_id=screenshot_asset_id)
         if exc.session_id:
@@ -796,6 +851,14 @@ def _store_failure_screenshot(
 
 # 取消任务
 def cancel_task(db: Session, task: PublishTask) -> PublishTask:
+    """
+    取消任务。
+
+    对于 waiting_user_input 状态的 record：
+      1. stop 关联的远程浏览器 session（关闭 Xvfb + noVNC）
+      2. 解除 record↔session 关联
+    然后再标记 cancelled。
+    """
     if task.status in TERMINAL_TASK_STATUSES:
         return task
 
@@ -993,6 +1056,13 @@ def to_task_read(task: PublishTask) -> TaskRead:
 
 # 将 ORM PublishRecord 转为响应体
 def to_record_read(record: PublishRecord) -> PublishRecordRead:
+    """
+    序列化 PublishRecord → PublishRecordRead（API 响应）。
+
+    额外填充 remote_browser_session_id 和 novnc_url：
+      从 _record_to_session 映射中查找 record 关联的远程浏览器 session，
+      如果有则暴露 novnc_url 给前端显示"打开远程浏览器"按钮。
+    """
     session = get_session_for_record(record.id)
     return PublishRecordRead(
         id=record.id,

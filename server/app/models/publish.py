@@ -1,3 +1,26 @@
+"""
+发布任务核心模型：PublishTask → PublishRecord → TaskLog。
+
+状态机概览：
+
+  PublishTask:
+    pending → running → succeeded
+                      → partial_failed
+                      → failed
+                      → cancelled (any state)
+
+  PublishRecord:
+    pending → running → succeeded
+                      → failed
+                      → cancelled
+                      → waiting_manual_publish (stop_before_publish 模式)
+                      → waiting_user_input (扫码/验证码等人工介入)
+
+  关联方式：
+    Task 1 ──→ N Records (每篇文章 × 每个账号 = 一条 Record)
+    Task 1 ──→ N Logs
+    Record ──→ N Logs (可附带失败截图 asset_id)
+"""
 from datetime import datetime
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint

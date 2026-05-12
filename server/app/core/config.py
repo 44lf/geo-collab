@@ -1,14 +1,32 @@
+"""
+应用配置，环境变量前缀 GEO_。
+
+使用方式：
+  get_settings() → Settings（@lru_cache 单例）
+  测试中环境变更后需调用 get_settings.cache_clear()
+
+本地开发关键配置：
+  GEO_DATA_DIR                    数据目录（默认 %LOCALAPPDATA%/GeoCollab）
+  GEO_PUBLISH_MAX_CONCURRENT_RECORDS  并发发布记录数（上限 5）
+
+云端远程浏览器配置：
+  GEO_PUBLISH_REMOTE_BROWSER_ENABLED  启用远程 Xvfb + noVNC（Linux 必需）
+  GEO_PUBLISH_XVFB_PATH               Xvfb 可执行路径
+  GEO_PUBLISH_X11VNC_PATH             x11vnc 可执行路径
+  GEO_PUBLISH_WEBSOCKIFY_PATH         websockify 可执行路径
+  GEO_PUBLISH_NOVNC_WEB_DIR           noVNC 静态文件目录
+  GEO_PUBLISH_REMOTE_BROWSER_HOST     对外暴露的 host（默认 127.0.0.1）
+"""
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# 应用配置，环境变量前缀 GEO_，支持 .env 文件
 class Settings(BaseSettings):
     app_name: str = "Geo Collab"
     app_version: str = "0.1.0"
-    data_dir: Path | None = None  # 数据目录，默认走 %LOCALAPPDATA%/GeoCollab
+    data_dir: Path | None = None
     publish_max_concurrent_records: int = 5
     publish_browser_channel: str = "chrome"
     publish_browser_executable_path: str | None = None
@@ -26,7 +44,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env")
 
 
-# 使用 lru_cache 保证全局单例，测试中需调用 cache_clear()
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
@@ -37,8 +54,6 @@ MAX_ASSET_BYTES: int = 20 * 1024 * 1024  # 20 MB
 MAX_ZIP_BYTES: int = 50 * 1024 * 1024  # 50 MB
 
 # Allowed magic bytes for image uploads
-# Maps first bytes -> description
-# WebP: first 4 bytes "RIFF", bytes 8-12 "WEBP"
 ALLOWED_MAGIC: list[bytes] = [
     b"\x89PNG\r\n\x1a\n",  # PNG
     b"\xff\xd8",            # JPEG

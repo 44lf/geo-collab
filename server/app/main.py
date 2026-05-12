@@ -1,9 +1,25 @@
+"""
+Geo Collab API 应用工厂与全局配置。
+
+入口点：
+  - 开发: uvicorn server.app.main:app --reload
+  - 打包: PyInstaller geo.spec → launcher.py → create_app()
+
+阅读顺序建议：
+  1. create_app() → 了解路由注册、全局异常处理、启动行为
+  2. models/publish.py → PublishTask / PublishRecord 状态机
+  3. services/tasks.py → 任务执行引擎
+  4. services/toutiao_publisher.py → 头条浏览器自动化
+"""
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
-# ── 串行化补丁：在 Pydantic 模型定义之前安装 ──
+# ── datetime 序列化补丁 ──
+# 在 Pydantic 模型定义之前安装，确保所有 naive datetime 输出带 "Z" 后缀
+# 这样前端 new Date("2026-05-12T14:00:00Z") 能正确识别为 UTC
+# 涉及三个层级：Pydantic 模型、FastAPI 内置编码器、FastAPI 构造函数
 
 from pydantic import BaseModel
 
@@ -51,7 +67,7 @@ WEB_DIST_DIR = str(_BASE_DIR / "web" / "dist")
 
 
 def create_app() -> FastAPI:
-    # 确保数据目录存在
+    # 确保数据目录存在（assets/ browser_states/ logs/ exports/）
     ensure_data_dirs()
 
     app = FastAPI(
@@ -69,7 +85,7 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-Geo-Token"],
     )
-    # 启动时恢复卡住的记录
+    # 启动时恢复卡住的记录（上次运行时 crash 导致 status='running' 的记录）
     from server.app.db.session import SessionLocal
     from server.app.services.tasks import recover_stuck_records
     try:
@@ -79,11 +95,12 @@ def create_app() -> FastAPI:
     except Exception:
         pass
 
-    # 全局捕获 ValueError 返回 400
+    # 全局异常处理：业务层统一 raise ValueError → 400
     @app.exception_handler(ValueError)
     async def _value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+    # ConflictError(ValueError) 有更具体的含义 → 409，优先于 ValueError 处理器
     @app.exception_handler(ConflictError)
     async def _conflict_error_handler(request: Request, exc: ConflictError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
