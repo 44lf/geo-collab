@@ -207,13 +207,13 @@ class ToutiaoPublisher:
                 return
 
     def _fill_title(self, page: Any, title: str) -> None:
-        """填充文章标题（最多 30 字）。"""
+        """填充文章标题（最多 50 字）。"""
         # 主选择器：aria role（慢机器给足 20 秒）
         try:
             field = page.get_by_role("textbox", name="请输入文章标题")
             field.wait_for(state="visible", timeout=20000)
             field.click()
-            field.fill(title[:30])
+            field.press_sequentially(title[:50])
             return
         except Exception:
             logger.warning("Title field not found via textbox role, trying CSS fallback", exc_info=True)
@@ -222,7 +222,7 @@ class ToutiaoPublisher:
             field = page.locator("input[placeholder*='标题']").first
             field.wait_for(state="visible", timeout=5000)
             field.click()
-            field.fill(title[:30])
+            field.press_sequentially(title[:50])
             return
         except Exception:
             logger.warning("Title field not found via CSS fallback", exc_info=True)
@@ -266,7 +266,8 @@ class ToutiaoPublisher:
             elif segment.kind == "image":
                 asset = self._body_asset_for_segment(article, segment)
                 self._paste_body_image(page, asset)
-                self._insert_body_text(page, "\n")
+                page.keyboard.press("End")
+                page.keyboard.press("Enter")
 
     def _insert_body_text(self, page: Any, text: str) -> None:
         if not text:
@@ -284,10 +285,10 @@ class ToutiaoPublisher:
         body = (article.plain_text or re.sub(r"<[^>]+>", "", article.content_html or "")).strip()
         return [BodySegment(kind="text", text=body)] if body else []
 
-    def _append_tiptap_segments(self, node: Any, segments: list[BodySegment]) -> None:
+    def _append_tiptap_segments(self, node: Any, segments: list[BodySegment], depth: int = 0) -> None:
         if isinstance(node, list):
             for child in node:
-                self._append_tiptap_segments(child, segments)
+                self._append_tiptap_segments(child, segments, depth)
             return
         if not isinstance(node, dict):
             return
@@ -310,13 +311,9 @@ class ToutiaoPublisher:
         content = node.get("content")
         if isinstance(content, list):
             for index, child in enumerate(content):
-                if node_type == "orderedList" and isinstance(child, dict) and child.get("type") == "listItem":
-                    segments.append(BodySegment(kind="text", text=f"{index + 1}. "))
-                elif node_type == "bulletList" and isinstance(child, dict) and child.get("type") == "listItem":
-                    segments.append(BodySegment(kind="text", text="- "))
-                self._append_tiptap_segments(child, segments)
+                self._append_tiptap_segments(child, segments, depth + (1 if node_type in ("orderedList", "bulletList") else 0))
 
-        if node_type in {"paragraph", "heading", "blockquote", "listItem"}:
+        if node_type in {"paragraph", "heading"}:
             segments.append(BodySegment(kind="text", text="\n"))
 
     def _compact_segments(self, segments: list[BodySegment]) -> list[BodySegment]:
@@ -325,7 +322,11 @@ class ToutiaoPublisher:
             if segment.kind == "text":
                 if not segment.text:
                     continue
-                if compacted and compacted[-1].kind == "text":
+                # Keep standalone newline segments unmerged (they separate images/paragraphs)
+                if segment.text == "\n":
+                    compacted.append(segment)
+                    continue
+                if compacted and compacted[-1].kind == "text" and compacted[-1].text != "\n":
                     previous = compacted.pop()
                     compacted.append(BodySegment(kind="text", text=previous.text + segment.text))
                 else:

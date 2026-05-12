@@ -147,14 +147,15 @@ p { margin: 0; }
 
 /* ═══════════════════════════════ WORKSPACE ═══════════════════════════════ */
 .workspace {
-  min-height: 100vh;
-  overflow-y: auto;
+  height: 100%;
+  overflow: hidden;
   background: var(--cream);
 }
 
 .workspaceInner {
   padding: 48px 52px 80px;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   animation: pageIn .42s var(--easing);
@@ -344,10 +345,12 @@ input:focus, select:focus, textarea:focus {
 .contentGrid {
   display: grid;
   grid-template-columns: minmax(520px, 680px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 20px;
   align-items: stretch;
   flex: 1;
-  min-height: min(840px, calc(100vh - 210px));
+  min-height: 0;
+  overflow: hidden;
 }
 
 .listPane {
@@ -369,6 +372,9 @@ input:focus, select:focus, textarea:focus {
   border: 1px solid var(--hair);
   border-radius: var(--r-lg);
   padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* Search */
@@ -784,7 +790,8 @@ input:focus, select:focus, textarea:focus {
   border: 1px solid var(--hair);
   border-radius: 0 0 var(--r) var(--r);
   min-height: 380px;
-  overflow: hidden;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .editorSurface {
@@ -1013,10 +1020,12 @@ input:focus, select:focus, textarea:focus {
 .taskGrid {
   display: grid;
   grid-template-columns: minmax(520px, 640px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 20px;
   align-items: stretch;
   flex: 1;
-  min-height: min(840px, calc(100vh - 210px));
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Task list pane has padding since no search row */

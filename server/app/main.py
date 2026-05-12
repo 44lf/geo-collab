@@ -1,6 +1,32 @@
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
+
+# ── 串行化补丁：在 Pydantic 模型定义之前安装 ──
+
+from pydantic import BaseModel
+
+_orig_init_subclass = BaseModel.__init_subclass__
+
+
+def _init_subclass_patch(cls, **kwargs):
+    _orig_init_subclass(**kwargs)
+    if cls.__name__ == "BaseModel":
+        return
+    encoders = dict(cls.model_config.get("json_encoders", {}))
+    encoders.setdefault(
+        datetime,
+        lambda dt: dt.isoformat() + ("Z" if dt.tzinfo is None else ""),
+    )
+    cls.model_config["json_encoders"] = encoders
+
+
+BaseModel.__init_subclass__ = classmethod(_init_subclass_patch)
+
+import fastapi.encoders
+
+fastapi.encoders.ENCODERS_BY_TYPE[datetime] = lambda dt: dt.isoformat() + ("Z" if dt.tzinfo is None else "")
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,7 +54,13 @@ def create_app() -> FastAPI:
     # 确保数据目录存在
     ensure_data_dirs()
 
-    app = FastAPI(title="Geo Collab API", version="0.1.0")
+    app = FastAPI(
+        title="Geo Collab API",
+        version="0.1.0",
+        json_encoders={
+            datetime: lambda dt: dt.isoformat() + ("Z" if dt.tzinfo is None else "")
+        },
+    )
     # CORS 仅允许本地开发服务器（桌面应用无跨域风险）
     app.add_middleware(
         CORSMiddleware,
