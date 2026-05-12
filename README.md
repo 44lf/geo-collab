@@ -17,10 +17,10 @@
 6. **`server/app/services/tasks.py`** — 任务调度引擎，了解 publish 执行链路和状态机
 
 ### 第三层：API 接口
-7. **`server/app/api/routes/`** — 6 个路由模块，了解 RESTful 接口如何暴露业务逻辑
+7. **`server/app/api/routes/`** — 7 个路由模块（accounts, article_groups, articles, assets, publish_records, system, tasks）
 
 ### 第四层：前端
-8. **`web/src/main.tsx`** — 单文件 1377 行，所有 UI 组件集中于此，配合 `web/src/styles.css` 理解界面
+8. **`web/src/`** — React 前端，feature-split 结构（`features/content/`, `features/accounts/`, `features/tasks/`, `features/system/`），Tiptap 富文本编辑器，Lucide 图标
 
 ### 第五层：入口与测试
 9. **`server/app/launcher.py`** — 桌面应用入口（Alembic 自动升级等启动逻辑）

@@ -53,6 +53,8 @@ pnpm install
 - **Task execution**: synchronous in request thread, one `threading.Lock` per task_id prevents concurrent runs. Up to 5 concurrent records via `ThreadPoolExecutor`, with per-account locks for serialized access. Records have `lease_until` for crash recovery (`recover_stuck_records` runs at startup).
 - **Startup order** (in `launcher.py` and `create_app()`): migrations → Chrome check → token init → find port → uvicorn → browser open. `create_app()` also runs `recover_stuck_records` on boot.
 
+- For detailed Playwright selectors and cover upload flow, see `CLAUDE.md`.
+
 ## Testing quirks
 
 - `build_test_app(monkeypatch)` creates temp data dir + SQLite DB, sets `GEO_DATA_DIR`, clears `get_settings.cache_clear()`, and clears global `_task_locks`/`_account_locks`/`_task_cancel`. Every test **must** call `test_app.cleanup()` in `finally`.
@@ -61,6 +63,7 @@ pnpm install
 - Mock the publisher: `monkeypatch.setattr("server.app.services.tasks.build_publisher_for_record", lambda r: FakePublisher())`.
 - Background task execution uses `bg_session_factory` (patched in `build_test_app` to use test DB session from `TestingSessionLocal`).
 - `test_launcher_startup.py` tests `launcher.py` directly (not via `create_app`).
+- `build_test_app` also calls `browser_sessions._reset_globals()` to reset browser sessions (prevents cross-test leaks).
 
 ## Gotchas
 
@@ -70,7 +73,8 @@ pnpm install
 - `ToutiaoPublisher.publish_article(article, account, stop_before_publish=False)` — `stop_before_publish` stops after "预览并发布", user must call `POST /api/publish-records/{id}/manual-confirm`.
 - Cover image is mandatory: `_handle_cover()` raises if `article.cover_asset is None`.
 - Do NOT guess Toutiao selectors — use `playwright-cli` to inspect live page (ByteDance DOM changes frequently).
-- `ConflictError(ValueError)` returns HTTP 409 (not 400) — check `server/app/services/errors.py`.
+- Exception hierarchy (`server/app/services/errors.py`): `ValueError` → 400, `ConflictError(ValueError)` → 409, `AccountError(ValueError)` and `ValidationError(ValueError)` → 400.
 - Retry only on original records (not retry records).
 - Spike/debug scripts: `python -m server.scripts.toutiao_login_spike --account-key spike`, `python -m server.scripts.toutiao_publish_spike --account-key spike`.
 - Chrome is required at runtime: `launcher.py` checks for Chrome and shows error dialog if missing.
+- `bg_session_factory` (module-level var in `server/app/api/routes/tasks.py`) is imported lazily inside functions in both `tasks.py` and `publish_records.py` to avoid circular imports. Do NOT toplevel-import it.
