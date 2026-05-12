@@ -18,7 +18,7 @@ pnpm --filter @geo/web typecheck
 pytest server/tests/ -v
 pytest server/tests/test_tasks_api.py -v --tb=short
 
-# migrations
+# single migration
 alembic upgrade head
 
 # build: frontend first, then exe
@@ -40,34 +40,37 @@ pnpm install
 
 ## Architecture
 
-- **No auth** — binds only 127.0.0.1, single-user desktop app
-- **Entry point**: `launcher.py` (runs migrations, finds free port 8765+, starts uvicorn, opens browser). PyInstaller target.
-- **Backend**: FastAPI, SQLite via SQLAlchemy, Alembic, 7 route modules under `/api/`
-- **Frontend**: React 19 + Vite + TypeScript, single 1806-line `web/src/main.tsx` + 1056-line `web/src/styles.css`
-- **Models** (11 ORM models): Platform, Account, Article, ArticleGroup+ArticleGroupItem, Asset, ArticleBodyAsset, PublishTask, PublishTaskAccount, PublishRecord, TaskLog
-- **Services**: `tasks.py` (535 lines, sync execution engine), `toutiao_publisher.py` (269 lines, Playwright automation), `accounts.py` (login/check/export), `assets.py` (file storage)
-- **Publisher**: ByteDance design system selectors (`byte-btn`), two-step publish ("预览并发布" + "确认发布"), `stop_before_publish` flag
-- **Error convention**: `ValueError` → HTTP 400 (global handler in `create_app()`)
-- **Data dir**: `%LOCALAPPDATA%/GeoCollab/` (override: `$env:GEO_DATA_DIR`)
-- **Config**: pydantic-settings with `GEO_` prefix, `get_settings()` is `@lru_cache`'d
-- **No CI/CD** — local desktop app only
+- **Local token auth** — `launcher.py` generates `GEO_LOCAL_API_TOKEN` (stored in `data_dir/local_token.txt`). All routes except `/api/bootstrap` require `X-Geo-Token` header. Single-user desktop app, binds only 127.0.0.1.
+- **Entry point**: `launcher.py` (runs migrations, checks Chrome, initializes token, finds free port 8765+, starts uvicorn in background thread, opens browser, shows system tray). PyInstaller target.
+- **Backend**: FastAPI, SQLite via SQLAlchemy, Alembic, 7 route modules under `/api/`. Global handlers: `ValueError` → 400, `ConflictError` → 409.
+- **Frontend**: React 19 + Vite + TypeScript, feature-split (`features/content/`, `features/accounts/`, `features/tasks/`, `features/system/`), Tiptap rich-text editor, Lucide icons.
+- **Models** (11 ORM): Platform, Account, Article, ArticleGroup+ArticleGroupItem, Asset, ArticleBodyAsset, PublishTask, PublishTaskAccount, PublishRecord, TaskLog.
+- **Services**: `tasks.py` (~1k lines, sync + concurrent execution engine with `ThreadPoolExecutor`), `toutiao_publisher.py` (Playwright automation), `accounts.py` (login/check/export with persistent browser contexts), `assets.py` (file storage), `browser.py` (`managed_browser_context` context manager), `browser_sessions.py` (long-lived sessions).
+- **Publisher**: ByteDance design system selectors, two-step publish ("预览并发布" + "确认发布"), `stop_before_publish` flag, cover is mandatory (raises if `None`).
+- **Data dir**: `%LOCALAPPDATA%/GeoCollab/` (override: `$env:GEO_DATA_DIR`). Subdirs: `assets/`, `browser_states/`, `logs/`, `exports/`.
+- **Config**: pydantic-settings with `GEO_` prefix, `get_settings()` is `@lru_cache`'d — call `.cache_clear()` after env changes.
+- **No CI/CD** — local desktop app only.
+- **Task execution**: synchronous in request thread, one `threading.Lock` per task_id prevents concurrent runs. Up to 5 concurrent records via `ThreadPoolExecutor`, with per-account locks for serialized access. Records have `lease_until` for crash recovery (`recover_stuck_records` runs at startup).
+- **Startup order** (in `launcher.py` and `create_app()`): migrations → Chrome check → token init → find port → uvicorn → browser open. `create_app()` also runs `recover_stuck_records` on boot.
 
 ## Testing quirks
 
-- `build_test_app(monkeypatch)` creates in-memory SQLite + temp data dir; every test must call `test_app.cleanup()` in `finally`
-- Tests that execute tasks **must** pass `"stop_before_publish": False` or the task waits for manual confirmation
-- Mock the publisher: `monkeypatch.setattr("server.app.services.tasks.build_publisher_for_record", lambda r: FakePublisher())`
-- `get_settings.cache_clear()` needed after env changes (done in `build_test_app` and `cleanup`)
-- `test_system_status.py` now uses `build_test_app()` (not real database)
+- `build_test_app(monkeypatch)` creates temp data dir + SQLite DB, sets `GEO_DATA_DIR`, clears `get_settings.cache_clear()`, and clears global `_task_locks`/`_account_locks`/`_task_cancel`. Every test **must** call `test_app.cleanup()` in `finally`.
+- FTS5 tables are created manually in `build_test_app` (not via Alembic) — any test using full-text search needs those triggers.
+- Tests that execute tasks **must** pass `"stop_before_publish": False` or the task stays in `waiting_manual_publish`.
+- Mock the publisher: `monkeypatch.setattr("server.app.services.tasks.build_publisher_for_record", lambda r: FakePublisher())`.
+- Background task execution uses `bg_session_factory` (patched in `build_test_app` to use test DB session from `TestingSessionLocal`).
+- `test_launcher_startup.py` tests `launcher.py` directly (not via `create_app`).
 
 ## Gotchas
 
-- `server/app/db/session.py`: `ensure_data_dirs()`, `check_same_thread=False`, WAL mode + busy_timeout=5000 on connect
-- Alembic `alembic.ini`: `sqlalchemy.url` is a placeholder (runtime override in `launcher.py`)
-- `alembic upgrade head` run automatically by `launcher.py` at startup; also run manually during dev
-- `ToutiaoPublisher.publish_article(article, account, stop_before_publish=False)` — `stop_before_publish` threads through to `_click_publish_and_wait`
-- Task execution uses `threading.Lock` per task_id — concurrent execute returns error
-- `_aggregate_task_status` treats `waiting_manual_publish` as non-terminal (task stays "running")
-- `_handle_cover()` raises if `article.cover_asset` is None (cover is mandatory)
-- Do NOT guess Toutiao selectors — use `playwright-cli` to inspect live page (DOM changes frequently)
-- Spike/debug scripts: `python -m server.scripts.toutiao_login_spike --account-key spike`, `python -m server.scripts.toutiao_publish_spike --account-key spike`
+- `server/app/db/session.py`: `ensure_data_dirs()` runs at module import, `check_same_thread=False`, WAL + busy_timeout=5000 + foreign_keys=ON on connect.
+- Alembic `alembic.ini`: `sqlalchemy.url` is a placeholder — runtime override in `launcher.py` via `get_database_url()`.
+- `alembic upgrade head` run automatically by `launcher.py` at startup.
+- `ToutiaoPublisher.publish_article(article, account, stop_before_publish=False)` — `stop_before_publish` stops after "预览并发布", user must call `POST /api/publish-records/{id}/manual-confirm`.
+- Cover image is mandatory: `_handle_cover()` raises if `article.cover_asset is None`.
+- Do NOT guess Toutiao selectors — use `playwright-cli` to inspect live page (ByteDance DOM changes frequently).
+- `ConflictError(ValueError)` returns HTTP 409 (not 400) — check `server/app/services/errors.py`.
+- Retry only on original records (not retry records).
+- Spike/debug scripts: `python -m server.scripts.toutiao_login_spike --account-key spike`, `python -m server.scripts.toutiao_publish_spike --account-key spike`.
+- Chrome is required at runtime: `launcher.py` checks for Chrome and shows error dialog if missing.
