@@ -61,6 +61,7 @@ def test_remote_browser_session_starts_processes_and_cleans_up(monkeypatch, tmp_
         assert all(process.terminated for process in started)
         assert browser_sessions.active_remote_browser_sessions() == []
     finally:
+        browser_sessions._stop_idle_cleanup()
         get_settings.cache_clear()
 
 
@@ -77,4 +78,5 @@ def test_remote_browser_session_disabled_does_not_start_process(monkeypatch):
         with browser_sessions.managed_remote_browser_session("spike") as session:
             assert session is None
     finally:
+        browser_sessions._stop_idle_cleanup()
         get_settings.cache_clear()

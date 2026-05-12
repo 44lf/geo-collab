@@ -55,6 +55,7 @@ class RemoteBrowserSession:
     novnc_url: str
     log_dir: Path
     processes: list[ManagedProcess] = field(default_factory=list, repr=False)
+    started_at: float = field(default_factory=time.monotonic)  # 用于空闲超时判断
 
 
 _sessions_lock = threading.Lock()
@@ -68,6 +69,9 @@ _reserved_novnc_ports: set[int] = set()
 _record_to_session: dict[int, str] = {}
 # session_ids that survive context manager exit（不随 finally 清理）
 _session_keep_alive: set[str] = set()
+
+_idle_cleanup_thread: threading.Thread | None = None
+_idle_cleanup_stop = threading.Event()
 
 
 def associate_record_with_session(record_id: int, session_id: str) -> None:
@@ -386,6 +390,62 @@ def _resolve_command(command: str | None) -> str | None:
     return shutil.which(command)
 
 
+def _start_idle_cleanup() -> None:
+    """启动后台线程，定期清理超时的 keep-alive session。"""
+    global _idle_cleanup_thread
+    if _idle_cleanup_thread is not None and _idle_cleanup_thread.is_alive():
+        return
+
+    def _cleanup_loop():
+        timeout = lambda: get_settings().publish_remote_browser_idle_timeout_seconds
+        while not _idle_cleanup_stop.is_set():
+            _idle_cleanup_stop.wait(30)  # 每 30 秒检查一次
+            if _idle_cleanup_stop.is_set():
+                break
+            try:
+                _cleanup_stale_sessions(timeout())
+            except Exception:
+                pass
+
+    _idle_cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True, name="session-idle-cleanup")
+    _idle_cleanup_thread.start()
+
+
+def _cleanup_stale_sessions(idle_timeout: int) -> None:
+    """清理超过 idle_timeout 秒未操作的 keep-alive session。"""
+    now = time.monotonic()
+    stale_ids: list[str] = []
+    with _sessions_lock:
+        for session_id in list(_session_keep_alive):
+            session = _active_sessions.get(session_id)
+            if session is None:
+                _session_keep_alive.discard(session_id)
+                continue
+            if now - session.started_at > idle_timeout:
+                stale_ids.append(session_id)
+                _session_keep_alive.discard(session_id)
+
+    for session_id in stale_ids:
+        try:
+            stop_remote_browser_session(session_id)
+        except Exception:
+            pass
+        # 解除所有关联 record 的绑定
+        with _sessions_lock:
+            stale_records = [rid for rid, sid in _record_to_session.items() if sid == session_id]
+            for rid in stale_records:
+                _record_to_session.pop(rid, None)
+
+
+def _stop_idle_cleanup() -> None:
+    """停止后台清理线程（测试用）。"""
+    global _idle_cleanup_thread
+    _idle_cleanup_stop.set()
+    if _idle_cleanup_thread is not None:
+        _idle_cleanup_thread.join(timeout=3)
+        _idle_cleanup_thread = None
+
+
 def _ensure_linux_runtime() -> None:
     if _is_windows_runtime():
         raise RuntimeError("Remote browser sessions require a Linux runtime")
@@ -397,3 +457,6 @@ def _is_windows_runtime() -> bool:
 
 def _novnc_url(host: str, port: int) -> str:
     return f"http://{host}:{port}/vnc.html?host={host}&port={port}"
+
+# 启动空闲超时清理线程
+_start_idle_cleanup()

@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     publish_remote_browser_vnc_base_port: int = 5900
     publish_remote_browser_novnc_base_port: int = 6080
     publish_remote_browser_start_timeout_seconds: float = 15.0
+    publish_remote_browser_idle_timeout_seconds: int = 300  # 5 分钟无操作自动清理
 
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env")
 
