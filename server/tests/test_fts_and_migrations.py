@@ -4,6 +4,7 @@ import shutil
 import uuid
 from pathlib import Path
 
+import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import create_engine, inspect, text
@@ -16,6 +17,7 @@ def _tiptap_doc() -> dict:
     return {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "hello"}]}]}
 
 
+@pytest.mark.mysql
 def test_fts_fallback_when_table_missing(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -63,6 +65,7 @@ def test_fts_fallback_when_table_missing(monkeypatch):
         test_app.cleanup()
 
 
+@pytest.mark.mysql
 def test_fts_fallback_when_match_throws(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -98,6 +101,7 @@ def test_fts_fallback_when_match_throws(monkeypatch):
         test_app.cleanup()
 
 
+@pytest.mark.mysql
 def test_alembic_upgrade_from_empty_to_head(monkeypatch):
     data_dir = Path.cwd() / ".test-data" / uuid.uuid4().hex
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -125,6 +129,7 @@ def test_alembic_upgrade_from_empty_to_head(monkeypatch):
             "publish_task_accounts",
             "publish_records",
             "task_logs",
+            "users",
         }
         assert expected_tables.issubset(tables), f"Missing tables: {expected_tables - tables}"
         assert "articles_fts" in tables, "FTS5 virtual table not created"
@@ -133,6 +138,7 @@ def test_alembic_upgrade_from_empty_to_head(monkeypatch):
         get_settings.cache_clear()
 
 
+@pytest.mark.mysql
 def test_migration_trigram_fallback(monkeypatch):
     """Verify FTS5 table is created even when trigram tokenizer is unavailable."""
     data_dir = Path.cwd() / ".test-data" / uuid.uuid4().hex
@@ -143,8 +149,8 @@ def test_migration_trigram_fallback(monkeypatch):
     try:
         cfg = AlembicConfig("alembic.ini")
 
-        # Run migrations up to just before 0003
-        command.upgrade(cfg, "6b14e9d054c6")
+        # Run migrations up to just before FTS migration
+        command.upgrade(cfg, "0006")
 
         db_path = data_dir / "geo.db"
         engine = create_engine(f"sqlite:///{db_path.as_posix()}")

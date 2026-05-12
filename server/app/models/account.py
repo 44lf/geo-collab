@@ -11,11 +11,12 @@ from server.app.db.base import Base
 class Account(Base):
     __tablename__ = "accounts"
     __table_args__ = (
-        UniqueConstraint("platform_id", "platform_user_id", name="uq_accounts_platform_user"),
+        UniqueConstraint("user_id", "platform_id", "platform_user_id", name="uq_accounts_platform_user"),
         CheckConstraint("status in ('valid', 'expired', 'unknown')", name="ck_accounts_status"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     platform_id: Mapped[int] = mapped_column(ForeignKey("platforms.id"), index=True)
     display_name: Mapped[str] = mapped_column(String(200))  # 用户自定义显示名称
     platform_user_id: Mapped[str | None] = mapped_column(String(200), nullable=True)  # 平台侧用户 ID

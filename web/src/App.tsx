@@ -7,9 +7,14 @@ import { ContentWorkspace } from "./features/content/ContentWorkspace";
 import { AccountsWorkspace } from "./features/accounts/AccountsWorkspace";
 import { TasksWorkspace } from "./features/tasks/TasksWorkspace";
 import { SystemWorkspace } from "./features/system/SystemWorkspace";
+import { AuthProvider, useAuth } from "./features/auth/AuthContext";
+import { LoginPage } from "./features/auth/LoginPage";
+import { ChangePasswordPage } from "./features/auth/ChangePasswordPage";
+import { LogOut } from "lucide-react";
 import "./styles.css";
 
-export default function App() {
+function AppShell() {
+  const { user, loading, logout } = useAuth();
   const [activeNav, setActiveNav] = useState<NavKey>("content");
   const contentDirtyRef = useRef<() => boolean>(() => false);
 
@@ -18,6 +23,24 @@ export default function App() {
       if (!window.confirm("当前文章有未保存内容，确定要切换页面吗？未保存的修改将丢失。")) return;
     }
     setActiveNav(key);
+  }
+
+  if (loading) {
+    return (
+      <div className="authShell">
+        <div className="authCard">
+          <p className="authLoading">加载中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
+  if (user.must_change_password) {
+    return <ChangePasswordPage />;
   }
 
   return (
@@ -48,6 +71,12 @@ export default function App() {
               );
             })}
           </nav>
+          <div className="sidebarUser">
+            <span className="sidebarUsername">{user.username}</span>
+            <button className="sidebarLogoutBtn" type="button" onClick={logout} title="退出登录">
+              <LogOut size={15} />
+            </button>
+          </div>
         </aside>
         <section className="workspace">
           <div className="workspaceInner">
@@ -75,5 +104,13 @@ export default function App() {
         </section>
       </main>
     </ToastProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
   );
 }

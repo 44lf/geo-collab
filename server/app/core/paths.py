@@ -27,6 +27,9 @@ def get_database_path() -> Path:
 
 # 获取 SQLAlchemy 连接 URL（POSIX 风格的路径）
 def get_database_url() -> str:
+    settings = get_settings()
+    if settings.database_url:
+        return settings.database_url
     return f"sqlite:///{get_database_path().as_posix()}"
 
 

@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from server.app.core.security import get_current_user
 from server.app.db.session import get_db
-from server.app.models import Asset
+from server.app.models import Asset, User
 from server.app.schemas.asset import AssetRead
 from server.app.services.assets import asset_url, resolve_asset_path, store_upload
 
@@ -29,8 +30,12 @@ def to_asset_read(asset: Asset) -> AssetRead:
 
 # 上传资源文件（图片等）
 @router.post("", response_model=AssetRead)
-async def upload_asset(file: UploadFile = File(...), db: Session = Depends(get_db)) -> Response:
-    stored = await store_upload(db, file)
+async def upload_asset(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    stored = await store_upload(db, current_user.id, file)
     return Response(
         content=to_asset_read(stored.asset).model_dump_json(),
         media_type="application/json",

@@ -1,6 +1,6 @@
 # AGENTS.md — Geo 协作平台
 
-Always `conda activate geo_xzpt` before any Python command.
+Always `conda activate geo_xzpt` before any Python command. 如需 Docker 环境，使用 `docker-compose exec app` 运行所有 Python 命令。
 
 ## Dev commands (PowerShell)
 
@@ -21,9 +21,10 @@ pytest server/tests/test_tasks_api.py -v --tb=short
 # single migration
 alembic upgrade head
 
-# build: frontend first, then exe
-pnpm --filter @geo/web build
-pyinstaller geo.spec --noconfirm  # → dist/GeoCollab.exe
+# Docker Compose
+docker-compose up -d
+docker-compose exec app alembic upgrade head
+docker-compose exec app python -m server.scripts.seed_users
 
 # health check
 Invoke-RestMethod http://127.0.0.1:8000/api/system/status
@@ -40,18 +41,17 @@ pnpm install
 
 ## Architecture
 
-- **Local token auth** — `launcher.py` generates `GEO_LOCAL_API_TOKEN` (stored in `data_dir/local_token.txt`). All routes except `/api/bootstrap` require `X-Geo-Token` header. Single-user desktop app, binds only 127.0.0.1.
-- **Entry point**: `launcher.py` (runs migrations, checks Chrome, initializes token, finds free port 8765+, starts uvicorn in background thread, opens browser, shows system tray). PyInstaller target.
-- **Backend**: FastAPI, SQLite via SQLAlchemy, Alembic, 7 route modules under `/api/`. Global handlers: `ValueError` → 400, `ConflictError` → 409.
+- **JWT cookie auth** — `/api/auth/login` 下发 JWT 作为 httpOnly cookie，后续请求自动附带。Docker 部署支持多用户。
+- **Entry point**: `launcher.py` (Docker entrypoint，非 exe)，执行数据目录初始化、Alembic 迁移、启动 uvicorn。
+- **Backend**: FastAPI, SQLAlchemy, Alembic, 7 route modules under `/api/`. Global handlers: `ValueError` → 400, `ConflictError` → 409.
 - **Frontend**: React 19 + Vite + TypeScript, feature-split (`features/content/`, `features/accounts/`, `features/tasks/`, `features/system/`), Tiptap rich-text editor, Lucide icons.
-- **Models** (11 ORM): Platform, Account, Article, ArticleGroup+ArticleGroupItem, Asset, ArticleBodyAsset, PublishTask, PublishTaskAccount, PublishRecord, TaskLog.
+- **Models** (12 ORM): Platform, Account, Article, ArticleGroup+ArticleGroupItem, Asset, ArticleBodyAsset, PublishTask, PublishTaskAccount, PublishRecord, TaskLog, User.
 - **Services**: `tasks.py` (~1k lines, sync + concurrent execution engine with `ThreadPoolExecutor`), `toutiao_publisher.py` (Playwright automation), `accounts.py` (login/check/export with persistent browser contexts), `assets.py` (file storage), `browser.py` (`managed_browser_context` context manager), `browser_sessions.py` (long-lived sessions).
 - **Publisher**: ByteDance design system selectors, two-step publish ("预览并发布" + "确认发布"), `stop_before_publish` flag, cover is mandatory (raises if `None`).
 - **Data dir**: `%LOCALAPPDATA%/GeoCollab/` (override: `$env:GEO_DATA_DIR`). Subdirs: `assets/`, `browser_states/`, `logs/`, `exports/`.
 - **Config**: pydantic-settings with `GEO_` prefix, `get_settings()` is `@lru_cache`'d — call `.cache_clear()` after env changes.
-- **No CI/CD** — local desktop app only.
 - **Task execution**: synchronous in request thread, one `threading.Lock` per task_id prevents concurrent runs. Up to 5 concurrent records via `ThreadPoolExecutor`, with per-account locks for serialized access. Records have `lease_until` for crash recovery (`recover_stuck_records` runs at startup).
-- **Startup order** (in `launcher.py` and `create_app()`): migrations → Chrome check → token init → find port → uvicorn → browser open. `create_app()` also runs `recover_stuck_records` on boot.
+- **Startup order** (in `launcher.py` and `create_app()`): migrations → uvicorn. `create_app()` also runs `recover_stuck_records` on boot.
 
 - For detailed Playwright selectors and cover upload flow, see `CLAUDE.md`.
 
@@ -64,6 +64,7 @@ pnpm install
 - Background task execution uses `bg_session_factory` (patched in `build_test_app` to use test DB session from `TestingSessionLocal`).
 - `test_launcher_startup.py` tests `launcher.py` directly (not via `create_app`).
 - `build_test_app` also calls `browser_sessions._reset_globals()` to reset browser sessions (prevents cross-test leaks).
+- Run non-MySQL tests: `pytest server/tests/ -m "not mysql" -q`
 
 ## Gotchas
 
@@ -76,5 +77,4 @@ pnpm install
 - Exception hierarchy (`server/app/services/errors.py`): `ValueError` → 400, `ConflictError(ValueError)` → 409, `AccountError(ValueError)` and `ValidationError(ValueError)` → 400.
 - Retry only on original records (not retry records).
 - Spike/debug scripts: `python -m server.scripts.toutiao_login_spike --account-key spike`, `python -m server.scripts.toutiao_publish_spike --account-key spike`.
-- Chrome is required at runtime: `launcher.py` checks for Chrome and shows error dialog if missing.
 - `bg_session_factory` (module-level var in `server/app/api/routes/tasks.py`) is imported lazily inside functions in both `tasks.py` and `publish_records.py` to avoid circular imports. Do NOT toplevel-import it.

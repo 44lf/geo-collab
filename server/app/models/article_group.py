@@ -10,9 +10,11 @@ from server.app.db.base import Base
 # 文章分组：用于批量发布任务，一个分组包含多篇文章
 class ArticleGroup(Base):
     __tablename__ = "article_groups"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_article_groups_user_name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

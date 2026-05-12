@@ -4,7 +4,9 @@ import threading
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from server.app.core.security import get_current_user
 from server.app.db.session import get_db
+from server.app.models import PublishRecord, PublishTask, User
 from server.app.schemas.task import ManualConfirmInput, PublishRecordRead
 from server.app.services.serializers import to_record_read
 from server.app.services.tasks import (
@@ -18,6 +20,17 @@ from server.app.services.tasks import (
 )
 
 router = APIRouter()
+
+
+def _verify_record_ownership(record: PublishRecord | None, current_user: User, db: Session) -> PublishRecord:
+    if record is None:
+        raise HTTPException(status_code=404, detail="Record not found")
+    task = db.get(PublishTask, record.task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Record not found")
+    if current_user.role != "admin" and task.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return record
 
 
 def _start_background_execute(task_id: int) -> None:
@@ -46,10 +59,9 @@ def manual_confirm_record_endpoint(
     record_id: int,
     payload: ManualConfirmInput,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> PublishRecordRead:
-    record = get_record(db, record_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Record not found")
+    record = _verify_record_ownership(get_record(db, record_id), current_user, db)
     result = manual_confirm_record(db, record, payload.outcome, payload.publish_url, payload.error_message)
     db.commit()
 
@@ -61,10 +73,12 @@ def manual_confirm_record_endpoint(
 
 
 @router.post("/{record_id}/resolve-user-input", response_model=PublishRecordRead)
-def resolve_user_input_record_endpoint(record_id: int, db: Session = Depends(get_db)) -> PublishRecordRead:
-    record = get_record(db, record_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Record not found")
+def resolve_user_input_record_endpoint(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PublishRecordRead:
+    record = _verify_record_ownership(get_record(db, record_id), current_user, db)
     result = resolve_user_input_record(db, record)
     db.commit()
 
@@ -76,10 +90,12 @@ def resolve_user_input_record_endpoint(record_id: int, db: Session = Depends(get
 
 
 @router.post("/{record_id}/retry", response_model=PublishRecordRead)
-def retry_record_endpoint(record_id: int, db: Session = Depends(get_db)) -> PublishRecordRead:
-    record = get_record(db, record_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Record not found")
+def retry_record_endpoint(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PublishRecordRead:
+    record = _verify_record_ownership(get_record(db, record_id), current_user, db)
     result = retry_record(db, record)
     db.commit()
     _start_background_execute(record.task_id)

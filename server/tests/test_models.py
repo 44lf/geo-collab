@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session
 
@@ -15,9 +16,11 @@ from server.app.models import (
     PublishTask,
     PublishTaskAccount,
     TaskLog,
+    User,
 )
 
 
+@pytest.mark.mysql
 def test_core_model_tables_are_declared():
     expected_tables = {
         "platforms",
@@ -31,11 +34,13 @@ def test_core_model_tables_are_declared():
         "publish_task_accounts",
         "publish_records",
         "task_logs",
+        "users",
     }
 
     assert expected_tables.issubset(Base.metadata.tables.keys())
 
 
+@pytest.mark.mysql
 def test_core_model_relationships_round_trip_in_sqlite_memory():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -44,6 +49,7 @@ def test_core_model_relationships_round_trip_in_sqlite_memory():
         platform = Platform(code="toutiao", name="头条号", base_url="https://mp.toutiao.com")
         cover = Asset(
             id="asset-cover",
+            user_id=1,
             filename="cover.png",
             ext=".png",
             mime_type="image/png",
@@ -53,6 +59,7 @@ def test_core_model_relationships_round_trip_in_sqlite_memory():
         )
         body_image = Asset(
             id="asset-body",
+            user_id=1,
             filename="body.png",
             ext=".png",
             mime_type="image/png",
@@ -61,6 +68,7 @@ def test_core_model_relationships_round_trip_in_sqlite_memory():
             storage_key="assets/2026/05/body.png",
         )
         article = Article(
+            user_id=1,
             title="测试文章",
             author="Geo",
             cover_asset=cover,
@@ -71,8 +79,13 @@ def test_core_model_relationships_round_trip_in_sqlite_memory():
             status="ready",
             body_assets=[ArticleBodyAsset(asset=body_image, position=0, editor_node_id="node-1")],
         )
-        group = ArticleGroup(name="测试分组", items=[ArticleGroupItem(article=article, sort_order=1)])
+        group = ArticleGroup(
+            user_id=1,
+            name="测试分组",
+            items=[ArticleGroupItem(article=article, sort_order=1)],
+        )
         account = Account(
+            user_id=1,
             platform=platform,
             display_name="测试账号",
             platform_user_id="toutiao-user",
@@ -81,6 +94,7 @@ def test_core_model_relationships_round_trip_in_sqlite_memory():
             last_login_at=utcnow(),
         )
         task = PublishTask(
+            user_id=1,
             name="测试任务",
             task_type="single",
             status="pending",
@@ -104,6 +118,28 @@ def test_core_model_relationships_round_trip_in_sqlite_memory():
         assert stored_task.logs[0].message == "created"
 
 
+@pytest.mark.mysql
+def test_user_password_hashing_and_verification():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(username="testuser", role="operator")
+        user.set_password("secret123")
+        session.add(user)
+        session.commit()
+
+        stored = session.query(User).filter(User.username == "testuser").one()
+        assert stored.username == "testuser"
+        assert stored.role == "operator"
+        assert stored.is_active is True
+        assert stored.must_change_password is True
+        assert stored.password_hash != "secret123"
+        assert stored.check_password("secret123") is True
+        assert stored.check_password("wrong") is False
+
+
+@pytest.mark.mysql
 def test_database_constraints_exist_in_metadata():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

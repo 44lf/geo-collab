@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, authHeaders } from "../../api/client";
+import { api } from "../../api/client";
 import type { Account, AccountLoginPayload } from "../../types";
 import { CheckCircle2, Download, Plus, RefreshCw, Trash2, Upload, UserPlus, X } from "lucide-react";
 import { useToast } from "../../components/Toast";
@@ -130,7 +130,7 @@ export function AccountsWorkspace() {
   async function exportAuthPackage() {
     setLoading(true);
     try {
-      const headers = { ...await authHeaders(), "Content-Type": "application/json" };
+      const headers = { "Content-Type": "application/json" };
       const response = await fetch("/api/accounts/export", {
         method: "POST",
         headers,

@@ -1,17 +1,11 @@
 """
-Geo Collab launcher — starts the local server and opens the browser.
-Run directly:  python launcher.py
-Bundle:        pyinstaller geo.spec  →  dist/GeoCollab.exe
+Geo Collab launcher — Docker entrypoint.
 """
 from __future__ import annotations
 
 import logging
 import os
-import socket
 import sys
-import threading
-import time
-import webbrowser
 from pathlib import Path
 
 
@@ -30,54 +24,6 @@ def _setup_logging(log_file: Path) -> None:
     )
 
 
-def _find_free_port(start: int = 8765) -> int:
-    for port in range(start, start + 100):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            if sock.connect_ex(("127.0.0.1", port)) != 0:
-                return port
-    raise RuntimeError("No free port found in range 8765-8864")
-
-
-def _open_browser(url: str, delay: float = 1.8) -> None:
-    time.sleep(delay)
-    logging.info("Opening browser: %s", url)
-    webbrowser.open(url)
-
-
-def _make_tray_image():
-    from PIL import Image, ImageDraw, ImageFont
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse([2, 2, 62, 62], fill="#2563eb")
-    try:
-        font = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 32)
-    except Exception:
-        font = ImageFont.load_default()
-    draw.text((32, 32), "G", fill="white", font=font, anchor="mm")
-    return img
-
-
-def _run_tray(url: str, server) -> None:
-    import pystray
-    img = _make_tray_image()
-
-    def on_open(icon, item):
-        webbrowser.open(url)
-
-    def on_quit(icon, item):
-        server.should_exit = True
-        icon.stop()
-
-    menu = pystray.Menu(
-        pystray.MenuItem("GeoCollab 运行中", None, enabled=False),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("打开界面", on_open, default=True),
-        pystray.MenuItem("退出 GeoCollab", on_quit),
-    )
-    tray = pystray.Icon("GeoCollab", img, "GeoCollab", menu)
-    tray.run()
-
-
 def _run_migrations(alembic_dir: Path) -> None:
     from server.app.core.paths import get_database_url
 
@@ -91,53 +37,6 @@ def _run_migrations(alembic_dir: Path) -> None:
     cfg.set_main_option("prepend_sys_path", ".")
     command.upgrade(cfg, "head")
     logging.info("DB migrations complete")
-
-
-def _check_chrome() -> bool:
-    import shutil
-
-    chrome_candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        "chrome",
-        "google-chrome",
-    ]
-    for candidate in chrome_candidates:
-        if Path(candidate).exists() or shutil.which(candidate):
-            return True
-    return False
-
-
-def _show_chrome_missing_error() -> None:
-    message = (
-        "未检测到 Google Chrome 浏览器。\n\n"
-        "Chrome 浏览器是账号登录和文章发布功能的必要依赖。\n"
-        "请安装 Chrome 浏览器后重新启动 GeoCollab。\n\n"
-        "下载地址：https://www.google.com/chrome/"
-    )
-    gui_shown = False
-    try:
-        import tkinter.messagebox
-        try:
-            import tkinter
-            root = tkinter.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            tkinter.messagebox.showerror("GeoCollab — 缺少 Chrome", message)
-            root.destroy()
-            gui_shown = True
-        except Exception:
-            pass
-    except ImportError:
-        pass
-    if gui_shown:
-        sys.exit(1)
-    raise RuntimeError(message)
-
-
-def _ensure_chromium() -> None:
-    if not _check_chrome():
-        _show_chrome_missing_error()
 
 
 def _read_or_generate_token(data_dir: Path) -> str:
@@ -154,84 +53,29 @@ def _read_or_generate_token(data_dir: Path) -> str:
 
 
 def main() -> None:
-    # Resolve project root — works both in dev and inside a PyInstaller bundle
     if hasattr(sys, "_MEIPASS"):
-        project_root = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+        project_root = Path(sys._MEIPASS)
     else:
         project_root = Path(__file__).resolve().parent
 
     from server.app.core.paths import ensure_data_dirs
-
     data_dir = ensure_data_dirs()
     _setup_logging(data_dir / "logs" / "launcher.log")
     logging.info("Geo Collab starting — data dir: %s", data_dir)
 
     alembic_dir = project_root / "server" / "alembic"
-    logging.info("Step 1: Running DB migrations...")
     _run_migrations(alembic_dir)
 
-    logging.info("Step 2: Checking Chrome availability...")
-    _ensure_chromium()
-
-    if "GEO_LOCAL_API_TOKEN" not in os.environ:
-        logging.info("Step 3: Initializing local token...")
-        token = _read_or_generate_token(data_dir)
-        os.environ["GEO_LOCAL_API_TOKEN"] = token
-
-    port = _find_free_port()
-    url = f"http://127.0.0.1:{port}"
-    logging.info("Step 4: Starting server on port %d", port)
-
-    # Import app object directly so PyInstaller bundles the full server package.
-    logging.info("Step 5: Importing server app...")
-    from server.app.main import app  # noqa: PLC0415
-
+    from server.app.main import app
     import asyncio
     import uvicorn
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
+    port = int(os.environ.get("PORT", "8000"))
+    host = os.environ.get("HOST", "0.0.0.0")
+    config = uvicorn.Config(app, host=host, port=port, log_config=None)
     server = uvicorn.Server(config)
-
-    logging.info("Step 6: Starting uvicorn in background thread...")
-    threading.Thread(target=lambda: asyncio.run(server.serve()), daemon=True).start()
-    threading.Thread(target=_open_browser, args=(url,), daemon=True).start()
-
-    logging.info("Step 7: Starting system tray...")
-    try:
-        _run_tray(url, server)
-    except Exception as exc:
-        logging.warning("System tray unavailable (%s), running without tray", exc)
-        # Fallback: block main thread until Ctrl-C
-        try:
-            while not server.should_exit:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            server.should_exit = True
+    asyncio.run(server.serve())
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        import traceback as _tb
-        crash_msg = _tb.format_exc()
-        crash_log = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "GeoCollab" / "logs" / "crash.log"
-        try:
-            crash_log.parent.mkdir(parents=True, exist_ok=True)
-            logging.basicConfig(
-                level=logging.INFO,
-                format="%(asctime)s %(levelname)s %(message)s",
-                handlers=[logging.FileHandler(crash_log, encoding="utf-8")],
-            )
-            logging.critical("GeoCollab crashed on startup\n%s", crash_msg)
-        except Exception:
-            pass
-        try:
-            import tkinter.messagebox
-            tkinter.messagebox.showerror(
-                "GeoCollab — 启动失败",
-                f"GeoCollab 启动时遇到错误，请查看日志：\n\n{crash_log}\n\n{crash_msg[-2000:]}",
-            )
-        except Exception:
-            pass
-        sys.exit(1)
+    main()

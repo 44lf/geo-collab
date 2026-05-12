@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.core.time import utcnow
@@ -12,6 +12,7 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # uuid 作为主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     filename: Mapped[str] = mapped_column(String(500))
     ext: Mapped[str] = mapped_column(String(30))
     mime_type: Mapped[str] = mapped_column(String(100), index=True)

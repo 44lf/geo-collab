@@ -2,6 +2,8 @@ import base64
 import struct
 import zlib
 
+import pytest
+
 from server.tests.utils import build_test_app
 
 
@@ -47,6 +49,7 @@ def tiptap_doc(*asset_ids: str) -> dict:
     return {"type": "doc", "content": content}
 
 
+@pytest.mark.mysql
 def test_create_article_syncs_body_images_and_excludes_cover(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -85,6 +88,7 @@ def test_create_article_syncs_body_images_and_excludes_cover(monkeypatch):
         test_app.cleanup()
 
 
+@pytest.mark.mysql
 def test_update_article_rebuilds_body_image_order(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -118,6 +122,7 @@ def test_update_article_rebuilds_body_image_order(monkeypatch):
         test_app.cleanup()
 
 
+@pytest.mark.mysql
 def test_article_cover_endpoint_does_not_touch_body_assets(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -143,6 +148,7 @@ def test_article_cover_endpoint_does_not_touch_body_assets(monkeypatch):
         test_app.cleanup()
 
 
+@pytest.mark.mysql
 def test_article_crud_list_delete_and_missing_asset(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client

@@ -27,12 +27,13 @@ def test_publish_article_handles_cover_before_body(monkeypatch, tmp_path: Path) 
 
     publisher = OrderedPublisher(order)
     article = Article(
+        user_id=1,
         title="title",
         plain_text="body",
         content_json="{}",
         cover_asset=make_asset("cover-id"),
     )
-    account = Account(state_path=state_path.as_posix())
+    account = Account(user_id=1, state_path=state_path.as_posix())
 
     result = publisher.publish_article(article, account)
 
@@ -50,7 +51,7 @@ def test_handle_cover_skips_upload_entry_when_cover_already_present(monkeypatch,
     cover_path.write_bytes(b"fake cover")
     page = ExistingCoverPage()
     publisher = ToutiaoPublisher()
-    article = Article(cover_asset=make_asset("cover-id"))
+    article = Article(user_id=1, cover_asset=make_asset("cover-id"))
 
     monkeypatch.setattr(publisher_module, "resolve_asset_path", lambda _asset: cover_path)
 
@@ -64,7 +65,7 @@ def test_handle_cover_failure_includes_page_hint_and_screenshot(monkeypatch, tmp
     cover_path.write_bytes(b"fake cover")
     page = MissingCoverEntryPage()
     publisher = ToutiaoPublisher()
-    article = Article(cover_asset=make_asset("cover-id"))
+    article = Article(user_id=1, cover_asset=make_asset("cover-id"))
 
     monkeypatch.setattr(publisher_module, "resolve_asset_path", lambda _asset: cover_path)
 
@@ -89,6 +90,7 @@ def test_cover_upload_entry_keeps_trying_until_local_upload_appears() -> None:
 def make_asset(asset_id: str) -> Asset:
     return Asset(
         id=asset_id,
+        user_id=1,
         filename=f"{asset_id}.png",
         ext=".png",
         mime_type="image/png",

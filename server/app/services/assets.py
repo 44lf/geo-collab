@@ -85,7 +85,7 @@ def resolve_asset_path(asset: Asset) -> Path:
 
 
 # 内部方法：将二进制数据创建为 Asset 并写入磁盘
-def _create_asset(db: Session, data: bytes, filename: str, content_type: str) -> StoredAsset:
+def _create_asset(db: Session, user_id: int, data: bytes, filename: str, content_type: str) -> StoredAsset:
     now = utcnow()
     asset_id = uuid.uuid4().hex
     ext = normalize_ext(filename, content_type, data)
@@ -95,6 +95,7 @@ def _create_asset(db: Session, data: bytes, filename: str, content_type: str) ->
 
     asset = Asset(
         id=asset_id,
+        user_id=user_id,
         filename=filename,
         ext=ext,
         mime_type=content_type,
@@ -114,15 +115,15 @@ def _create_asset(db: Session, data: bytes, filename: str, content_type: str) ->
 
 
 # 从内存中的字节数据存储文件（用于任务失败截图）
-def store_bytes(db: Session, data: bytes, filename: str, content_type: str) -> StoredAsset:
+def store_bytes(db: Session, user_id: int, data: bytes, filename: str, content_type: str) -> StoredAsset:
     if not data:
         raise ValueError("Stored file is empty")
-    return _create_asset(db, data, filename, content_type)
+    return _create_asset(db, user_id, data, filename, content_type)
 
 
 # 内部方法：将临时文件移动至最终存储，创建 Asset 记录
 def _create_asset_from_path(
-    db: Session, filepath: Path, filename: str, content_type: str,
+    db: Session, user_id: int, filepath: Path, filename: str, content_type: str,
     sha256_hash: str, size: int,
 ) -> StoredAsset:
     now = utcnow()
@@ -136,6 +137,7 @@ def _create_asset_from_path(
 
     asset = Asset(
         id=asset_id,
+        user_id=user_id,
         filename=filename,
         ext=ext,
         mime_type=content_type,
@@ -155,7 +157,7 @@ def _create_asset_from_path(
 
 
 # 处理 HTTP 文件上传请求（流式写入 + 魔数校验 + SHA256 去重）
-async def store_upload(db: Session, upload: UploadFile) -> StoredAsset:
+async def store_upload(db: Session, user_id: int, upload: UploadFile) -> StoredAsset:
     import tempfile
 
     from fastapi import HTTPException
@@ -222,7 +224,7 @@ async def store_upload(db: Session, upload: UploadFile) -> StoredAsset:
             db.refresh(existing)
             return StoredAsset(asset=existing, path=resolve_asset_path(existing))
 
-        stored = _create_asset_from_path(db, tmp_path, filename, content_type, digest, total)
+        stored = _create_asset_from_path(db, user_id, tmp_path, filename, content_type, digest, total)
         db.flush()
         db.refresh(stored.asset)
         return stored

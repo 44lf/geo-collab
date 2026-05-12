@@ -33,6 +33,7 @@ def _create_task_and_record(test_app, article_id: int, account_id: int, record_s
     try:
         platform = get_or_create_toutiao_platform(db)
         task = PublishTask(
+            user_id=1,
             name="test-task",
             task_type="single",
             status="pending",

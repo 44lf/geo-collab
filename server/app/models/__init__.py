@@ -5,6 +5,7 @@ from server.app.models.article_group import ArticleGroup, ArticleGroupItem
 from server.app.models.asset import Asset
 from server.app.models.platform import Platform
 from server.app.models.publish import PublishRecord, PublishTask, PublishTaskAccount, TaskLog
+from server.app.models.user import User
 
 __all__ = [
     "Account",
@@ -18,4 +19,5 @@ __all__ = [
     "PublishTask",
     "PublishTaskAccount",
     "TaskLog",
+    "User",
 ]

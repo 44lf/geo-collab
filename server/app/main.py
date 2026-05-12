@@ -53,11 +53,13 @@ from server.app.api.routes.accounts import router as accounts_router
 from server.app.api.routes.article_groups import router as article_groups_router
 from server.app.api.routes.articles import router as articles_router
 from server.app.api.routes.assets import router as assets_router
+from server.app.api.routes.auth import router as auth_router
 from server.app.api.routes.publish_records import router as publish_records_router
 from server.app.api.routes.system import router as system_router
 from server.app.api.routes.tasks import router as tasks_router
 from server.app.core.paths import ensure_data_dirs
-from server.app.core.security import require_local_token
+from server.app.core.security import get_current_user
+from server.app.models.user import User
 from server.app.services.errors import AccountError, ConflictError, ValidationError
 
 # PyInstaller 打包后 sys._MEIPASS 指向解压目录
@@ -116,19 +118,30 @@ def create_app() -> FastAPI:
     async def _account_error_handler(request: Request, exc: AccountError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
-    # 无鉴权端点：前端启动时拉取本次会话 token
+    # 无鉴权端点：前端启动时判断是否需要初始化管理员
     @app.get("/api/bootstrap", include_in_schema=False)
     async def bootstrap() -> dict:
-        return {"token": os.environ.get("GEO_LOCAL_API_TOKEN", "")}
+        from server.app.db.session import SessionLocal
 
-    # 注册 7 个 API 路由模块（全部需要本地 token 鉴权）
-    app.include_router(accounts_router, prefix="/api/accounts", tags=["accounts"], dependencies=[Depends(require_local_token)])
-    app.include_router(article_groups_router, prefix="/api/article-groups", tags=["article-groups"], dependencies=[Depends(require_local_token)])
-    app.include_router(articles_router, prefix="/api/articles", tags=["articles"], dependencies=[Depends(require_local_token)])
-    app.include_router(assets_router, prefix="/api/assets", tags=["assets"], dependencies=[Depends(require_local_token)])
-    app.include_router(publish_records_router, prefix="/api/publish-records", tags=["publish-records"], dependencies=[Depends(require_local_token)])
-    app.include_router(system_router, prefix="/api/system", tags=["system"], dependencies=[Depends(require_local_token)])
-    app.include_router(tasks_router, prefix="/api/tasks", tags=["tasks"], dependencies=[Depends(require_local_token)])
+        db = SessionLocal()
+        try:
+            if db.query(User).first() is None:
+                return {"needs_setup": True}
+            return {"authenticated": False}
+        finally:
+            db.close()
+
+    # 注册 auth 路由（不加鉴权依赖）
+    app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+
+    # 注册 7 个 API 路由模块（全部需要 JWT cookie 鉴权）
+    app.include_router(accounts_router, prefix="/api/accounts", tags=["accounts"], dependencies=[Depends(get_current_user)])
+    app.include_router(article_groups_router, prefix="/api/article-groups", tags=["article-groups"], dependencies=[Depends(get_current_user)])
+    app.include_router(articles_router, prefix="/api/articles", tags=["articles"], dependencies=[Depends(get_current_user)])
+    app.include_router(assets_router, prefix="/api/assets", tags=["assets"], dependencies=[Depends(get_current_user)])
+    app.include_router(publish_records_router, prefix="/api/publish-records", tags=["publish-records"], dependencies=[Depends(get_current_user)])
+    app.include_router(system_router, prefix="/api/system", tags=["system"], dependencies=[Depends(get_current_user)])
+    app.include_router(tasks_router, prefix="/api/tasks", tags=["tasks"], dependencies=[Depends(get_current_user)])
 
     try:
         # 挂载前端静态文件（Vite 构建产物）

@@ -11,6 +11,7 @@ def _tiptap_doc() -> dict:
 def _setup_platform_and_account(session) -> tuple[int, int]:
     platform = Platform(code="toutiao", name="头条号", base_url="https://mp.toutiao.com")
     account = Account(
+        user_id=1,
         platform=platform,
         display_name="测试账号",
         platform_user_id="test-user",
@@ -38,6 +39,7 @@ def _create_article(client) -> dict:
 
 def _create_task_with_record(session, article_id: int, platform_id: int, account_id: int, record_status: str) -> None:
     task = PublishTask(
+        user_id=1,
         name="统计任务",
         task_type="single",
         status="succeeded",

@@ -28,8 +28,8 @@ def list_groups(db: Session) -> list[ArticleGroup]:
 
 
 # 创建新分组
-def create_group(db: Session, payload: ArticleGroupCreate) -> ArticleGroup:
-    group = ArticleGroup(name=payload.name, description=payload.description)
+def create_group(db: Session, user_id: int, payload: ArticleGroupCreate) -> ArticleGroup:
+    group = ArticleGroup(user_id=user_id, name=payload.name, description=payload.description)
     db.add(group)
     db.flush()
     return get_group(db, group.id) or group

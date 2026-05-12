@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from server.app.core.security import get_current_user
 from server.app.db.session import get_db
+from server.app.models import Account as AccountModel, User
 from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, AccountRead, AccountRenameRequest, ToutiaoLoginRequest
 from server.app.services.accounts import (
     check_account,
@@ -20,21 +22,43 @@ from server.app.services.serializers import to_account_read
 router = APIRouter()
 
 
+def _verify_account_ownership(account: AccountModel | None, current_user: User) -> AccountModel:
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if current_user.role != "admin" and account.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return account
+
+
 # 获取所有账号列表
 @router.get("", response_model=list[AccountRead])
-def read_accounts(db: Session = Depends(get_db)) -> list[AccountRead]:
-    return [to_account_read(account) for account in list_accounts(db)]
+def read_accounts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[AccountRead]:
+    accounts = list_accounts(db)
+    if current_user.role != "admin":
+        accounts = [a for a in accounts if a.user_id == current_user.id]
+    return [to_account_read(account) for account in accounts]
 
 
 # 添加头条号账号（可选择打开浏览器交互登录或复用已保存状态）
 @router.post("/toutiao/login", response_model=AccountRead)
-def login_toutiao_account(payload: ToutiaoLoginRequest, db: Session = Depends(get_db)) -> AccountRead:
-    return to_account_read(login_toutiao(db, payload))
+def login_toutiao_account(
+    payload: ToutiaoLoginRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AccountRead:
+    return to_account_read(login_toutiao(db, current_user.id, payload))
 
 
 # 导出账号授权包（含 Playwright storage_state 的 ZIP）
 @router.post("/export")
-def export_accounts(payload: AccountExportRequest | None = None, db: Session = Depends(get_db)) -> FileResponse:
+def export_accounts(
+    payload: AccountExportRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
     try:
         export_path = export_accounts_auth_package(db, payload or AccountExportRequest())
     except ValueError as exc:
@@ -48,7 +72,11 @@ def export_accounts(payload: AccountExportRequest | None = None, db: Session = D
 
 # 导入账号授权包
 @router.post("/import")
-async def import_accounts(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict:
+async def import_accounts(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     import io
     import re
     import zipfile
@@ -81,7 +109,7 @@ async def import_accounts(file: UploadFile = File(...), db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="Invalid ZIP file")
 
     try:
-        return import_accounts_auth_package(db, zip_bytes)
+        return import_accounts_auth_package(db, current_user.id, zip_bytes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -92,10 +120,9 @@ def check_existing_account(
     account_id: int,
     payload: AccountCheckRequest | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AccountRead:
-    account = get_account(db, account_id)
-    if account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
     return to_account_read(check_account(db, account, payload or AccountCheckRequest()))
 
 
@@ -105,27 +132,31 @@ def relogin_existing_account(
     account_id: int,
     payload: AccountCheckRequest | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AccountRead:
-    account = get_account(db, account_id)
-    if account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
     return to_account_read(relogin_account(db, account, payload or AccountCheckRequest()))
 
 
 # 重命名账号显示名称
 @router.patch("/{account_id}", response_model=AccountRead)
-def rename_existing_account(account_id: int, payload: AccountRenameRequest, db: Session = Depends(get_db)) -> AccountRead:
-    account = get_account(db, account_id)
-    if account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
+def rename_existing_account(
+    account_id: int,
+    payload: AccountRenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AccountRead:
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
     return to_account_read(rename_account(db, account, payload.display_name))
 
 
 # 删除指定账号
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_existing_account(account_id: int, db: Session = Depends(get_db)) -> Response:
-    account = get_account(db, account_id)
-    if account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
+def delete_existing_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
     delete_account(db, account)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -30,6 +30,7 @@ def build_test_app(monkeypatch) -> TestApp:
     data_dir = Path.cwd() / ".test-data" / uuid.uuid4().hex
     data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("GEO_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("GEO_JWT_SECRET", "test-secret")
     get_settings.cache_clear()
 
     # 清理全局任务锁和取消标志（避免跨测试污染）
@@ -100,6 +101,30 @@ def build_test_app(monkeypatch) -> TestApp:
     # 让后台任务线程也使用测试数据库
     monkeypatch.setattr("server.app.api.routes.tasks.bg_session_factory", TestingSessionLocal)
 
+    # 让 get_current_user 使用测试数据库（它内部直接调用 SessionLocal）
+    monkeypatch.setattr("server.app.db.session.SessionLocal", TestingSessionLocal)
+
     app = create_app()
     app.dependency_overrides[get_db] = override_get_db
-    return TestApp(client=TestClient(app), data_dir=data_dir, session_factory=TestingSessionLocal)
+
+    client = TestClient(app)
+
+    # 创建测试 admin 用户并设置 JWT cookie
+    from server.app.core.security import create_access_token
+
+    with TestingSessionLocal() as db:
+        from server.app.models.user import User
+        user = User(
+            username="testadmin",
+            role="admin",
+            is_active=True,
+            must_change_password=False,
+        )
+        user.set_password("testadmin")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        token = create_access_token(user.id, user.role)
+        client.cookies["access_token"] = token
+
+    return TestApp(client=client, data_dir=data_dir, session_factory=TestingSessionLocal)

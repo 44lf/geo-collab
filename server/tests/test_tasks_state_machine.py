@@ -2,6 +2,8 @@ import threading
 import time as _time
 from unittest.mock import patch
 
+import pytest
+
 from server.app.models import PublishRecord
 from server.app.services.toutiao_publisher import PublishFillResult, ToutiaoPublishError, ToutiaoUserInputRequired
 from server.tests.utils import build_test_app
@@ -81,6 +83,7 @@ def _create_account(client, data_dir, account_key: str, display_name: str) -> in
 # ---------------------------------------------------------------------------
 # Test 1: stop_before_publish=True → record enters waiting_manual_publish
 # ---------------------------------------------------------------------------
+@pytest.mark.mysql
 def test_stop_before_publish_enters_waiting_state(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -124,6 +127,7 @@ def test_stop_before_publish_enters_waiting_state(monkeypatch):
         test_app.cleanup()
 
 
+@pytest.mark.mysql
 def test_user_input_required_pauses_record(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -177,6 +181,7 @@ def test_user_input_required_pauses_record(monkeypatch):
         test_app.cleanup()
 
 
+@pytest.mark.mysql
 def test_resolve_user_input_requeues_and_continues(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -249,6 +254,7 @@ def test_resolve_user_input_requeues_and_continues(monkeypatch):
 # ---------------------------------------------------------------------------
 # Test 2: manual_confirm_record() with outcome=succeeded
 # ---------------------------------------------------------------------------
+@pytest.mark.mysql
 def test_manual_confirm_succeeded(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -302,6 +308,7 @@ def test_manual_confirm_succeeded(monkeypatch):
 # ---------------------------------------------------------------------------
 # Test 3: manual_confirm_record() with outcome=failed
 # ---------------------------------------------------------------------------
+@pytest.mark.mysql
 def test_manual_confirm_failed(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
@@ -355,6 +362,7 @@ def test_manual_confirm_failed(monkeypatch):
 # Test 4: manual_confirm_record() does NOT block HTTP request with
 #         Playwright execution (next record not run synchronously)
 # ---------------------------------------------------------------------------
+@pytest.mark.mysql
 def test_manual_confirm_does_not_block_with_next_record(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client

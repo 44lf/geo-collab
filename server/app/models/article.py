@@ -16,6 +16,7 @@ class Article(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(300), index=True)
     author: Mapped[str | None] = mapped_column(String(200), nullable=True)
     cover_asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"), nullable=True)

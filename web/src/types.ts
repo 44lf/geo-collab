@@ -213,4 +213,11 @@ export const navItems: { key: NavKey; label: string; icon: ComponentType<{ size?
 
 export const TERMINAL_STATUSES = new Set(["succeeded", "partial_failed", "failed", "cancelled"]);
 
+export type UserInfo = {
+  id: number;
+  username: string;
+  role: "admin" | "operator";
+  must_change_password: boolean;
+};
+
 export const ITEM_HEIGHT = 82;

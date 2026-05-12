@@ -43,6 +43,7 @@ class PublishTask(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(300))
     task_type: Mapped[str] = mapped_column(String(40), index=True)  # single / group_round_robin
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)

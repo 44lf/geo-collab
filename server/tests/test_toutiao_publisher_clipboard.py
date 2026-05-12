@@ -22,6 +22,7 @@ def test_paste_body_image_uses_toutiao_upload_drawer(monkeypatch, tmp_path: Path
     image_path.write_bytes(b"fake image")
     asset = Asset(
         id="asset-id",
+        user_id=1,
         filename="image.png",
         ext=".png",
         mime_type="image/png",

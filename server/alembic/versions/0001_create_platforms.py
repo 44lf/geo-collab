@@ -1,16 +1,16 @@
 """create platforms
 
-Revision ID: 0001_create_platforms
+Revision ID: 0001
 Revises:
-Create Date: 2026-05-06
+Create Date: 2026-05-12
 """
-from datetime import datetime, timezone
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0001_create_platforms"
+
+revision: str = "0001"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -23,30 +23,14 @@ def upgrade() -> None:
         sa.Column("code", sa.String(length=50), nullable=False),
         sa.Column("name", sa.String(length=100), nullable=False),
         sa.Column("base_url", sa.String(length=500), nullable=True),
-        sa.Column("enabled", sa.Boolean(), nullable=False),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        mysql_engine="InnoDB",
+        mysql_charset="utf8mb4",
+        mysql_collate="utf8mb4_unicode_ci",
     )
     op.create_index(op.f("ix_platforms_code"), "platforms", ["code"], unique=True)
-    op.bulk_insert(
-        sa.table(
-            "platforms",
-            sa.column("code", sa.String()),
-            sa.column("name", sa.String()),
-            sa.column("base_url", sa.String()),
-            sa.column("enabled", sa.Boolean()),
-            sa.column("created_at", sa.DateTime()),
-        ),
-        [
-            {
-                "code": "toutiao",
-                "name": "头条号",
-                "base_url": "https://mp.toutiao.com",
-                "enabled": True,
-                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
-            }
-        ],
-    )
 
 
 def downgrade() -> None:

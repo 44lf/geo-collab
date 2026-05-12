@@ -180,7 +180,7 @@ def get_account(db: Session, account_id: int) -> Account | None:
 
 
 # 添加头条号账号
-def login_toutiao(db: Session, payload: ToutiaoLoginRequest) -> Account:
+def login_toutiao(db: Session, user_id: int, payload: ToutiaoLoginRequest) -> Account:
     platform = get_or_create_toutiao_platform(db)
     account_key = normalize_account_key(payload.account_key)
     state_path = state_path_for_key(account_key)
@@ -209,6 +209,7 @@ def login_toutiao(db: Session, payload: ToutiaoLoginRequest) -> Account:
     now = utcnow()
     if account is None:
         account = Account(
+            user_id=user_id,
             platform=platform,
             display_name=payload.display_name,
             platform_user_id=None,
@@ -266,7 +267,7 @@ def relogin_account(db: Session, account: Account, payload: AccountCheckRequest)
         use_browser=payload.use_browser,
         note=account.note,
     )
-    return login_toutiao(db, request)
+    return login_toutiao(db, account.user_id, request)
 
 
 # 重命名账号显示名称
@@ -342,7 +343,7 @@ def export_accounts_auth_package(db: Session, payload: AccountExportRequest) -> 
 
 
 # 导入账号授权包（ZIP 格式），返回新增和跳过的账号名称列表
-def import_accounts_auth_package(db: Session, zip_bytes: bytes) -> dict[str, list[str]]:
+def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) -> dict[str, list[str]]:
     ensure_data_dirs()
     imported: list[str] = []
     skipped: list[str] = []
@@ -392,6 +393,7 @@ def import_accounts_auth_package(db: Session, zip_bytes: bytes) -> dict[str, lis
             now = utcnow()
             last_login_raw = entry.get("last_login_at")
             account = Account(
+                user_id=user_id,
                 platform=platform,
                 display_name=display_name,
                 platform_user_id=entry.get("platform_user_id"),

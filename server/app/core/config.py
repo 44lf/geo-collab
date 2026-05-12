@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     app_name: str = "Geo Collab"
     app_version: str = "0.1.0"
     data_dir: Path | None = None
+    database_url: str | None = None
+    jwt_secret: str = ""
     publish_max_concurrent_records: int = 5
     publish_record_timeout_seconds: int = 300
     publish_browser_channel: str = "chrome"

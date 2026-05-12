@@ -3,8 +3,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from server.app.core.security import get_current_user
 from server.app.db.session import get_db
-from server.app.models import Article, PublishRecord
+from server.app.models import Article, PublishRecord, User
 from server.app.schemas.article import ArticleCoverUpdate, ArticleCreate, ArticleListRead, ArticleRead, ArticleUpdate
 from server.app.services.errors import ConflictError
 from server.app.services.articles import (
@@ -20,6 +21,14 @@ from server.app.services.serializers import to_article_read
 router = APIRouter()
 
 
+def _verify_article_ownership(article: Article | None, current_user: User) -> Article:
+    if article is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    if current_user.role != "admin" and article.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return article
+
+
 # 获取文章列表，支持按标题/作者搜索、分页
 @router.get("", response_model=list[ArticleListRead])
 def read_articles(
@@ -27,8 +36,9 @@ def read_articles(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, le=200),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[ArticleListRead]:
-    articles = list_articles(db, q, skip=skip, limit=limit)
+    articles = list_articles(db, q, skip=skip, limit=limit, user_id=None if current_user.role == "admin" else current_user.id)
     if not articles:
         return []
     article_ids = [a.id for a in articles]
@@ -57,9 +67,13 @@ def read_articles(
 
 # 创建新文章
 @router.post("", response_model=ArticleRead)
-def create_article_endpoint(payload: ArticleCreate, db: Session = Depends(get_db)) -> ArticleRead:
+def create_article_endpoint(
+    payload: ArticleCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ArticleRead:
     try:
-        return to_article_read(create_article(db, payload))
+        return to_article_read(create_article(db, current_user.id, payload))
     except IntegrityError as exc:
         db.rollback()
         if payload.client_request_id:
@@ -73,38 +87,48 @@ def create_article_endpoint(payload: ArticleCreate, db: Session = Depends(get_db
 
 # 获取单篇文章详情
 @router.get("/{article_id}", response_model=ArticleRead)
-def read_article(article_id: int, db: Session = Depends(get_db)) -> ArticleRead:
-    article = get_article(db, article_id)
-    if article is None:
-        raise HTTPException(status_code=404, detail="Article not found")
+def read_article(
+    article_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ArticleRead:
+    article = _verify_article_ownership(get_article(db, article_id), current_user)
     return to_article_read(article)
 
 
 # 更新文章内容（标题、正文、封面等）
 @router.put("/{article_id}", response_model=ArticleRead)
-def update_article_endpoint(article_id: int, payload: ArticleUpdate, db: Session = Depends(get_db)) -> ArticleRead:
-    article = get_article(db, article_id)
-    if article is None:
-        raise HTTPException(status_code=404, detail="Article not found")
+def update_article_endpoint(
+    article_id: int,
+    payload: ArticleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ArticleRead:
+    article = _verify_article_ownership(get_article(db, article_id), current_user)
     return to_article_read(update_article(db, article, payload))
 
 
 # 删除文章
 @router.delete("/{article_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_article_endpoint(article_id: int, db: Session = Depends(get_db)) -> Response:
-    article = get_article(db, article_id)
-    if article is None:
-        raise HTTPException(status_code=404, detail="Article not found")
+def delete_article_endpoint(
+    article_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    article = _verify_article_ownership(get_article(db, article_id), current_user)
     delete_article(db, article)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # 仅更新文章封面图
 @router.post("/{article_id}/cover", response_model=ArticleRead)
-def update_article_cover(article_id: int, payload: ArticleCoverUpdate, db: Session = Depends(get_db)) -> ArticleRead:
-    article = get_article(db, article_id)
-    if article is None:
-        raise HTTPException(status_code=404, detail="Article not found")
+def update_article_cover(
+    article_id: int,
+    payload: ArticleCoverUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ArticleRead:
+    article = _verify_article_ownership(get_article(db, article_id), current_user)
     if payload.version is not None and article.version != payload.version:
         raise ConflictError("Article has been modified; refresh before saving")
     return to_article_read(set_article_cover(db, article, payload.cover_asset_id))

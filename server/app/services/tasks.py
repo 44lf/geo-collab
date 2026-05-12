@@ -179,7 +179,7 @@ def delete_all_tasks(db: Session) -> None:
     db.flush()
 
 
-def create_task(db: Session, payload: TaskCreate) -> PublishTask:
+def create_task(db: Session, user_id: int, payload: TaskCreate) -> PublishTask:
     if payload.client_request_id:
         existing = db.execute(
             select(PublishTask).where(PublishTask.client_request_id == payload.client_request_id)
@@ -191,6 +191,7 @@ def create_task(db: Session, payload: TaskCreate) -> PublishTask:
     assignments = _build_assignments(inputs.article_ids, inputs.accounts)
 
     task = PublishTask(
+        user_id=user_id,
         name=payload.name,
         task_type=payload.task_type,
         status="pending",
@@ -536,13 +537,13 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
     except ToutiaoUserInputRequired as exc:
         # 人工介入：保持浏览器打开，将 session 关联到 record
         # 前端会读取 record.novnc_url 展示"打开远程浏览器"按钮
-        screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
+        screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot, task.user_id)
         _mark_record_waiting_user_input(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
         if exc.session_id:
             associate_record_with_session(record_id, exc.session_id)
         _logger.info("Record %d waiting user input", record_id)
     except ToutiaoPublishError as exc:
-        screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
+        screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot, task.user_id)
         _mark_record_failed(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
         _logger.error("Record %d publish error: %s", record_id, exc)
     except ValueError as exc:
@@ -723,11 +724,13 @@ def _store_failure_screenshot(
     task_id: int,
     record_id: int,
     screenshot: bytes | None,
+    user_id: int,
 ) -> str | None:
     if not screenshot:
         return None
     stored = store_bytes(
         db,
+        user_id,
         screenshot,
         filename=f"task-{task_id}-record-{record_id}-failure.png",
         content_type="image/png",

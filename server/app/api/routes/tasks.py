@@ -20,8 +20,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from server.app.core.security import get_current_user
 from server.app.db.session import get_db
-from server.app.models import PublishTask
+from server.app.models import PublishTask, User
 from server.app.schemas.task import (
     PublishRecordRead,
     TaskAssignmentPreviewRead,
@@ -48,21 +49,37 @@ router = APIRouter()
 bg_session_factory: Any = None
 
 
+def _verify_task_ownership(task: PublishTask | None, current_user: User) -> PublishTask:
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if current_user.role != "admin" and task.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
 # 获取所有任务列表
 @router.get("", response_model=list[TaskRead])
 def read_tasks(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[TaskRead]:
-    return [to_task_read(task) for task in list_tasks(db, skip=skip, limit=limit)]
+    tasks = list_tasks(db, skip=skip, limit=limit)
+    if current_user.role != "admin":
+        tasks = [t for t in tasks if t.user_id == current_user.id]
+    return [to_task_read(task) for task in tasks]
 
 
 # 创建新任务
 @router.post("", response_model=TaskRead)
-def create_task_endpoint(payload: TaskCreate, db: Session = Depends(get_db)) -> TaskRead:
+def create_task_endpoint(
+    payload: TaskCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TaskRead:
     try:
-        return to_task_read(create_task(db, payload))
+        return to_task_read(create_task(db, current_user.id, payload))
     except IntegrityError as exc:
         db.rollback()
         if payload.client_request_id:
@@ -85,10 +102,12 @@ def preview_task_assignment_endpoint(payload: TaskCreate, db: Session = Depends(
 # 返回 202 表示后台线程已启动，用 GET /api/tasks/{id} 轮询状态
 # 若任务已处于 terminal 状态则返回 400
 @router.post("/{task_id}/execute", status_code=202)
-def start_task_execution(task_id: int, db: Session = Depends(get_db)) -> dict:
-    task = get_task(db, task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+def start_task_execution(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    task = _verify_task_ownership(get_task(db, task_id), current_user)
     if task.status in TERMINAL_TASK_STATUSES:
         raise HTTPException(status_code=409, detail=f"Task is already terminal: {task.status}")
 
@@ -115,10 +134,12 @@ def start_task_execution(task_id: int, db: Session = Depends(get_db)) -> dict:
 
 # 取消任务
 @router.post("/{task_id}/cancel", response_model=TaskRead)
-def cancel_existing_task(task_id: int, db: Session = Depends(get_db)) -> TaskRead:
-    task = get_task(db, task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+def cancel_existing_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TaskRead:
+    task = _verify_task_ownership(get_task(db, task_id), current_user)
     return to_task_read(cancel_task(db, task))
 
 
@@ -129,24 +150,29 @@ def read_task_logs(
     after_id: int = Query(default=0, ge=0),
     limit: int = Query(default=100, le=500),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[TaskLogRead]:
-    if get_task(db, task_id) is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+    _verify_task_ownership(get_task(db, task_id), current_user)
     return [to_log_read(log) for log in list_task_logs(db, task_id, after_id=after_id, limit=limit)]
 
 
 # 获取任务详情
 @router.get("/{task_id}", response_model=TaskRead)
-def read_task(task_id: int, db: Session = Depends(get_db)) -> TaskRead:
-    task = get_task(db, task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+def read_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TaskRead:
+    task = _verify_task_ownership(get_task(db, task_id), current_user)
     return to_task_read(task)
 
 
 # 获取任务的发布记录列表
 @router.get("/{task_id}/records", response_model=list[PublishRecordRead])
-def read_task_records(task_id: int, db: Session = Depends(get_db)) -> list[PublishRecordRead]:
-    if get_task(db, task_id) is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+def read_task_records(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[PublishRecordRead]:
+    _verify_task_ownership(get_task(db, task_id), current_user)
     return [to_record_read(record) for record in list_task_records(db, task_id)]

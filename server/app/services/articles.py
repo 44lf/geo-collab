@@ -6,8 +6,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from sqlalchemy import delete as sa_delete, select, text
+from sqlalchemy import delete as sa_delete, func, select, text
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.sql import text as sa_text
 
 from server.app.core.time import utcnow
 from server.app.models import Article, ArticleBodyAsset, ArticleGroupItem, Asset, PublishRecord, TaskLog
@@ -134,34 +135,64 @@ def get_article(db: Session, article_id: int) -> Article | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
+# 跨 dialect 的文章搜索。SQLite 用 FTS5，MySQL 用 FULLTEXT。
+def _search_articles(db: Session, query: str, user_id: int | None = None) -> list[Article]:
+    dialect_name = db.bind.dialect.name if db.bind else "sqlite"
+
+    if dialect_name == "mysql":
+        stmt = (
+            select(Article)
+            .where(func.match(Article.title, Article.author).against(query, "boolean") > 0)
+        )
+    else:
+        stmt = select(Article).where(
+            sa_text("articles_fts MATCH :q").bindparams(q=query)
+        )
+
+    if user_id is not None:
+        stmt = stmt.where(Article.user_id == user_id)
+
+    return list(db.execute(stmt).scalars().all())
+
+
 # 列出文章，支持按标题/作者模糊搜索、分页
-def list_articles(db: Session, query: str | None = None, skip: int = 0, limit: int = 50) -> list[Article]:
+def list_articles(db: Session, query: str | None = None, skip: int = 0, limit: int = 50, user_id: int | None = None) -> list[Article]:
+    if query and len(query) >= 3:
+        try:
+            matching = _search_articles(db, query, user_id=user_id)
+            if not matching:
+                return []
+            matching.sort(key=lambda a: a.updated_at, reverse=True)
+            ids = [a.id for a in matching[skip:skip + limit]]
+            if not ids:
+                return []
+            stmt = (
+                select(Article)
+                .options(selectinload(Article.body_assets))
+                .where(Article.id.in_(ids))
+                .order_by(Article.updated_at.desc())
+            )
+            articles = list(db.execute(stmt).scalars().all())
+            articles.sort(key=lambda a: ids.index(a.id))
+            return articles
+        except Exception:
+            _logger.debug("FTS search unavailable, falling back to LIKE query", exc_info=True)
+
     stmt = select(Article).options(selectinload(Article.body_assets)).order_by(Article.updated_at.desc())
+
+    if user_id is not None:
+        stmt = stmt.where(Article.user_id == user_id)
+
     if query:
-        fts_ok = False
-        if len(query) >= 3:
-            try:
-                fts_result = db.execute(
-                    text("SELECT rowid FROM articles_fts WHERE articles_fts MATCH :q"),
-                    {"q": query},
-                ).all()
-                if fts_result:
-                    fts_ids = [row[0] for row in fts_result]
-                    stmt = stmt.where(Article.id.in_(fts_ids))
-                else:
-                    return []
-                fts_ok = True
-            except Exception:
-                _logger.debug("FTS search unavailable, falling back to LIKE query", exc_info=True)
-        if not fts_ok:
-            like = f"%{query}%"
-            stmt = stmt.where((Article.title.like(like)) | (Article.author.like(like)))
+        like = f"%{query}%"
+        stmt = stmt.where((Article.title.like(like)) | (Article.author.like(like)))
+
     stmt = stmt.offset(skip).limit(limit)
     return list(db.execute(stmt).scalars().all())
 
 
 # 创建文章
-def create_article(db: Session, payload: ArticleCreate) -> Article:
+def create_article(db: Session, user_id: int, payload: ArticleCreate) -> Article:
     if payload.client_request_id:
         existing = db.execute(
             select(Article).where(Article.client_request_id == payload.client_request_id)
@@ -172,6 +203,7 @@ def create_article(db: Session, payload: ArticleCreate) -> Article:
     validate_article_status(payload.status)
     ensure_asset_exists(db, payload.cover_asset_id)
     article = Article(
+        user_id=user_id,
         title=payload.title,
         author=payload.author,
         cover_asset_id=payload.cover_asset_id,
