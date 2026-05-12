@@ -14,6 +14,7 @@ def managed_browser_context(
     account_key: str,
     channel: str = "chrome",
     executable_path: str | None = None,
+    close_on_exit: bool = True,
 ) -> Iterator[tuple[Playwright, BrowserContext, Any]]:
     """启动 Playwright 持久化浏览器上下文，退出时自动清理资源。"""
     playwright: Playwright | None = None
@@ -27,13 +28,14 @@ def managed_browser_context(
         context.set_default_navigation_timeout(30000)
         yield playwright, context, context.new_page()
     finally:
-        if context:
-            try:
-                context.close()
-            except Exception:
-                pass
-        if playwright:
-            try:
-                playwright.stop()
-            except Exception:
-                pass
+        if close_on_exit:
+            if context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if playwright:
+                try:
+                    playwright.stop()
+                except Exception:
+                    pass

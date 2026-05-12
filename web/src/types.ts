@@ -105,6 +105,8 @@ export type PublishRecord = {
   retry_of_record_id: number | null;
   started_at: string | null;
   finished_at: string | null;
+  remote_browser_session_id: string | null;
+  novnc_url: string | null;
 };
 
 export type TaskLog = {
@@ -143,6 +145,7 @@ export function statusLabel(status: string): string {
     failed: "失败",
     cancelled: "已取消",
     waiting_manual_publish: "等待确认",
+    waiting_user_input: "需要处理",
   };
   return labels[status] ?? status;
 }

@@ -43,6 +43,37 @@ _reserved_displays: set[int] = set()
 _reserved_vnc_ports: set[int] = set()
 _reserved_novnc_ports: set[int] = set()
 
+# record_id → session_id mapping for waiting_user_input records
+_record_to_session: dict[int, str] = {}
+_session_keep_alive: set[str] = set()
+
+
+def associate_record_with_session(record_id: int, session_id: str) -> None:
+    with _sessions_lock:
+        _record_to_session[record_id] = session_id
+
+
+def get_session_for_record(record_id: int) -> RemoteBrowserSession | None:
+    session_id = _record_to_session.get(record_id)
+    if session_id is None:
+        return None
+    return get_session(session_id)
+
+
+def get_session(session_id: str) -> RemoteBrowserSession | None:
+    with _sessions_lock:
+        return _active_sessions.get(session_id)
+
+
+def disassociate_record(record_id: int) -> None:
+    with _sessions_lock:
+        _record_to_session.pop(record_id, None)
+
+
+def keep_session_alive(session_id: str) -> None:
+    with _sessions_lock:
+        _session_keep_alive.add(session_id)
+
 
 def remote_browser_enabled() -> bool:
     return bool(get_settings().publish_remote_browser_enabled)
@@ -83,7 +114,8 @@ def managed_remote_browser_session(account_key: str) -> Iterator[RemoteBrowserSe
     try:
         yield session
     finally:
-        stop_remote_browser_session(session.id)
+        if session.id not in _session_keep_alive:
+            stop_remote_browser_session(session.id)
 
 
 def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:

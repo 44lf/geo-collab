@@ -43,6 +43,8 @@ class PublishRecordRead(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     lease_until: datetime | None = None
+    remote_browser_session_id: str | None = None
+    novnc_url: str | None = None
 
 
 # 任务精简状态（/status 接口用）

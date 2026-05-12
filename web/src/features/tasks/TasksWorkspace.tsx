@@ -31,9 +31,12 @@ export function TasksWorkspace() {
   const lastLogIdRef = useRef(0);
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
+  const hasActiveRecords = records.some(r =>
+    r.status === "running" || r.status === "waiting_user_input" || r.status === "waiting_manual_publish"
+  );
   const shouldPollSelectedTask =
     selectedTaskId !== null &&
-    (selectedTask?.status === "running" || autoRefreshTaskIds.has(selectedTaskId));
+    (selectedTask?.status === "running" || hasActiveRecords || autoRefreshTaskIds.has(selectedTaskId));
   const articleMap = useMemo(() => Object.fromEntries(articles.map((a) => [a.id, a])), [articles]);
   const accountMap = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a])), [accounts]);
   const sortedTasks = useMemo(
@@ -465,6 +468,20 @@ export function TasksWorkspace() {
                         <RefreshCw size={13} />
                         重试
                       </button>
+                    ) : null}
+                    {record.status === "waiting_user_input" && record.novnc_url ? (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                        <button
+                          className="primaryButton"
+                          type="button"
+                          onClick={() => window.open(record.novnc_url!, "_blank")}
+                        >
+                          打开远程浏览器
+                        </button>
+                        <small style={{ color: "#64748b" }}>
+                          浏览器会话将在空闲 5 分钟后自动关闭
+                        </small>
+                      </div>
                     ) : null}
                   </div>
                 );

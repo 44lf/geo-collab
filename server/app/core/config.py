@@ -12,6 +12,16 @@ class Settings(BaseSettings):
     publish_max_concurrent_records: int = 5
     publish_browser_channel: str = "chrome"
     publish_browser_executable_path: str | None = None
+    publish_remote_browser_enabled: bool = False
+    publish_xvfb_path: str = "Xvfb"
+    publish_x11vnc_path: str = "x11vnc"
+    publish_websockify_path: str = "websockify"
+    publish_novnc_web_dir: str | None = None
+    publish_remote_browser_host: str = "127.0.0.1"
+    publish_remote_browser_display_base: int = 99
+    publish_remote_browser_vnc_base_port: int = 5900
+    publish_remote_browser_novnc_base_port: int = 6080
+    publish_remote_browser_start_timeout_seconds: float = 15.0
 
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env")
 

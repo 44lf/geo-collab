@@ -129,6 +129,8 @@ def test_create_single_task_generates_one_publish_record(monkeypatch):
                 "started_at": None,
                 "finished_at": None,
                 "lease_until": None,
+                "remote_browser_session_id": None,
+                "novnc_url": None,
             }
         ]
 

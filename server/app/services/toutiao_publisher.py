@@ -11,6 +11,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+import contextlib
 from server.app.core.paths import get_data_dir
 from server.app.models import Account, Article, Asset
 from server.app.services.accounts import account_key_from_state_path, launch_options, profile_dir_for_key
@@ -46,7 +47,16 @@ class ToutiaoPublishError(Exception):
 
 
 class ToutiaoUserInputRequired(ToutiaoPublishError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        screenshot: bytes | None = None,
+        session_id: str | None = None,
+        novnc_url: str | None = None,
+    ):
+        super().__init__(message, screenshot)
+        self.session_id = session_id
+        self.novnc_url = novnc_url
 
 
 # 头条号 Playwright 自动发布器
@@ -60,6 +70,8 @@ class ToutiaoPublisher:
         self.channel = channel
         self.executable_path = executable_path
         self.wait_ms = wait_ms
+        self.active_session_id: str | None = None
+        self.active_session_novnc_url: str | None = None
 
     def publish_article(self, article: Article, account: Account, stop_before_publish: bool = False) -> PublishFillResult:
         """填充文章表单并点击发布，完成后关闭浏览器。"""
@@ -71,46 +83,83 @@ class ToutiaoPublisher:
             raise ToutiaoPublishError("封面图片是必填项")
 
         from server.app.services.browser import managed_browser_context
+        from server.app.services.browser_sessions import (
+            keep_session_alive,
+            managed_remote_browser_session,
+            remote_browser_enabled,
+        )
 
         account_key = account_key_from_state_path(account.state_path)
         state_path = (get_data_dir() / account.state_path).resolve()
         if not state_path.exists():
             raise ToutiaoPublishError(f"Account storage state not found: {account.state_path}")
 
-        with managed_browser_context(
-            account_key=account_key,
-            channel=self.channel,
-            executable_path=self.executable_path,
-        ) as (playwright, context, page):
-            try:
-                page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
-                try:
-                    page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=20000)
-                except Exception:
-                    pass
-                self._ensure_publish_page(page)
-                self._close_ai_drawer(page)
-                self._dismiss_blocking_popups(page)
-                self._fill_title(page, article.title)
-                self._dismiss_blocking_popups(page)
-                self._handle_cover(page, article)
-                self._dismiss_blocking_popups(page)
-                self._fill_body(page, article)
-                self._dismiss_blocking_popups(page)
-                self._wait_publish_images_ready(page)
-                publish_url = self._click_publish_and_wait(page, stop_before_publish)
-                context.storage_state(path=str(state_path))
-                message = "已进入发布预览，等待手动确认" if stop_before_publish else f"发布成功: {publish_url}"
-                return PublishFillResult(
-                    url=publish_url,
-                    title=article.title,
-                    message=message,
+        remote_session = None
+        browser_mgr = managed_remote_browser_session(account_key) if remote_browser_enabled() else contextlib.nullcontext()
+
+        with browser_mgr as remote_sesh:
+            if remote_sesh is not None:
+                remote_session = remote_sesh
+                self.active_session_id = remote_session.id
+                self.active_session_novnc_url = remote_session.novnc_url
+
+            _keep_browser = False
+
+            if remote_session:
+                from playwright.sync_api import sync_playwright
+                pw = sync_playwright().start()
+                context = pw.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir_for_key(account_key)),
+                    **launch_options(self.channel, self.executable_path),
                 )
-            except ToutiaoPublishError:
-                raise
-            except Exception as exc:
-                screenshot = self._screenshot(page)
-                raise ToutiaoPublishError(str(exc), screenshot) from exc
+                context.set_default_navigation_timeout(30000)
+                page = context.new_page()
+                try:
+                    return self._do_publish(page, context, article, account, state_path, stop_before_publish)
+                except ToutiaoUserInputRequired as exc:
+                    _keep_browser = True
+                    keep_session_alive(remote_session.id)
+                    exc.session_id = remote_session.id
+                    exc.novnc_url = remote_session.novnc_url
+                    raise
+                finally:
+                    if not _keep_browser:
+                        try: context.close()
+                        except: pass
+                        try: pw.stop()
+                        except: pass
+            else:
+                with managed_browser_context(
+                    account_key=account_key,
+                    channel=self.channel,
+                    executable_path=self.executable_path,
+                ) as (_pw, _context, _page):
+                    return self._do_publish(_page, _context, article, account, state_path, stop_before_publish)
+
+    def _do_publish(self, page, context, article, account, state_path, stop_before_publish):
+        page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
+        try:
+            page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=20000)
+        except Exception:
+            pass
+        self._ensure_publish_page(page)
+        self._close_ai_drawer(page)
+        self._dismiss_blocking_popups(page)
+        self._fill_title(page, article.title)
+        self._dismiss_blocking_popups(page)
+        self._handle_cover(page, article)
+        self._dismiss_blocking_popups(page)
+        self._fill_body(page, article)
+        self._dismiss_blocking_popups(page)
+        self._wait_publish_images_ready(page)
+        publish_url = self._click_publish_and_wait(page, stop_before_publish)
+        context.storage_state(path=str(state_path))
+        message = "已进入发布预览，等待手动确认" if stop_before_publish else f"发布成功: {publish_url}"
+        return PublishFillResult(
+            url=publish_url,
+            title=article.title,
+            message=message,
+        )
 
     def _close_ai_drawer(self, page: Any) -> None:
         """关闭头条号 AI 创作助手抽屉，避免遮挡正文编辑区。"""

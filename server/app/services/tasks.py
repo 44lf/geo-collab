@@ -23,6 +23,12 @@ from server.app.models import (
 )
 from server.app.services.assets import store_bytes
 from server.app.services.articles import article_has_publishable_body
+from server.app.services.browser_sessions import (
+    associate_record_with_session,
+    disassociate_record,
+    get_session_for_record,
+    stop_remote_browser_session,
+)
 from server.app.services.toutiao_publisher import ToutiaoPublisher, ToutiaoPublishError, ToutiaoUserInputRequired
 from server.app.schemas.task import (
     PublishRecordRead,
@@ -446,6 +452,8 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
     except ToutiaoUserInputRequired as exc:
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
         _mark_record_waiting_user_input(db, task.id, record_id, str(exc), screenshot_asset_id=screenshot_asset_id)
+        if exc.session_id:
+            associate_record_with_session(record_id, exc.session_id)
     except ToutiaoPublishError as exc:
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot)
         _mark_record_failed(db, task.id, record_id, str(exc), screenshot_asset_id=screenshot_asset_id)
@@ -595,6 +603,8 @@ def _run_next_pending_record(db: Session, task: PublishTask, records: list[Publi
         except ToutiaoUserInputRequired as exc:
             screenshot_asset_id = _store_failure_screenshot(db, task.id, next_record.id, exc.screenshot)
             _mark_record_waiting_user_input(db, task.id, next_record.id, str(exc), screenshot_asset_id=screenshot_asset_id)
+            if exc.session_id:
+                associate_record_with_session(next_record.id, exc.session_id)
             db.commit()
             continue
         except ToutiaoPublishError as exc:
@@ -687,6 +697,11 @@ def manual_confirm_record(
 def resolve_user_input_record(db: Session, record: PublishRecord) -> PublishRecord:
     if record.status != "waiting_user_input":
         raise ValueError(f"Record is not waiting for user input: {record.status}")
+
+    session = get_session_for_record(record.id)
+    if session:
+        stop_remote_browser_session(session.id)
+    disassociate_record(record.id)
 
     record.status = "pending"
     record.error_message = None
@@ -794,9 +809,15 @@ def cancel_task(db: Session, task: PublishTask) -> PublishTask:
     task.status = "cancelled"
     task.finished_at = now
     for record in records:
+        was_waiting_user_input = record.status == "waiting_user_input"
         if record.status in {"pending", "running", "waiting_user_input"}:
             record.status = "cancelled"
             record.finished_at = now
+        if was_waiting_user_input:
+            session = get_session_for_record(record.id)
+            if session:
+                stop_remote_browser_session(session.id)
+            disassociate_record(record.id)
     _add_log(db, task.id, None, "warn", "Task cancelled")
     db.flush()
     return get_task(db, task.id) or task
@@ -972,6 +993,7 @@ def to_task_read(task: PublishTask) -> TaskRead:
 
 # 将 ORM PublishRecord 转为响应体
 def to_record_read(record: PublishRecord) -> PublishRecordRead:
+    session = get_session_for_record(record.id)
     return PublishRecordRead(
         id=record.id,
         task_id=record.task_id,
@@ -985,6 +1007,8 @@ def to_record_read(record: PublishRecord) -> PublishRecordRead:
         started_at=record.started_at,
         finished_at=record.finished_at,
         lease_until=record.lease_until,
+        remote_browser_session_id=session.id if session else None,
+        novnc_url=session.novnc_url if session else None,
     )
 
 
