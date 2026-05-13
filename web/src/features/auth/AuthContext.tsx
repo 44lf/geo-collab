@@ -32,8 +32,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     function handleUnauthorized() {
       setUser(null);
     }
+    function handlePasswordChangeRequired() {
+      setUser((prev) => (prev ? { ...prev, must_change_password: true } : null));
+    }
     window.addEventListener("auth:unauthorized", handleUnauthorized);
-    return () => window.removeEventListener("auth:unauthorized", handleUnauthorized);
+    window.addEventListener("auth:password-change-required", handlePasswordChangeRequired);
+    return () => {
+      window.removeEventListener("auth:unauthorized", handleUnauthorized);
+      window.removeEventListener("auth:password-change-required", handlePasswordChangeRequired);
+    };
   }, []);
 
   useEffect(() => {

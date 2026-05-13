@@ -36,6 +36,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
+    if (response.status === 403 && payload.detail === "Password change required") {
+      window.dispatchEvent(new CustomEvent("auth:password-change-required"));
+    }
     throw new Error(payload.detail || `${response.status} ${response.statusText}`);
   }
   if (response.status === 204) {
