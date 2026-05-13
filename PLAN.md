@@ -1,6 +1,6 @@
 # Geo 协作发布平台
 
-> 最后更新：2026-05-13 | 当前进度：Phase 4 + 债务清理完成，120 个测试全绿
+> 最后更新：2026-05-13 | 当前进度：Phase 5 完成，142 个测试全绿
 
 ## 1. 目标
 
@@ -79,7 +79,7 @@ docker-compose.yml / Dockerfile / launcher.py
 | Phase 2 | 5/11–5/15 | 云端浏览器：Xvfb + noVNC + 远程人工介入 + 部署文档 | ✅ |
 | Phase 3 | 5/16–5/22 | 账号鉴权 + MySQL + 数据隔离 + Docker 部署 | ✅ 5/12 提前完成 |
 | **Phase 4** | **5/23–5/30** | 任务调度、人工介入完善、恢复机制 | ⏳ 部分提前完成 |
-| Phase 5 | 5/31–6/7 | 管理后台、飞书通知、稳定性收尾 | ⬜ |
+| **Phase 5** | **5/31–6/7** | 飞书通知、分词搜索优化、并发稳定性 | ✅ 5/13 提前完成 |
 
 ---
 
@@ -190,18 +190,24 @@ docker-compose.yml / Dockerfile / launcher.py
 
 ---
 
-## 8. 已知未完成能力
+## 8. Phase 5 完成清单
 
-- 飞书通知（Phase 5）
-- 压测和长时间稳定性验证（Phase 5）
-- 分词搜索优化（Phase 5）
+| 功能 | 实现 | 测试 |
+|------|------|------|
+| **飞书通知** | `services/feishu.py`：`notify_task_finished` fire-and-forget daemon 线程；`config.py` 新增 `GEO_FEISHU_WEBHOOK_URL`；`_aggregate_task_status` 终态时触发 | `test_feishu.py` 11 个 |
+| **分词搜索优化** | migration `0009_fts_add_plain_text`：SQLite FTS5 / MySQL FULLTEXT 加入 `plain_text`；`articles.py` MySQL match 和 LIKE fallback 均加 `plain_text` | `test_search.py` 6 个 |
+| **并发稳定性** | `test_concurrent_publish.py`：验证 semaphore 初始值、异常后无泄漏、成功后归还、跨任务最大并发 ≤ 5 | 5 个 |
+
+## 9. 已知未完成能力
+
+- 管理后台（未排期）
 - 多平台扩展（toutiao 之外，未排期）
 
 ---
 
-## 9. 建议下一步顺序
+## 10. 建议下一步顺序
 
-1. **下一步** Phase 5 飞书通知、压测、分词搜索优化
+1. **下一步** 管理后台（用户管理 UI）或多平台扩展
 
 ---
 

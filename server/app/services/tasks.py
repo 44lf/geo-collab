@@ -68,6 +68,7 @@ from server.app.services.browser_sessions import (
     stop_remote_browser_session,
 )
 from server.app.services.errors import AccountError, ConflictError, ValidationError
+from server.app.services.feishu import notify_task_finished
 from server.app.services.toutiao_publisher import ToutiaoPublisher, ToutiaoPublishError, ToutiaoUserInputRequired
 from server.app.schemas.task import (
     TaskAccountInput,
@@ -813,6 +814,18 @@ def _aggregate_task_status(db: Session, task: PublishTask, records: list[Publish
         task.finished_at = now
     if task.status in TERMINAL_TASK_STATUSES:
         _add_log(db, task.id, None, "info" if task.status == "succeeded" else "warn", f"Task finished with status: {task.status}")
+        # 飞书通知（fire-and-forget，仅终态触发）
+        total = len(records)
+        succeeded_count = sum(1 for r in records if r.status == "succeeded")
+        failed_count = sum(1 for r in records if r.status == "failed")
+        notify_task_finished(
+            task_name=task.name,
+            task_id=task.id,
+            status=task.status,
+            total=total,
+            succeeded=succeeded_count,
+            failed=failed_count,
+        )
 
 
 # 添加任务日志

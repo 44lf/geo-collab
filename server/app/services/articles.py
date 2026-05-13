@@ -142,7 +142,7 @@ def _search_articles(db: Session, query: str, user_id: int | None = None) -> lis
     if dialect_name == "mysql":
         stmt = (
             select(Article)
-            .where(func.match(Article.title, Article.author).against(query, "boolean") > 0)
+            .where(func.match(Article.title, Article.author, Article.plain_text).against(query, "boolean") > 0)
         )
     else:
         stmt = select(Article).where(
@@ -185,7 +185,9 @@ def list_articles(db: Session, query: str | None = None, skip: int = 0, limit: i
 
     if query:
         like = f"%{query}%"
-        stmt = stmt.where((Article.title.like(like)) | (Article.author.like(like)))
+        stmt = stmt.where(
+            (Article.title.like(like)) | (Article.author.like(like)) | (Article.plain_text.like(like))
+        )
 
     stmt = stmt.offset(skip).limit(limit)
     return list(db.execute(stmt).scalars().all())

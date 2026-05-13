@@ -53,15 +53,15 @@ def build_test_app(monkeypatch) -> TestApp:
         conn.execute(
             sa.text(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5("
-                "title, author, content='articles', content_rowid='id', tokenize='trigram')"
+                "title, author, plain_text, content='articles', content_rowid='id', tokenize='trigram')"
             )
         )
-        conn.execute(sa.text("INSERT OR IGNORE INTO articles_fts(rowid, title, author) SELECT id, title, author FROM articles"))
+        conn.execute(sa.text("INSERT OR IGNORE INTO articles_fts(rowid, title, author, plain_text) SELECT id, title, author, plain_text FROM articles"))
         conn.execute(
             sa.text(
                 "CREATE TRIGGER IF NOT EXISTS after_articles_insert "
                 "AFTER INSERT ON articles BEGIN "
-                "INSERT INTO articles_fts(rowid, title, author) VALUES (new.id, new.title, new.author); "
+                "INSERT INTO articles_fts(rowid, title, author, plain_text) VALUES (new.id, new.title, new.author, new.plain_text); "
                 "END"
             )
         )
@@ -69,8 +69,8 @@ def build_test_app(monkeypatch) -> TestApp:
             sa.text(
                 "CREATE TRIGGER IF NOT EXISTS after_articles_delete "
                 "AFTER DELETE ON articles BEGIN "
-                "INSERT INTO articles_fts(articles_fts, rowid, title, author) "
-                "VALUES('delete', old.id, old.title, old.author); "
+                "INSERT INTO articles_fts(articles_fts, rowid, title, author, plain_text) "
+                "VALUES('delete', old.id, old.title, old.author, old.plain_text); "
                 "END"
             )
         )
@@ -78,9 +78,9 @@ def build_test_app(monkeypatch) -> TestApp:
             sa.text(
                 "CREATE TRIGGER IF NOT EXISTS after_articles_update "
                 "AFTER UPDATE ON articles BEGIN "
-                "INSERT INTO articles_fts(articles_fts, rowid, title, author) "
-                "VALUES('delete', old.id, old.title, old.author); "
-                "INSERT INTO articles_fts(rowid, title, author) VALUES (new.id, new.title, new.author); "
+                "INSERT INTO articles_fts(articles_fts, rowid, title, author, plain_text) "
+                "VALUES('delete', old.id, old.title, old.author, old.plain_text); "
+                "INSERT INTO articles_fts(rowid, title, author, plain_text) VALUES (new.id, new.title, new.author, new.plain_text); "
                 "END"
             )
         )
