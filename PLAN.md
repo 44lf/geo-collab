@@ -1,6 +1,6 @@
 # Geo 协作发布平台
 
-> 最后更新：2026-05-13 | 当前进度：Phase 3 完成，R1-R6 + P1-P7 安全修复已完成并通过 review，102 个测试全绿
+> 最后更新：2026-05-13 | 当前进度：Phase 3 完成，R1-R9 + P1-P7 安全修复全部完成并通过 review，106 个测试全绿
 
 ## 1. 目标
 
@@ -95,7 +95,7 @@ docker-compose.yml / Dockerfile / launcher.py
 | **双引擎** | `session.py` SQLite WAL + MySQL pool，`_search_articles` 方言搜索 |
 | **数据隔离** | `user_id` 加到 Account/Article/ArticleGroup/PublishTask/Asset，路由/service 层过滤 |
 | **Docker** | `Dockerfile` + `docker-compose.yml` + `.env.example` |
-| **测试** | 102/102 全绿（SQLite），含 19 个安全边界测试；15 个 `@pytest.mark.mysql` 标记 |
+| **测试** | 106/106 全绿（SQLite），含 23 个安全边界测试；15 个 `@pytest.mark.mysql` 标记 |
 | **清理** | 删 `geo.spec`、精简 `launcher.py`、删旧测试、更新文档 |
 
 ---
@@ -139,12 +139,12 @@ docker-compose.yml / Dockerfile / launcher.py
 
 ## 7. 待完成任务
 
-### 7.1 安全检查（2 项）
+### 7.1 ✅ 安全检查（已完成）
 
-| # | 文件:行 | 问题 |
-|---|---------|------|
-| R8 | `routes/auth.py:40-47` | Cookie 缺 `secure=True`（生产 HTTPS 必须加） |
-| R9 | `services/tasks.py` | account/article 归属校验（任务执行时不校验 user_id） |
+| # | 修复 | commit |
+|---|------|--------|
+| R8 | `config.py` 加 `secure_cookie` 设置，`auth.py` login/logout 均加 `secure=` | 561db6f |
+| R9 | 任务创建/预览时校验 account/article 归属，admin 绕过，operator 强制 | 561db6f |
 
 **已知设计债务（暂不修）：**
 - `GET /api/assets/{id}` 无认证（公开 CDN 式行为，asset_id 为 UUID，intentional）
@@ -201,10 +201,9 @@ docker-compose.yml / Dockerfile / launcher.py
 
 ## 9. 建议下一步顺序
 
-1. **优先** R8 Cookie secure=True（生产部署前必须）
-2. **优先** R9 任务执行归属校验
-3. **后续** R10-R12 Docker 部署问题
-4. **后续** Phase 4 任务调度与人工介入
+1. **后续** R10-R12 Docker 部署问题（R10 兼容性、R11 镜像大小、R12 密码 URL-encode）
+2. **后续** Phase 4 任务调度与人工介入（4.1 前端 waiting_user_input、4.2 截图存储等）
+3. **后续** Phase 5 飞书通知、压测、分词搜索优化
 
 ---
 
