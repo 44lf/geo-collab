@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -119,6 +120,7 @@ class ToutiaoPublisher:
 
         from server.app.services.browser import managed_browser_context
         from server.app.services.browser_sessions import (
+            attach_browser_handles,
             keep_session_alive,
             managed_remote_browser_session,
             remote_browser_enabled,
@@ -146,13 +148,16 @@ class ToutiaoPublisher:
                 # 因为 waiting_user_input 时不能让浏览器被自动 close
                 from playwright.sync_api import sync_playwright
                 pw = sync_playwright().start()
+                options = launch_options(self.channel, self.executable_path)
+                options["env"] = {**os.environ, "DISPLAY": remote_session.display}
                 context = pw.chromium.launch_persistent_context(
                     user_data_dir=str(profile_dir_for_key(account_key)),
-                    **launch_options(self.channel, self.executable_path),
+                    **options,
                 )
                 _register_context_for_cleanup(context)
                 context.set_default_navigation_timeout(30000)
                 page = context.new_page()
+                attach_browser_handles(remote_session.id, pw, context, page)
                 try:
                     return self._do_publish(page, context, article, account, state_path, stop_before_publish)
                 except ToutiaoUserInputRequired as exc:
@@ -170,6 +175,7 @@ class ToutiaoPublisher:
                             _launched_contexts.remove(context)
                         try: pw.stop()
                         except Exception: pass
+                        attach_browser_handles(remote_session.id, None, None, None)
             else:
                 # ---- 本地开发路径 ----
                 # 使用 managed_browser_context 自动管理浏览器，

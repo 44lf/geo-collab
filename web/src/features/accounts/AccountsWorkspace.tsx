@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import type { Account, AccountLoginPayload } from "../../types";
-import { CheckCircle2, Download, Plus, RefreshCw, Trash2, Upload, UserPlus, X } from "lucide-react";
+import type { Account, AccountBrowserSession, AccountBrowserSessionFinish, AccountLoginPayload } from "../../types";
+import { CheckCircle2, Download, ExternalLink, Plus, RefreshCw, Trash2, Upload, UserPlus, X } from "lucide-react";
 import { useToast } from "../../components/Toast";
+
+type ActiveLoginSession = {
+  sessionId: string;
+  novncUrl: string;
+};
 
 export function AccountsWorkspace() {
   const { toast } = useToast();
@@ -13,6 +18,7 @@ export function AccountsWorkspace() {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState<Account | null>(null);
+  const [activeLoginSessions, setActiveLoginSessions] = useState<Record<number, ActiveLoginSession>>({});
 
   async function refreshAccounts() {
     const data = await api<Account[]>("/api/accounts");
@@ -24,8 +30,12 @@ export function AccountsWorkspace() {
   }, []);
 
   async function login(useBrowser: boolean) {
+    if (useBrowser) {
+      await startNewRemoteLogin();
+      return;
+    }
     setLoading(true);
-    toast(useBrowser ? "已打开浏览器，请完成登录" : "正在复用已保存状态", "info");
+    toast("正在复用已保存状态", "info");
     try {
       const payload: AccountLoginPayload = {
         display_name: displayName,
@@ -34,7 +44,7 @@ export function AccountsWorkspace() {
       };
       await api<Account>("/api/accounts/toutiao/login", {
         method: "POST",
-        body: JSON.stringify({ ...payload, channel: "chrome", wait_seconds: 180 }),
+        body: JSON.stringify({ ...payload, channel: "chromium", wait_seconds: 180 }),
       });
       await refreshAccounts();
       setDisplayName("头条号账号");
@@ -48,36 +58,120 @@ export function AccountsWorkspace() {
   }
 
   async function check(account: Account) {
+    await startExistingRemoteLogin(account, "校验");
+  }
+
+  async function relogin(account: Account) {
+    await startExistingRemoteLogin(account, "重新登录");
+  }
+
+  async function startNewRemoteLogin() {
     setLoading(true);
     try {
-      await api<Account>(`/api/accounts/${account.id}/check`, {
+      const payload: AccountLoginPayload = {
+        display_name: displayName,
+        account_key: accountKey,
+        use_browser: true,
+      };
+      const result = await api<AccountBrowserSession>("/api/accounts/toutiao/login-session", {
         method: "POST",
-        body: JSON.stringify({ channel: "chrome", wait_seconds: 30, use_browser: true }),
+        body: JSON.stringify({ ...payload, channel: "chromium", wait_seconds: 180 }),
       });
+      rememberLoginSession(result);
+      openRemoteBrowser(result.novnc_url);
       await refreshAccounts();
-      toast("校验完成", "success");
+      toast("远程浏览器已打开，登录完成后点击“完成登录”", "info");
     } catch (error) {
-      toast(error instanceof Error ? error.message : "校验失败", "error");
+      toast(error instanceof Error ? error.message : "打开远程浏览器失败", "error");
     } finally {
       setLoading(false);
     }
   }
 
-  async function relogin(account: Account) {
+  async function startExistingRemoteLogin(account: Account, actionLabel: string) {
     setLoading(true);
-    toast("已打开浏览器，请完成重新登录", "info");
     try {
-      await api<Account>(`/api/accounts/${account.id}/relogin`, {
+      const result = await api<AccountBrowserSession>(`/api/accounts/${account.id}/login-session`, {
         method: "POST",
-        body: JSON.stringify({ channel: "chrome", wait_seconds: 180, use_browser: true }),
+        body: JSON.stringify({ channel: "chromium", wait_seconds: 180, use_browser: true }),
       });
+      rememberLoginSession(result);
+      openRemoteBrowser(result.novnc_url);
       await refreshAccounts();
-      toast("重新登录完成", "success");
+      toast(`远程浏览器已打开，请完成${actionLabel}后点击“完成登录”`, "info");
     } catch (error) {
-      toast(error instanceof Error ? error.message : "重新登录失败", "error");
+      toast(error instanceof Error ? error.message : `${actionLabel}失败`, "error");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function completeLoginSession(account: Account) {
+    const active = activeLoginSessions[account.id];
+    if (!active) return;
+    setLoading(true);
+    try {
+      const result = await api<AccountBrowserSessionFinish>(`/api/accounts/${account.id}/login-session/${active.sessionId}/finish`, {
+        method: "POST",
+      });
+      setActiveLoginSessions((prev) => {
+        const next = { ...prev };
+        delete next[account.id];
+        return next;
+      });
+      await refreshAccounts();
+      toast(result.logged_in ? "登录状态已保存" : "未检测到有效登录状态", result.logged_in ? "success" : "error");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "完成登录失败", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function closeLoginSession(account: Account) {
+    const active = activeLoginSessions[account.id];
+    if (!active) return;
+    setLoading(true);
+    try {
+      await api<void>(`/api/accounts/${account.id}/login-session/${active.sessionId}`, { method: "DELETE" });
+      setActiveLoginSessions((prev) => {
+        const next = { ...prev };
+        delete next[account.id];
+        return next;
+      });
+      toast("远程浏览器已关闭", "success");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "关闭远程浏览器失败", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function rememberLoginSession(result: AccountBrowserSession) {
+    setActiveLoginSessions((prev) => ({
+      ...prev,
+      [result.account.id]: {
+        sessionId: result.session_id,
+        novncUrl: result.novnc_url,
+      },
+    }));
+  }
+
+  function openRemoteBrowser(url: string) {
+    const target = normalizeRemoteBrowserUrl(url);
+    window.open(target, "_blank", "noopener,noreferrer");
+  }
+
+  function normalizeRemoteBrowserUrl(rawUrl: string) {
+    const url = new URL(rawUrl, window.location.href);
+    const localHosts = new Set(["0.0.0.0", "127.0.0.1", "localhost"]);
+    if (localHosts.has(url.hostname) && !localHosts.has(window.location.hostname)) {
+      url.hostname = window.location.hostname;
+      if (url.searchParams.has("host")) {
+        url.searchParams.set("host", window.location.hostname);
+      }
+    }
+    return url.toString();
   }
 
   async function remove(account: Account) {
@@ -204,7 +298,7 @@ export function AccountsWorkspace() {
             <input value={accountKey} onChange={(event) => setAccountKey(event.target.value)} />
           </label>
           <div className="accountActions">
-            <button className="primaryButton" disabled={loading} type="button" onClick={() => void login(true)}>
+            <button className="primaryButton" disabled={loading} type="button" onClick={() => void startNewRemoteLogin()}>
               <UserPlus size={16} />
               添加授权
             </button>
@@ -245,11 +339,11 @@ export function AccountsWorkspace() {
               <span className={`badge ${account.status}`}>{account.status}</span>
               <small>{account.state_path}</small>
               <div className="accountCardActions">
-                <button type="button" disabled={loading} onClick={() => void check(account)}>
+                <button type="button" disabled={loading} onClick={() => void startExistingRemoteLogin(account, "校验")}>
                   <CheckCircle2 size={15} />
                   校验
                 </button>
-                <button type="button" disabled={loading} onClick={() => void relogin(account)}>
+                <button type="button" disabled={loading} onClick={() => void startExistingRemoteLogin(account, "重新登录")}>
                   <RefreshCw size={15} />
                   重登
                 </button>
@@ -258,6 +352,22 @@ export function AccountsWorkspace() {
                   删除
                 </button>
               </div>
+              {activeLoginSessions[account.id] ? (
+                <div className="accountCardActions">
+                  <button type="button" disabled={loading} onClick={() => openRemoteBrowser(activeLoginSessions[account.id]!.novncUrl)}>
+                    <ExternalLink size={15} />
+                    打开远程浏览器
+                  </button>
+                  <button type="button" disabled={loading} onClick={() => void completeLoginSession(account)}>
+                    <CheckCircle2 size={15} />
+                    完成登录
+                  </button>
+                  <button type="button" disabled={loading} onClick={() => void closeLoginSession(account)}>
+                    <X size={15} />
+                    关闭
+                  </button>
+                </div>
+              ) : null}
             </article>
           ))}
           {accounts.length === 0 ? <p className="emptyText">暂无授权账号</p> : null}

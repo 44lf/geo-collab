@@ -36,6 +36,7 @@ def test_remote_browser_session_starts_processes_and_cleans_up(monkeypatch, tmp_
 
     monkeypatch.setenv("GEO_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("GEO_PUBLISH_REMOTE_BROWSER_ENABLED", "true")
+    monkeypatch.setenv("GEO_PUBLISH_REMOTE_BROWSER_HOST", "127.0.0.1")
     monkeypatch.setenv("GEO_PUBLISH_NOVNC_WEB_DIR", str(tmp_path))
     get_settings.cache_clear()
     monkeypatch.setattr(browser_sessions, "_is_windows_runtime", lambda: False)
@@ -66,7 +67,7 @@ def test_remote_browser_session_starts_processes_and_cleans_up(monkeypatch, tmp_
 
 
 def test_remote_browser_session_disabled_does_not_start_process(monkeypatch):
-    monkeypatch.delenv("GEO_PUBLISH_REMOTE_BROWSER_ENABLED", raising=False)
+    monkeypatch.setenv("GEO_PUBLISH_REMOTE_BROWSER_ENABLED", "false")
     get_settings.cache_clear()
 
     def fail_popen(*_args, **_kwargs):

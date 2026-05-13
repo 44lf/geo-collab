@@ -60,6 +60,20 @@ export type Account = {
   note: string | null;
 };
 
+export type AccountBrowserSession = {
+  account: Account;
+  account_key: string;
+  session_id: string;
+  novnc_url: string;
+};
+
+export type AccountBrowserSessionFinish = {
+  account: Account;
+  logged_in: boolean;
+  url: string;
+  title: string;
+};
+
 export type Draft = {
   id: number | null;
   title: string;

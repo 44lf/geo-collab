@@ -3,6 +3,7 @@ import zipfile
 from io import BytesIO
 
 from server.app.models import Account
+from server.app.services.browser_sessions import RemoteBrowserSession
 from server.tests.utils import build_test_app
 
 
@@ -92,6 +93,117 @@ def test_toutiao_login_requires_storage_when_browser_disabled(monkeypatch):
 
         assert response.status_code == 400
         assert "Storage state not found" in response.json()["detail"]
+    finally:
+        test_app.cleanup()
+
+
+def test_toutiao_remote_login_session_creates_unknown_account(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    class FakeSession:
+        id = "login-session-1"
+        novnc_url = "http://127.0.0.1:6080/vnc.html"
+
+    monkeypatch.setattr("server.app.services.accounts._start_remote_account_browser", lambda *_args: FakeSession())
+
+    try:
+        response = client.post(
+            "/api/accounts/toutiao/login-session",
+            json={"display_name": "remote-demo", "account_key": "remote demo"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["account_key"] == "remote-demo"
+        assert payload["session_id"] == "login-session-1"
+        assert payload["novnc_url"] == "http://127.0.0.1:6080/vnc.html"
+        assert payload["account"]["display_name"] == "remote-demo"
+        assert payload["account"]["status"] == "unknown"
+        assert payload["account"]["state_path"] == "browser_states/toutiao/remote-demo/storage_state.json"
+    finally:
+        test_app.cleanup()
+
+
+def test_finish_remote_login_session_saves_state_and_stops_session(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    class FakeLocator:
+        def inner_text(self, timeout=None):
+            return "publisher dashboard"
+
+    class FakePage:
+        url = "https://mp.toutiao.com/profile_v4"
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def title(self):
+            return "Toutiao"
+
+        def locator(self, _selector):
+            return FakeLocator()
+
+    class FakeContext:
+        def __init__(self, page):
+            self.pages = [page]
+            self.closed = False
+
+        def storage_state(self, path):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write('{"cookies":[{"name":"session"}],"origins":[]}')
+
+        def close(self):
+            self.closed = True
+
+    class FakePlaywright:
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    try:
+        write_storage_state(test_app.data_dir, "demo")
+        account = client.post(
+            "/api/accounts/toutiao/login",
+            json={"display_name": "finish-demo", "account_key": "demo", "use_browser": False},
+        ).json()
+
+        from server.app.services import browser_sessions
+
+        page = FakePage()
+        context = FakeContext(page)
+        playwright = FakePlaywright()
+        session = RemoteBrowserSession(
+            id="finish-session",
+            account_key="demo",
+            display_number=99,
+            display=":99",
+            vnc_port=5900,
+            novnc_port=6080,
+            novnc_url="http://127.0.0.1:6080/vnc.html",
+            log_dir=test_app.data_dir,
+            playwright=playwright,
+            browser_context=context,
+            page=page,
+        )
+        with browser_sessions._sessions_lock:
+            browser_sessions._active_sessions[session.id] = session
+            browser_sessions._session_keep_alive.add(session.id)
+
+        response = client.post(f"/api/accounts/{account['id']}/login-session/finish-session/finish")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["logged_in"] is True
+        assert payload["account"]["status"] == "valid"
+        assert context.closed is True
+        assert playwright.stopped is True
+        assert browser_sessions.get_session("finish-session") is None
+        state_file = test_app.data_dir / "browser_states" / "toutiao" / "demo" / "storage_state.json"
+        assert json.loads(state_file.read_text(encoding="utf-8"))["cookies"][0]["name"] == "session"
     finally:
         test_app.cleanup()
 

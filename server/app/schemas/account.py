@@ -19,6 +19,20 @@ class AccountRead(BaseModel):
     updated_at: datetime
 
 
+class AccountBrowserSessionRead(BaseModel):
+    account: AccountRead
+    account_key: str
+    session_id: str
+    novnc_url: str
+
+
+class AccountBrowserSessionFinishRead(BaseModel):
+    account: AccountRead
+    logged_in: bool
+    url: str
+    title: str
+
+
 # 头条号登录/添加请求
 class ToutiaoLoginRequest(BaseModel):
     display_name: str = Field(default="头条号账号", min_length=1, max_length=200)

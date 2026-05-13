@@ -32,7 +32,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import Any, BinaryIO, Iterator
 
 from server.app.core.config import get_settings
 from server.app.core.paths import get_data_dir
@@ -58,6 +58,9 @@ class RemoteBrowserSession:
     novnc_url: str
     log_dir: Path
     processes: list[ManagedProcess] = field(default_factory=list, repr=False)
+    playwright: Any | None = field(default=None, repr=False)
+    browser_context: Any | None = field(default=None, repr=False)
+    page: Any | None = field(default=None, repr=False)
     started_at: float = field(default_factory=time.monotonic)  # 用于空闲超时判断
 
 
@@ -95,6 +98,17 @@ def get_session(session_id: str) -> RemoteBrowserSession | None:
     """通过 session_id 查找活跃的远程浏览器 session。"""
     with _sessions_lock:
         return _active_sessions.get(session_id)
+
+
+def attach_browser_handles(session_id: str, playwright: Any | None, context: Any | None, page: Any | None = None) -> None:
+    """Attach Playwright handles so session shutdown can close Chromium too."""
+    with _sessions_lock:
+        session = _active_sessions.get(session_id)
+        if session is None:
+            raise RuntimeError(f"Remote browser session not found: {session_id}")
+        session.playwright = playwright
+        session.browser_context = context
+        session.page = page
 
 
 def disassociate_record(record_id: int) -> None:
@@ -263,7 +277,12 @@ def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
 def stop_remote_browser_session(session_id: str) -> None:
     with _sessions_lock:
         session = _active_sessions.pop(session_id, None)
+        _session_keep_alive.discard(session_id)
+        stale_records = [rid for rid, sid in _record_to_session.items() if sid == session_id]
+        for rid in stale_records:
+            _record_to_session.pop(rid, None)
     if session is not None:
+        _close_browser_handles(session)
         _stop_session_processes(session)
 
 
@@ -354,6 +373,22 @@ def _stop_session_processes(session: RemoteBrowserSession) -> None:
                 managed.log_handle.close()
             except Exception:
                 pass
+
+
+def _close_browser_handles(session: RemoteBrowserSession) -> None:
+    if session.browser_context is not None:
+        try:
+            session.browser_context.close()
+        except Exception:
+            pass
+    if session.playwright is not None:
+        try:
+            session.playwright.stop()
+        except Exception:
+            pass
+    session.browser_context = None
+    session.playwright = None
+    session.page = None
 
 
 def _wait_for_x_display(display_number: int, timeout_seconds: float) -> None:

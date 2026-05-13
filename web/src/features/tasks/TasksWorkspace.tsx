@@ -293,6 +293,23 @@ export function TasksWorkspace() {
     }
   }
 
+  function openRemoteBrowser(url: string) {
+    const target = normalizeRemoteBrowserUrl(url);
+    window.open(target, "_blank", "noopener,noreferrer");
+  }
+
+  function normalizeRemoteBrowserUrl(rawUrl: string) {
+    const url = new URL(rawUrl, window.location.href);
+    const localHosts = new Set(["0.0.0.0", "127.0.0.1", "localhost"]);
+    if (localHosts.has(url.hostname) && !localHosts.has(window.location.hostname)) {
+      url.hostname = window.location.hostname;
+      if (url.searchParams.has("host")) {
+        url.searchParams.set("host", window.location.hostname);
+      }
+    }
+    return url.toString();
+  }
+
   function toggleAccount(accountId: number) {
     if (formType === "single") {
       setFormAccountIds([accountId]);
@@ -522,7 +539,7 @@ export function TasksWorkspace() {
                           <button
                             className="primaryButton"
                             type="button"
-                            onClick={() => window.open(record.novnc_url!, "_blank")}
+                            onClick={() => openRemoteBrowser(record.novnc_url!)}
                           >
                             打开远程浏览器
                           </button>
@@ -542,6 +559,15 @@ export function TasksWorkspace() {
                     ) : null}
                     {record.status === "waiting_manual_publish" ? (
                       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                        {record.novnc_url ? (
+                          <button
+                            className="secondaryButton"
+                            type="button"
+                            onClick={() => openRemoteBrowser(record.novnc_url!)}
+                          >
+                            打开远程浏览器
+                          </button>
+                        ) : null}
                         <button
                           className="primaryButton"
                           type="button"

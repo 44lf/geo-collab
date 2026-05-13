@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import re
 import sys
 import tempfile
@@ -34,6 +35,14 @@ class BrowserCheckResult:
     logged_in: bool
     url: str
     title: str
+
+
+@dataclass(frozen=True)
+class AccountBrowserSessionResult:
+    account: Account
+    account_key: str
+    session_id: str
+    novnc_url: str
 
 
 # 规范化账号本地标识：只保留字母数字和下划线
@@ -165,6 +174,179 @@ def run_toutiao_browser_check(
 
         context.storage_state(path=str(state_path_for_key(account_key)))
         return BrowserCheckResult(logged_in=logged_in, url=url, title=title)
+
+
+def start_toutiao_login_session(db: Session, user_id: int, payload: ToutiaoLoginRequest) -> AccountBrowserSessionResult:
+    platform = get_or_create_toutiao_platform(db)
+    account_key = normalize_account_key(payload.account_key)
+    state_path = state_path_for_key(account_key)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    relative_state_path = relative_to_data_dir(state_path)
+    account = db.execute(
+        select(Account).where(Account.platform_id == platform.id, Account.state_path == relative_state_path)
+    ).scalar_one_or_none()
+    now = utcnow()
+    if account is None:
+        account = Account(
+            user_id=user_id,
+            platform=platform,
+            display_name=payload.display_name,
+            platform_user_id=None,
+            status="unknown",
+            state_path=relative_state_path,
+            note=payload.note,
+            last_checked_at=now,
+        )
+        db.add(account)
+    else:
+        account.display_name = payload.display_name
+        account.note = payload.note
+        account.status = "unknown"
+        account.last_checked_at = now
+        account.updated_at = now
+    db.flush()
+
+    session = _start_remote_account_browser(account_key, payload.channel, payload.executable_path)
+    return AccountBrowserSessionResult(
+        account=get_account(db, account.id) or account,
+        account_key=account_key,
+        session_id=session.id,
+        novnc_url=session.novnc_url,
+    )
+
+
+def start_account_login_session(db: Session, account: Account, payload: AccountCheckRequest) -> AccountBrowserSessionResult:
+    account_key = account_key_from_state_path(account.state_path)
+    account.status = "unknown"
+    account.last_checked_at = utcnow()
+    account.updated_at = account.last_checked_at
+    db.flush()
+
+    session = _start_remote_account_browser(account_key, payload.channel, payload.executable_path)
+    return AccountBrowserSessionResult(
+        account=get_account(db, account.id) or account,
+        account_key=account_key,
+        session_id=session.id,
+        novnc_url=session.novnc_url,
+    )
+
+
+def finish_account_login_session(db: Session, account: Account, session_id: str) -> tuple[Account, BrowserCheckResult]:
+    from server.app.services.browser_sessions import get_session, stop_remote_browser_session
+
+    account_key = account_key_from_state_path(account.state_path)
+    session = get_session(session_id)
+    if session is None:
+        raise ValueError(f"Remote browser session not found: {session_id}")
+    if session.account_key != account_key:
+        raise ValueError("Remote browser session does not belong to this account")
+    if session.browser_context is None:
+        raise ValueError("Remote browser session has no browser context")
+
+    try:
+        result = _read_login_state_from_remote_session(session)
+        session.browser_context.storage_state(path=str(state_path_for_key(account_key)))
+    finally:
+        stop_remote_browser_session(session_id)
+
+    now = utcnow()
+    account.status = "valid" if result.logged_in else "expired"
+    account.last_checked_at = now
+    if result.logged_in:
+        account.last_login_at = now
+    account.updated_at = now
+    db.flush()
+    return get_account(db, account.id) or account, result
+
+
+def stop_account_login_session(account: Account, session_id: str) -> None:
+    from server.app.services.browser_sessions import get_session, stop_remote_browser_session
+
+    account_key = account_key_from_state_path(account.state_path)
+    session = get_session(session_id)
+    if session is None:
+        return
+    if session.account_key != account_key:
+        raise ValueError("Remote browser session does not belong to this account")
+    stop_remote_browser_session(session_id)
+
+
+def _start_remote_account_browser(account_key: str, channel: str, executable_path: str | None):
+    from playwright.sync_api import sync_playwright
+
+    from server.app.services.browser_sessions import (
+        attach_browser_handles,
+        keep_session_alive,
+        remote_browser_enabled,
+        start_remote_browser_session,
+        stop_remote_browser_session,
+    )
+
+    if not remote_browser_enabled():
+        raise ValueError("Remote browser sessions are disabled")
+
+    ensure_data_dirs()
+    state_dir_for_key(account_key).mkdir(parents=True, exist_ok=True)
+    session = start_remote_browser_session(account_key)
+    pw = None
+    context = None
+    try:
+        pw = sync_playwright().start()
+        options = launch_options(channel, executable_path)
+        options["env"] = {**os.environ, "DISPLAY": session.display}
+        context = pw.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir_for_key(account_key)),
+            **options,
+        )
+        context.set_default_navigation_timeout(30000)
+        page = context.new_page()
+        attach_browser_handles(session.id, pw, context, page)
+        page.goto(TOUTIAO_HOME, wait_until="domcontentloaded", timeout=60000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            _logger.warning("Remote login page did not reach networkidle for account %s", account_key, exc_info=True)
+        keep_session_alive(session.id)
+        return session
+    except Exception:
+        try:
+            if context is not None:
+                context.close()
+        finally:
+            if pw is not None:
+                pw.stop()
+        stop_remote_browser_session(session.id)
+        raise
+
+
+def _read_login_state_from_remote_session(session) -> BrowserCheckResult:
+    context = session.browser_context
+    page = session.page
+    if page is None and context is not None:
+        pages = list(getattr(context, "pages", []) or [])
+        page = pages[-1] if pages else context.new_page()
+    if page is None:
+        raise ValueError("Remote browser session has no page")
+
+    try:
+        page.wait_for_load_state("networkidle", timeout=5000)
+    except Exception:
+        pass
+    url = page.url
+    title = ""
+    body = ""
+    try:
+        title = page.title()
+        body = page.locator("body").inner_text(timeout=5000)
+    except Exception:
+        _logger.warning("Remote login state read failed", exc_info=True)
+
+    return BrowserCheckResult(
+        logged_in=detect_login_state_text(url, title, body),
+        url=url,
+        title=title,
+    )
 
 
 # 获取所有账号列表

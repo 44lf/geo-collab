@@ -5,17 +5,29 @@ from sqlalchemy.orm import Session
 from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
 from server.app.models import Account as AccountModel, User
-from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, AccountRead, AccountRenameRequest, ToutiaoLoginRequest
+from server.app.schemas.account import (
+    AccountBrowserSessionFinishRead,
+    AccountBrowserSessionRead,
+    AccountCheckRequest,
+    AccountExportRequest,
+    AccountRead,
+    AccountRenameRequest,
+    ToutiaoLoginRequest,
+)
 from server.app.services.accounts import (
     check_account,
     delete_account,
     export_accounts_auth_package,
+    finish_account_login_session,
     get_account,
     import_accounts_auth_package,
     list_accounts,
     login_toutiao,
     rename_account,
     relogin_account,
+    start_account_login_session,
+    start_toutiao_login_session,
+    stop_account_login_session,
 )
 from server.app.services.serializers import to_account_read
 
@@ -28,6 +40,15 @@ def _verify_account_ownership(account: AccountModel | None, current_user: User) 
     if current_user.role != "admin" and account.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Account not found")
     return account
+
+
+def _to_browser_session_read(result) -> AccountBrowserSessionRead:
+    return AccountBrowserSessionRead(
+        account=to_account_read(result.account),
+        account_key=result.account_key,
+        session_id=result.session_id,
+        novnc_url=result.novnc_url,
+    )
 
 
 # 获取所有账号列表
@@ -50,6 +71,15 @@ def login_toutiao_account(
     current_user: User = Depends(get_current_user),
 ) -> AccountRead:
     return to_account_read(login_toutiao(db, current_user.id, payload))
+
+
+@router.post("/toutiao/login-session", response_model=AccountBrowserSessionRead)
+def start_toutiao_login_session_endpoint(
+    payload: ToutiaoLoginRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AccountBrowserSessionRead:
+    return _to_browser_session_read(start_toutiao_login_session(db, current_user.id, payload))
 
 
 # 导出账号授权包（含 Playwright storage_state 的 ZIP）
@@ -124,6 +154,46 @@ def check_existing_account(
 ) -> AccountRead:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
     return to_account_read(check_account(db, account, payload or AccountCheckRequest()))
+
+
+@router.post("/{account_id}/login-session", response_model=AccountBrowserSessionRead)
+def start_existing_account_login_session_endpoint(
+    account_id: int,
+    payload: AccountCheckRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AccountBrowserSessionRead:
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
+    return _to_browser_session_read(start_account_login_session(db, account, payload or AccountCheckRequest()))
+
+
+@router.post("/{account_id}/login-session/{session_id}/finish", response_model=AccountBrowserSessionFinishRead)
+def finish_existing_account_login_session_endpoint(
+    account_id: int,
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AccountBrowserSessionFinishRead:
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
+    updated, result = finish_account_login_session(db, account, session_id)
+    return AccountBrowserSessionFinishRead(
+        account=to_account_read(updated),
+        logged_in=result.logged_in,
+        url=result.url,
+        title=result.title,
+    )
+
+
+@router.delete("/{account_id}/login-session/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def stop_existing_account_login_session_endpoint(
+    account_id: int,
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
+    stop_account_login_session(account, session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # 重新登录指定账号（重新打开浏览器）
