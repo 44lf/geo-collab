@@ -6,8 +6,6 @@ FROM python:3.12-slim
 # 系统依赖：Chromium 浏览器、Xvfb 虚拟显示、VNC 远程桌面、noVNC Web 客户端、
 # 中文字体、Chromium/Playwright 运行时库
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    chromium-driver \
     xvfb \
     x11vnc \
     websockify \

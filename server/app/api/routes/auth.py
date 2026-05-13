@@ -113,6 +113,8 @@ def change_password(payload: ChangePasswordRequest, request: Request) -> dict:
         user = db.get(User, int(jwt_payload["sub"]))
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Account disabled")
         if not user.check_password(payload.old_password):
             raise HTTPException(status_code=400, detail="Old password is incorrect")
         user.set_password(payload.new_password)
@@ -138,6 +140,9 @@ def create_user(payload: CreateUserRequest, request: Request) -> dict:
 
     db: Session = SessionLocal()
     try:
+        caller = db.get(User, int(jwt_payload["sub"]))
+        if not caller or not caller.is_active or caller.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin required")
         existing = db.query(User).filter(User.username == payload.username).first()
         if existing:
             raise HTTPException(status_code=409, detail="Username already exists")

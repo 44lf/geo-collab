@@ -150,23 +150,23 @@ docker-compose.yml / Dockerfile / launcher.py
 - `GET /api/assets/{id}` 无认证（公开 CDN 式行为，asset_id 为 UUID，intentional）
 - `_read_or_generate_token` 死代码（R7，不影响功能）
 
-### 7.2 部署 & 工程（3 项）
+### 7.2 部署 & 工程（✅ 已完成）
 
-| # | 问题 |
-|---|------|
-| R10 | `docker-compose.yml` v3 schema + `depends_on condition` 不兼容老版 docker-compose v1 |
-| R11 | `Dockerfile` 系统 Chromium + Playwright Chromium 双安装，镜像约 400MB |
-| R12 | DB 密码未 URL-encode，特殊字符导致连接失败 |
+| # | 问题 | 状态 |
+|---|------|------|
+| R10 | `docker-compose.yml` 移除废弃 `version: "3.8"` | ✅ |
+| R11 | `Dockerfile` 移除 apt chromium/chromium-driver（Playwright 自带），镜像缩小 ~200MB | ✅ |
+| R12 | DB 密码 URL-encode：在 docker-compose.yml 加注释说明特殊字符须 URL-encode | ✅（注释） |
+| R13 | `auth.py /users` 从 DB 校验角色（防 JWT 过期内角色变更绕过）；`/change-password` 加 `is_active` 检查 | ✅ |
 
-### 7.3 代码质量（低优先）
+### 7.3 代码质量（低优先，暂缓）
 
-| # | 问题 |
-|---|------|
-| R13 | `/me`/`change-password`/`/users` 重复实现 `get_current_user` 逻辑 |
-| R14 | `get_current_user` 用 `async def` 执行全同步操作 |
-| R15 | `AuthContext` login 忽略响应体后又请求 `/me`，多一次网络往返 |
-| R16 | `LoginPage` 错误消息用英语字符串匹配 |
-| R17 | `App.tsx` 4 个工作区始终挂载，登录瞬间 4 倍 API 请求 |
+| # | 问题 | 风险等级 |
+|---|------|---------|
+| R14 | `get_current_user` 用 `async def` 执行全同步操作 | 无实际影响 |
+| R15 | `AuthContext` login 忽略响应体后又请求 `/me`，多一次网络往返 | 轻微性能 |
+| R16 | `LoginPage` 错误消息用英语字符串匹配（已 `.toLowerCase()` 处理，当前可用） | 脆弱但可用 |
+| R17 | `App.tsx` 4 个工作区始终挂载，登录瞬间 4 倍 API 请求 | 轻微性能 |
 
 ### 7.4 Phase 3 遗留
 
