@@ -1,6 +1,6 @@
 # Geo 协作发布平台
 
-> 最后更新：2026-05-12 | 当前进度：Phase 3 完成，角色权限 + review 修复待办
+> 最后更新：2026-05-13 | 当前进度：Phase 3 完成，R1-R6 + P1-P7 安全修复已完成并通过 review，102 个测试全绿
 
 ## 1. 目标
 
@@ -95,60 +95,70 @@ docker-compose.yml / Dockerfile / launcher.py
 | **双引擎** | `session.py` SQLite WAL + MySQL pool，`_search_articles` 方言搜索 |
 | **数据隔离** | `user_id` 加到 Account/Article/ArticleGroup/PublishTask/Asset，路由/service 层过滤 |
 | **Docker** | `Dockerfile` + `docker-compose.yml` + `.env.example` |
-| **测试** | 83/83 全绿（SQLite），15 个 `@pytest.mark.mysql` 标记 |
+| **测试** | 102/102 全绿（SQLite），含 19 个安全边界测试；15 个 `@pytest.mark.mysql` 标记 |
 | **清理** | 删 `geo.spec`、精简 `launcher.py`、删旧测试、更新文档 |
 
 ---
 
-## 6. 待完成任务
+## 6. 完成清单（5/13 本次迭代）
 
-### 6.1 最高优先 — 跨用户数据泄露（4 项）
+### 6.1 ✅ 跨用户数据泄露修复（4 项）
+
+| # | 文件 | 修复 | commit |
+|---|------|------|--------|
+| R1 | `routes/accounts.py` | `/api/accounts/export` 改用 `require_admin`，非 admin 返回 403 | 964eb53 → 749c087 |
+| R2 | `routes/articles.py` | `client_request_id` 去重加 `user_id` 过滤 | 964eb53 |
+| R3 | `routes/tasks.py` | 同上 | 964eb53 |
+| R4 | `routes/tasks.py` | `/api/tasks/preview` 加 `get_current_user` 依赖 | 964eb53 |
+
+### 6.2 ✅ 鉴权修复（R5、R6）
+
+| # | 文件 | 修复 | commit |
+|---|------|------|--------|
+| R5 | `security.py` | `get_current_user` 强制检查 `must_change_password`，返回 403 | 964eb53 |
+| R6 | `client.ts` / `AuthContext.tsx` | 全局 401 拦截 → `setUser(null)`；403 password-change-required → `must_change_password=true` | 704433b → 749c087 |
+| R7 | `launcher.py` | 死代码，暂不处理（不影响功能） | — |
+
+### 6.3 ✅ 角色权限区分（P1-P7）
+
+| # | 模块 | 实现 | commit |
+|---|------|------|--------|
+| P1 | 文章 DELETE | `require_admin` | cff89c0 |
+| P2 | 文章分组 DELETE | `require_admin` | cff89c0 |
+| P3 | 任务 | 无 DELETE 端点，天然满足 | — |
+| P4 | 账号 DELETE / export | `require_admin` | cff89c0 / 749c087 |
+| P5 | 素材 | 无 DELETE 端点，天然满足 | — |
+| P6 | 系统状态 | `require_admin` | cff89c0 |
+| P7 | 用户管理 | `/auth/users` 已内联 admin 检查 | — |
+
+### 6.4 ✅ 安全边界测试（102 个测试全绿）
+
+新增 `test_security_boundaries.py` (19 个测试)，覆盖 R1/R4/R5/P1/P2/P4/P6 所有安全边界。
+
+---
+
+## 7. 待完成任务
+
+### 7.1 安全检查（2 项）
 
 | # | 文件:行 | 问题 |
 |---|---------|------|
-| R1 | `routes/accounts.py:57-70` | `/api/accounts/export` 非 admin 可导出所有账号鉴权包 |
-| R2 | `routes/articles.py:69-85` | `client_request_id` 去重不限 `user_id`，可泄露他人文章 |
-| R3 | `routes/tasks.py:75-92` | 同上，`client_request_id` 泄露他人任务 |
-| R4 | `routes/tasks.py:97-98` | `/api/tasks/preview` 不限 `user_id`，可枚举他人数据 |
+| R8 | `routes/auth.py:40-47` | Cookie 缺 `secure=True`（生产 HTTPS 必须加） |
+| R9 | `services/tasks.py` | account/article 归属校验（任务执行时不校验 user_id） |
 
-### 6.2 高优先 — 鉴权缺陷（3 项）
+**已知设计债务（暂不修）：**
+- `GET /api/assets/{id}` 无认证（公开 CDN 式行为，asset_id 为 UUID，intentional）
+- `_read_or_generate_token` 死代码（R7，不影响功能）
 
-| # | 文件:行 | 问题 |
-|---|---------|------|
-| R5 | `security.py:35-55` | `must_change_password` 后端未强制（前端可绕过） |
-| R6 | `client.ts:23-41` | 无全局 401 拦截，JWT 过期不跳登录 |
-| R7 | `launcher.py:42-52` | `_read_or_generate_token` 死代码 |
-
-### 6.3 角色权限区分（9 项，今日新需求）
-
-**实现方式：** `security.py` 新增 `require_role("admin")` 依赖，DELETE/导出类端点挂此依赖。
-
-| # | 模块 | 操作员（operator）权限 |
-|---|------|-----------------------|
-| P1 | 文章 | 增、改；**不可删** |
-| P2 | 文章分组 | 增、改；**不可删** |
-| P3 | 任务 | 创建、执行；**不可删** |
-| P4 | 账号 | 增、改、更新鉴权；**不可删**，**不可导出** |
-| P5 | 素材 | 上传；**不可删** |
-| P6 | 系统状态 | **不可查看**（admin only） |
-| P7 | 用户管理 | **不可操作**（admin only） |
-
-### 6.4 安全检查（2 项）
-
-| # | 文件:行 | 问题 |
-|---|---------|------|
-| R8 | `routes/auth.py:40-47` | Cookie 缺 `secure=True` |
-| R9 | `services/tasks.py:859-925` | account/article 不验归属 |
-
-### 6.5 中等 — 部署 & 工程（3 项）
+### 7.2 部署 & 工程（3 项）
 
 | # | 问题 |
 |---|------|
 | R10 | `docker-compose.yml` v3 schema + `depends_on condition` 不兼容老版 docker-compose v1 |
-| R11 | `Dockerfile` 系统 Chromium + Playwright Chromium 双安装，镜像大约 400MB |
+| R11 | `Dockerfile` 系统 Chromium + Playwright Chromium 双安装，镜像约 400MB |
 | R12 | DB 密码未 URL-encode，特殊字符导致连接失败 |
 
-### 6.6 低优先 — 代码质量（5 项）
+### 7.3 代码质量（低优先）
 
 | # | 问题 |
 |---|------|
@@ -158,7 +168,7 @@ docker-compose.yml / Dockerfile / launcher.py
 | R16 | `LoginPage` 错误消息用英语字符串匹配 |
 | R17 | `App.tsx` 4 个工作区始终挂载，登录瞬间 4 倍 API 请求 |
 
-### 6.7 Phase 3 遗留（原 review.md）
+### 7.4 Phase 3 遗留
 
 | # | 内容 |
 |---|------|
@@ -167,7 +177,7 @@ docker-compose.yml / Dockerfile / launcher.py
 | 3 | Chromium 并发上限 semaphore |
 | 4 | CRUD 样板代码抽取 |
 
-### 6.8 Phase 4 — 任务调度与人工介入
+### 7.5 Phase 4 — 任务调度与人工介入
 
 | # | 内容 | 说明 |
 |---|------|------|
@@ -180,7 +190,7 @@ docker-compose.yml / Dockerfile / launcher.py
 
 ---
 
-## 7. 已知未完成能力
+## 8. 已知未完成能力
 
 - 飞书通知（Phase 5）
 - 压测和长时间稳定性验证（Phase 5）
@@ -189,14 +199,12 @@ docker-compose.yml / Dockerfile / launcher.py
 
 ---
 
-## 8. 建议修复顺序
+## 9. 建议下一步顺序
 
-1. **立即** R1-R4 跨用户数据泄露
-2. **立即** R5 `must_change_password` 后端强制
-3. **本次迭代** P1-P7 角色权限区分
-4. **本次迭代** R6 前端 401 拦截
-5. **后续** R8-R12 安全/部署改进
-6. **后续** Phase 3 遗留 + Phase 4 任务调度
+1. **优先** R8 Cookie secure=True（生产部署前必须）
+2. **优先** R9 任务执行归属校验
+3. **后续** R10-R12 Docker 部署问题
+4. **后续** Phase 4 任务调度与人工介入
 
 ---
 
