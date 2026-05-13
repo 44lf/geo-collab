@@ -30,6 +30,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { ...headers, ...(init?.headers as Record<string, string>) },
   });
+  if (response.status === 401 && !path.startsWith("/api/auth")) {
+    window.dispatchEvent(new CustomEvent("auth:unauthorized"));
+    throw new Error("登录已过期，请重新登录");
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.detail || `${response.status} ${response.statusText}`);
