@@ -25,7 +25,7 @@ def upgrade() -> None:
         sa.Column("mime_type", sa.String(length=100), nullable=False),
         sa.Column("size", sa.Integer(), nullable=False),
         sa.Column("sha256", sa.String(length=64), nullable=False),
-        sa.Column("storage_key", sa.String(length=1000), nullable=False),
+        sa.Column("storage_key", sa.String(length=500), nullable=False),
         sa.Column("width", sa.Integer(), nullable=True),
         sa.Column("height", sa.Integer(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
