@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     publish_max_concurrent_records: int = 5
     publish_record_timeout_seconds: int = 300
-    publish_browser_channel: str = "chrome"
+    publish_browser_channel: str = "chromium"
     publish_browser_executable_path: str | None = None
     publish_remote_browser_enabled: bool = False
     publish_xvfb_path: str = "Xvfb"

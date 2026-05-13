@@ -100,7 +100,7 @@ def launch_options(channel: str, executable_path: str | None) -> dict[str, Any]:
     }
     if sys.platform != "win32":
         options["args"] = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-    if channel:
+    if channel and channel.lower() != "chromium":
         options["channel"] = channel
     if executable_path:
         if sys.platform == "win32" and not VALID_EXE_RE.match(executable_path):

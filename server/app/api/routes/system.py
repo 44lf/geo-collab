@@ -21,13 +21,22 @@ _CHROME_CANDIDATES = [
     "google-chrome",
     "chromium",
     "chromium-browser",
+    "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
 ]
 
 
 # 检测 Chrome 浏览器是否可访问
 def _browser_ready() -> bool:
-    return any(Path(c).exists() or shutil.which(c) for c in _CHROME_CANDIDATES)
+    if any(Path(c).exists() or shutil.which(c) for c in _CHROME_CANDIDATES):
+        return True
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            return Path(playwright.chromium.executable_path).exists()
+    except Exception:
+        return False
 
 
 # 获取系统运行状态

@@ -23,7 +23,7 @@ class AccountRead(BaseModel):
 class ToutiaoLoginRequest(BaseModel):
     display_name: str = Field(default="头条号账号", min_length=1, max_length=200)
     account_key: str | None = Field(default=None, max_length=120)  # 本地存储目录标识
-    channel: str = "chrome"
+    channel: str = "chromium"
     executable_path: str | None = None
     wait_seconds: int = Field(default=180, ge=5, le=600)  # 等待登录完成的超时时间（秒）
     use_browser: bool = True  # True=打开浏览器交互登录，False=复用已有状态
@@ -32,7 +32,7 @@ class ToutiaoLoginRequest(BaseModel):
 
 # 账号校验请求
 class AccountCheckRequest(BaseModel):
-    channel: str = "chrome"
+    channel: str = "chromium"
     executable_path: str | None = None
     wait_seconds: int = Field(default=30, ge=3, le=180)
     use_browser: bool = True

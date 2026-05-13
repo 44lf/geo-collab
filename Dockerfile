@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11vnc \
     websockify \
     novnc \
+    chromium \
     fonts-noto-cjk \
     libnss3 \
     libnspr4 \
