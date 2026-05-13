@@ -175,7 +175,7 @@ def test_user_input_required_pauses_record(monkeypatch):
         else:
             raise AssertionError("Record did not enter waiting_user_input")
 
-        assert records[0]["error_message"].startswith("login verification required")
+        assert "login verification required" in records[0]["error_message"]
         assert client.get(f"/api/tasks/{task['id']}").json()["status"] == "running"
     finally:
         test_app.cleanup()

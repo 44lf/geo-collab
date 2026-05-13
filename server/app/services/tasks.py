@@ -541,10 +541,12 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
         # 人工介入：保持浏览器打开，将 session 关联到 record
         # 前端会读取 record.novnc_url 展示"打开远程浏览器"按钮
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot, task.user_id)
-        _mark_record_waiting_user_input(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
+        error_type = getattr(exc, "error_type", "login_required")
+        type_label = {"login_required": "需要登录", "captcha_required": "需要验证码", "qr_scan_required": "需要扫码"}.get(error_type, "需要人工操作")
+        _mark_record_waiting_user_input(db, task.id, record_id, f"[{type_label}] {exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
         if exc.session_id:
             associate_record_with_session(record_id, exc.session_id)
-        _logger.info("Record %d waiting user input", record_id)
+        _logger.info("Record %d waiting user input (type=%s)", record_id, error_type)
     except ToutiaoPublishError as exc:
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot, task.user_id)
         _mark_record_failed(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
@@ -944,6 +946,12 @@ def recover_stuck_records(db: Session) -> None:
     for record in records:
         record.status = "pending"
         record.lease_until = None
+        db.add(TaskLog(
+            task_id=record.task_id,
+            record_id=record.id,
+            level="warn",
+            message="进程重启：记录在上次运行中意外中断，已重置为等待状态",
+        ))
     if records:
         _logger.warning("Recovered %d stuck records: %s", len(records), [r.id for r in records])
         db.commit()

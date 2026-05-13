@@ -40,7 +40,10 @@ from server.app.services.assets import resolve_asset_path
 
 # 头条号发布页面 URL
 TOUTIAO_PUBLISH_URL = "https://mp.toutiao.com/profile_v4/graphic/publish"
-LOGIN_HINTS = ("login", "passport", "sso", "验证码", "扫码", "登录")
+QR_HINTS = ("扫码", "扫一扫", "二维码")
+CAPTCHA_HINTS = ("验证码", "安全验证", "图形验证")
+LOGIN_REDIRECT_HINTS = ("login", "passport", "sso", "登录")
+LOGIN_HINTS = (*QR_HINTS, *CAPTCHA_HINTS, *LOGIN_REDIRECT_HINTS)
 PUBLISH_HINTS = ("发布", "标题", "正文", "图文", "文章")
 
 
@@ -73,10 +76,12 @@ class ToutiaoUserInputRequired(ToutiaoPublishError):
         screenshot: bytes | None = None,
         session_id: str | None = None,
         novnc_url: str | None = None,
+        error_type: str = "login_required",
     ):
         super().__init__(message, screenshot)
         self.session_id = session_id
         self.novnc_url = novnc_url
+        self.error_type = error_type  # login_required | captcha_required | qr_scan_required
 
 
 # 头条号 Playwright 自动发布器
@@ -820,7 +825,16 @@ class ToutiaoPublisher:
         body = page.locator("body").inner_text(timeout=3000)
         haystack = f"{page.url}\n{page.title()}\n{body}"
         if any(hint in haystack for hint in LOGIN_HINTS):
-            raise ToutiaoUserInputRequired("Toutiao account appears logged out; user login or verification is required")
+            if any(hint in haystack for hint in QR_HINTS):
+                error_type = "qr_scan_required"
+            elif any(hint in haystack for hint in CAPTCHA_HINTS):
+                error_type = "captcha_required"
+            else:
+                error_type = "login_required"
+            raise ToutiaoUserInputRequired(
+                "Toutiao account appears logged out; user login or verification is required",
+                error_type=error_type,
+            )
         if "mp.toutiao.com" not in page.url or not any(hint in haystack for hint in PUBLISH_HINTS):
             raise ToutiaoPublishError("Toutiao publish page not detected")
 

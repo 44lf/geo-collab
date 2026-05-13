@@ -1,6 +1,6 @@
 # Geo 协作发布平台
 
-> 最后更新：2026-05-13 | 当前进度：Phase 3 完成，R1-R9 + P1-P7 安全修复全部完成并通过 review，106 个测试全绿
+> 最后更新：2026-05-13 | 当前进度：Phase 4 完成，120 个测试全绿
 
 ## 1. 目标
 
@@ -177,16 +177,16 @@ docker-compose.yml / Dockerfile / launcher.py
 | 3 | Chromium 并发上限 semaphore |
 | 4 | CRUD 样板代码抽取 |
 
-### 7.5 Phase 4 — 任务调度与人工介入
+### 7.5 Phase 4 — 任务调度与人工介入（✅ 已完成）
 
-| # | 内容 | 说明 |
-|---|------|------|
-| 4.1 | 前端 `waiting_user_input` 完整交互入口 | noVNC 打开、操作完成后恢复任务 |
-| 4.2 | 任务超时 + 失败截图存储 | 目前 timeout 有基础，缺截图持久化 |
-| 4.3 | 浏览器僵尸进程清理 | `atexit` 已加，长期运行需定期巡检 |
-| 4.4 | 更多异常场景分类 | 登录失效/验证码/弹窗/扫码/网络超时 |
-| 4.5 | 重启恢复 | `recover_stuck_records` 已有，需验证完整链路 |
-| 4.6 | 任务执行日志展示 | 前端 TasksWorkspace 细化 |
+| # | 内容 | 实现 | 状态 |
+|---|------|------|------|
+| 4.1 | 前端人工介入按钮 | `waiting_user_input`：「操作完成」→ resolve-user-input；`waiting_manual_publish`：「确认发布」/「标记失败」→ manual-confirm | ✅ |
+| 4.2 | 失败截图展示 | 日志列表中在消息下方直接渲染截图（`screenshot_asset_id` → `/api/assets/{id}`） | ✅ |
+| 4.3 | 浏览器僵尸进程清理 | `_cleanup_zombie_sessions()` 每 30s 巡检，进程 `poll() != None` 即清理 session 及关联 record | ✅ |
+| 4.4 | 异常场景分类 | `ToutiaoUserInputRequired.error_type`：`login_required` / `captcha_required` / `qr_scan_required`；分类结果写入日志标签 | ✅ |
+| 4.5 | 重启恢复 + 日志 | `recover_stuck_records()` 重置 record 同时写 `TaskLog(level=warn)`，前端可见 | ✅ |
+| 4.6 | 日志截图渲染 | 同 4.2（复用同一实现） | ✅ |
 
 ---
 
@@ -201,9 +201,8 @@ docker-compose.yml / Dockerfile / launcher.py
 
 ## 9. 建议下一步顺序
 
-1. **后续** R10-R12 Docker 部署问题（R10 兼容性、R11 镜像大小、R12 密码 URL-encode）
-2. **后续** Phase 4 任务调度与人工介入（4.1 前端 waiting_user_input、4.2 截图存储等）
-3. **后续** Phase 5 飞书通知、压测、分词搜索优化
+1. **下一步** Phase 5 飞书通知、压测、分词搜索优化
+2. R12（完整版）config.py 支持独立 DB 凭据 env var，避免密码需手动 URL-encode
 
 ---
 

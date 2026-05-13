@@ -233,6 +233,45 @@ export function TasksWorkspace() {
     }
   }
 
+  async function resolveUserInput(recordId: number) {
+    setLoading(true);
+    try {
+      await singleFlight(`record-resolve-${recordId}`, () =>
+        api<PublishRecord>(`/api/publish-records/${recordId}/resolve-user-input`, { method: "POST" }),
+      );
+      if (selectedTaskId) {
+        setAutoRefreshTaskIds((prev) => new Set(prev).add(selectedTaskId));
+        await refreshDetail(selectedTaskId);
+      }
+      toast("已完成，继续执行", "success");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "操作失败", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function manualConfirm(recordId: number, outcome: "succeeded" | "failed") {
+    setLoading(true);
+    try {
+      await singleFlight(`record-confirm-${recordId}-${outcome}`, () =>
+        api<PublishRecord>(`/api/publish-records/${recordId}/manual-confirm`, {
+          method: "POST",
+          body: JSON.stringify({ outcome }),
+        }),
+      );
+      if (selectedTaskId) {
+        setAutoRefreshTaskIds((prev) => new Set(prev).add(selectedTaskId));
+        await refreshDetail(selectedTaskId);
+      }
+      toast(outcome === "succeeded" ? "已确认发布" : "已标记失败", "success");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "操作失败", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function retryRecord(recordId: number) {
     setLoading(true);
     try {
@@ -477,17 +516,50 @@ export function TasksWorkspace() {
                         重试
                       </button>
                     ) : null}
-                    {record.status === "waiting_user_input" && record.novnc_url ? (
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                    {record.status === "waiting_user_input" ? (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                        {record.novnc_url ? (
+                          <button
+                            className="primaryButton"
+                            type="button"
+                            onClick={() => window.open(record.novnc_url!, "_blank")}
+                          >
+                            打开远程浏览器
+                          </button>
+                        ) : null}
+                        <button
+                          className="secondaryButton"
+                          type="button"
+                          disabled={loading}
+                          onClick={() => void resolveUserInput(record.id)}
+                        >
+                          操作完成
+                        </button>
+                        <small style={{ color: "#64748b" }}>
+                          在远程浏览器完成操作后点击「操作完成」继续发布
+                        </small>
+                      </div>
+                    ) : null}
+                    {record.status === "waiting_manual_publish" ? (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
                         <button
                           className="primaryButton"
                           type="button"
-                          onClick={() => window.open(record.novnc_url!, "_blank")}
+                          disabled={loading}
+                          onClick={() => void manualConfirm(record.id, "succeeded")}
                         >
-                          打开远程浏览器
+                          确认发布
+                        </button>
+                        <button
+                          className="dangerButton"
+                          type="button"
+                          disabled={loading}
+                          onClick={() => void manualConfirm(record.id, "failed")}
+                        >
+                          标记失败
                         </button>
                         <small style={{ color: "#64748b" }}>
-                          浏览器会话将在空闲 5 分钟后自动关闭
+                          已在浏览器中完成发布后点击「确认发布」
                         </small>
                       </div>
                     ) : null}
@@ -501,12 +573,21 @@ export function TasksWorkspace() {
             <h2 style={{ marginBottom: 12 }}>执行日志</h2>
             <div className="logList">
               {logs.map((log) => (
-                <div key={log.id} className="logItem">
-                  <span className={`logLevel ${log.level}`}>{log.level.toUpperCase()}</span>
-                  <span style={{ flex: 1 }}>{log.message}</span>
-                  <small style={{ color: "#94a3b8", flexShrink: 0 }}>
-                    {new Date(log.created_at).toLocaleTimeString()}
-                  </small>
+                <div key={log.id}>
+                  <div className="logItem">
+                    <span className={`logLevel ${log.level}`}>{log.level.toUpperCase()}</span>
+                    <span style={{ flex: 1 }}>{log.message}</span>
+                    <small style={{ color: "#94a3b8", flexShrink: 0 }}>
+                      {new Date(log.created_at).toLocaleTimeString()}
+                    </small>
+                  </div>
+                  {log.screenshot_asset_id ? (
+                    <img
+                      src={`/api/assets/${log.screenshot_asset_id}`}
+                      alt="失败截图"
+                      style={{ maxWidth: "100%", marginTop: 4, marginBottom: 4, borderRadius: 4, border: "1px solid #e2e8f0", display: "block" }}
+                    />
+                  ) : null}
                 </div>
               ))}
               {logs.length === 0 ? <p className="emptyText" style={{ margin: "6px 0" }}>暂无日志</p> : null}

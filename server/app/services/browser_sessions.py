@@ -411,6 +411,10 @@ def _start_idle_cleanup() -> None:
                 _cleanup_stale_sessions(timeout())
             except Exception:
                 pass
+            try:
+                _cleanup_zombie_sessions()
+            except Exception:
+                pass
 
     _idle_cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True, name="session-idle-cleanup")
     _idle_cleanup_thread.start()
@@ -436,6 +440,28 @@ def _cleanup_stale_sessions(idle_timeout: int) -> None:
         except Exception:
             _logger.warning("Failed to stop stale session %s", session_id, exc_info=True)
         # 解除所有关联 record 的绑定
+        with _sessions_lock:
+            stale_records = [rid for rid, sid in _record_to_session.items() if sid == session_id]
+            for rid in stale_records:
+                _record_to_session.pop(rid, None)
+
+
+def _cleanup_zombie_sessions() -> None:
+    """检测并清理进程已意外退出的僵尸 session。"""
+    zombie_ids: list[str] = []
+    with _sessions_lock:
+        for session_id, session in list(_active_sessions.items()):
+            for mp in session.processes:
+                if mp.process.poll() is not None:
+                    zombie_ids.append(session_id)
+                    break
+
+    for session_id in zombie_ids:
+        _logger.warning("Zombie session detected (process exited): %s", session_id)
+        try:
+            stop_remote_browser_session(session_id)
+        except Exception:
+            _logger.warning("Failed to stop zombie session %s", session_id, exc_info=True)
         with _sessions_lock:
             stale_records = [rid for rid, sid in _record_to_session.items() if sid == session_id]
             for rid in stale_records:
