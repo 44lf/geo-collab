@@ -84,7 +84,10 @@ def create_task_endpoint(
         db.rollback()
         if payload.client_request_id:
             existing = db.execute(
-                select(PublishTask).where(PublishTask.client_request_id == payload.client_request_id)
+                select(PublishTask).where(
+                    PublishTask.client_request_id == payload.client_request_id,
+                    PublishTask.user_id == current_user.id,
+                )
             ).scalar_one_or_none()
             if existing is not None:
                 refreshed = get_task(db, existing.id)
@@ -94,7 +97,11 @@ def create_task_endpoint(
 
 # 预览任务分配（分组轮询时的文章-账号映射）
 @router.post("/preview", response_model=TaskAssignmentPreviewRead)
-def preview_task_assignment_endpoint(payload: TaskCreate, db: Session = Depends(get_db)) -> TaskAssignmentPreviewRead:
+def preview_task_assignment_endpoint(
+    payload: TaskCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TaskAssignmentPreviewRead:
     return preview_task_assignment(db, payload)
 
 

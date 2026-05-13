@@ -78,7 +78,10 @@ def create_article_endpoint(
         db.rollback()
         if payload.client_request_id:
             existing = db.execute(
-                select(Article).where(Article.client_request_id == payload.client_request_id)
+                select(Article).where(
+                    Article.client_request_id == payload.client_request_id,
+                    Article.user_id == current_user.id,
+                )
             ).scalar_one_or_none()
             if existing is not None:
                 return to_article_read(get_article(db, existing.id) or existing)

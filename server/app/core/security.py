@@ -50,6 +50,8 @@ async def get_current_user(request: Request) -> User:
             raise HTTPException(status_code=401, detail="User not found")
         if not user.is_active:
             raise HTTPException(status_code=403, detail="Account disabled")
+        if user.must_change_password:
+            raise HTTPException(status_code=403, detail="Password change required")
         return user
     finally:
         db.close()

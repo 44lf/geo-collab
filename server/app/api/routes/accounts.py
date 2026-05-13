@@ -59,6 +59,8 @@ def export_accounts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FileResponse:
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin required")
     try:
         export_path = export_accounts_auth_package(db, payload or AccountExportRequest())
     except ValueError as exc:
