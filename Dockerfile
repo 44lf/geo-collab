@@ -1,7 +1,11 @@
 # Geo Collab Docker 镜像
 # FastAPI + React + Playwright + Chromium + noVNC 远程浏览器
 
-FROM python:3.12-slim
+FROM registry.cn-hangzhou.aliyuncs.com/library/python:3.12-slim
+
+# 换阿里云 apt 镜像（国内服务器加速）
+RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list 2>/dev/null || true
 
 # 系统依赖：Chromium 浏览器、Xvfb 虚拟显示、VNC 远程桌面、noVNC Web 客户端、
 # 中文字体、Chromium/Playwright 运行时库
@@ -31,8 +35,9 @@ RUN pip install --no-cache-dir \
 # 复制项目源码
 COPY . .
 
-# 安装 Playwright 所需的 Chromium 浏览器
-RUN playwright install chromium
+# 安装 Playwright 所需的 Chromium 浏览器（npmmirror 国内加速）
+RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright \
+    playwright install chromium
 
 EXPOSE 8000
 
