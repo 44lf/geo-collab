@@ -1,7 +1,19 @@
 # Geo Collab Docker 镜像
-# FastAPI + React + Playwright + Chromium + noVNC 远程浏览器
+# React 前端构建 + FastAPI + Playwright + Chromium + noVNC 远程浏览器
 
-FROM registry.cn-hangzhou.aliyuncs.com/library/python:3.12-slim
+FROM node:22-bookworm-slim AS web-build
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY web/package.json web/package.json
+RUN corepack enable && corepack prepare pnpm@10.4.0 --activate
+RUN pnpm install --frozen-lockfile
+
+COPY web ./web
+RUN pnpm --filter @geo/web build
+
+FROM python:3.12-slim
 
 # 换阿里云 apt 镜像（国内服务器加速）
 RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
@@ -32,8 +44,9 @@ RUN pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
     -r requirements.txt
 
-# 复制项目源码
+# 复制项目源码和前端构建产物
 COPY . .
+COPY --from=web-build /app/web/dist ./web/dist
 
 # 安装 Playwright 所需的 Chromium 浏览器（npmmirror 国内加速）
 RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright \
