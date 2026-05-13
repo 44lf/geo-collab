@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     data_dir: Path | None = None
     database_url: str | None = None
+    # 独立 DB 凭据（当 database_url 未设时自动拼接 MySQL URL，密码无需手动 URL-encode）
+    db_host: str | None = None
+    db_port: int = 3306
+    db_user: str | None = None
+    db_pass: str | None = None
+    db_name: str | None = None
     jwt_secret: str = ""
     publish_max_concurrent_records: int = 5
     publish_record_timeout_seconds: int = 300

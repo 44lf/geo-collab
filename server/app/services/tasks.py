@@ -89,6 +89,9 @@ _task_locks: dict[int, threading.Lock] = {}
 _account_locks: dict[int, threading.Lock] = {}
 _account_locks_lock = threading.Lock()
 
+# 全局 Chromium 并发上限（跨所有任务共享，防止多任务并发时超出 5 个浏览器进程）
+_global_publish_sem = threading.Semaphore(MAX_CONCURRENT_RECORDS)
+
 # 任务硬取消标志
 _task_cancel: dict[int, threading.Event] = {}
 
@@ -519,8 +522,12 @@ def _detach_record_inputs(db: Session, record: PublishRecord, article: Article, 
 
 def _publish_record(record: PublishRecord, article: Article, account: Account, stop_before_publish: bool):
     _logger.info("Publishing record %d for article %d to account %d", record.id, article.id, account.id)
-    publisher = build_publisher_for_record(record)
-    return publisher.publish_article(article, account, stop_before_publish=stop_before_publish)
+    _global_publish_sem.acquire()
+    try:
+        publisher = build_publisher_for_record(record)
+        return publisher.publish_article(article, account, stop_before_publish=stop_before_publish)
+    finally:
+        _global_publish_sem.release()
 
 
 def _finish_record_future(db: Session, task: PublishTask, record_id: int, future: Future) -> None:

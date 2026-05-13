@@ -28,8 +28,11 @@ services:
     env_file:
       - .env
     environment:
-      # IMPORTANT: if MYSQL_PASSWORD contains special chars (@/:?#), URL-encode them in .env (e.g. @ → %40)
-      GEO_DATABASE_URL: mysql+pymysql://${MYSQL_USER:-geo_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-geo_collab}
+      GEO_DB_HOST: mysql
+      GEO_DB_PORT: 3306
+      GEO_DB_USER: ${MYSQL_USER:-geo_user}
+      GEO_DB_PASS: ${MYSQL_PASSWORD}
+      GEO_DB_NAME: ${MYSQL_DATABASE:-geo_collab}
       GEO_DATA_DIR: /app/data
       GEO_PUBLISH_REMOTE_BROWSER_ENABLED: "true"
       GEO_PUBLISH_NOVNC_WEB_DIR: /usr/share/novnc

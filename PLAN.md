@@ -1,6 +1,6 @@
 # Geo 协作发布平台
 
-> 最后更新：2026-05-13 | 当前进度：Phase 4 完成，120 个测试全绿
+> 最后更新：2026-05-13 | 当前进度：Phase 4 + 债务清理完成，120 个测试全绿
 
 ## 1. 目标
 
@@ -156,26 +156,26 @@ docker-compose.yml / Dockerfile / launcher.py
 |---|------|------|
 | R10 | `docker-compose.yml` 移除废弃 `version: "3.8"` | ✅ |
 | R11 | `Dockerfile` 移除 apt chromium/chromium-driver（Playwright 自带），镜像缩小 ~200MB | ✅ |
-| R12 | DB 密码 URL-encode：在 docker-compose.yml 加注释说明特殊字符须 URL-encode | ✅（注释） |
+| R12 | `config.py` 新增 `GEO_DB_HOST/PORT/USER/PASS/NAME`，`paths.py` 自动拼接并 `quote_plus` 密码；`docker-compose.yml` 改用独立变量 | ✅ |
 | R13 | `auth.py /users` 从 DB 校验角色（防 JWT 过期内角色变更绕过）；`/change-password` 加 `is_active` 检查 | ✅ |
+| R14 | `get_current_user` 改为 `def`（同步依赖，不阻塞事件循环） | ✅ |
 
-### 7.3 代码质量（低优先，暂缓）
+### 7.3 代码质量（已知债务，暂不修）
 
-| # | 问题 | 风险等级 |
-|---|------|---------|
-| R14 | `get_current_user` 用 `async def` 执行全同步操作 | 无实际影响 |
-| R15 | `AuthContext` login 忽略响应体后又请求 `/me`，多一次网络往返 | 轻微性能 |
-| R16 | `LoginPage` 错误消息用英语字符串匹配（已 `.toLowerCase()` 处理，当前可用） | 脆弱但可用 |
-| R17 | `App.tsx` 4 个工作区始终挂载，登录瞬间 4 倍 API 请求 | 轻微性能 |
+| # | 问题 | 风险等级 | 决策 |
+|---|------|---------|------|
+| R15 | `AuthContext` login 忽略响应体后又请求 `/me`，多一次网络往返 | 轻微性能 | 暂缓 |
+| R16 | `LoginPage` 错误消息用英语字符串匹配（已 `.toLowerCase()` 处理，当前可用） | 脆弱但可用 | 暂缓 |
+| R17 | `App.tsx` 4 个工作区始终挂载，登录瞬间 4 倍 API 请求 | 轻微性能 | 暂缓 |
 
-### 7.4 Phase 3 遗留
+### 7.4 Phase 3 遗留（已解决 / 明确跳过）
 
-| # | 内容 |
-|---|------|
-| 1 | ContentWorkspace 进一步拆分（`useArticleEditor` hook） |
-| 2 | `browser_sessions` idle_timeout → `last_active_at`（需前端 heartbeat） |
-| 3 | Chromium 并发上限 semaphore |
-| 4 | CRUD 样板代码抽取 |
+| # | 内容 | 状态 |
+|---|------|------|
+| 1 | ContentWorkspace 进一步拆分（`useArticleEditor` hook） | 跳过（纯重构，无 bug） |
+| 2 | `browser_sessions` idle_timeout → `last_active_at`（需前端 heartbeat） | 跳过（设计上延迟，需前后端协同） |
+| 3 | Chromium 全局并发上限 semaphore | ✅ `_global_publish_sem = Semaphore(5)`，`_publish_record` acquire/release |
+| 4 | CRUD 样板代码抽取 | 跳过（纯重构，无 bug） |
 
 ### 7.5 Phase 4 — 任务调度与人工介入（✅ 已完成）
 
@@ -202,7 +202,6 @@ docker-compose.yml / Dockerfile / launcher.py
 ## 9. 建议下一步顺序
 
 1. **下一步** Phase 5 飞书通知、压测、分词搜索优化
-2. R12（完整版）config.py 支持独立 DB 凭据 env var，避免密码需手动 URL-encode
 
 ---
 

@@ -32,7 +32,7 @@ def verify_token(token: str) -> dict | None:
         return None
 
 
-async def get_current_user(request: Request) -> User:
+def get_current_user(request: Request) -> User:
     from sqlalchemy.orm import Session
 
     from server.app.db.session import SessionLocal
