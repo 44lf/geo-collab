@@ -179,7 +179,7 @@ def delete_all_tasks(db: Session) -> None:
     db.flush()
 
 
-def create_task(db: Session, user_id: int, payload: TaskCreate) -> PublishTask:
+def create_task(db: Session, user_id: int, payload: TaskCreate, role: str = "operator") -> PublishTask:
     if payload.client_request_id:
         existing = db.execute(
             select(PublishTask).where(PublishTask.client_request_id == payload.client_request_id)
@@ -187,7 +187,8 @@ def create_task(db: Session, user_id: int, payload: TaskCreate) -> PublishTask:
         if existing is not None:
             return get_task(db, existing.id) or existing
 
-    inputs = _validated_task_inputs(db, payload)
+    user_id_filter = None if role == "admin" else user_id
+    inputs = _validated_task_inputs(db, payload, user_id=user_id_filter)
     assignments = _build_assignments(inputs.article_ids, inputs.accounts)
 
     task = PublishTask(
@@ -222,8 +223,10 @@ def create_task(db: Session, user_id: int, payload: TaskCreate) -> PublishTask:
 
 
 # 预览任务分配结果
-def preview_task_assignment(db: Session, payload: TaskCreate) -> TaskAssignmentPreviewRead:
-    inputs = _validated_task_inputs(db, payload)
+# user_id=None 表示跳过归属校验（admin 路径）；operator 必须传入 current_user.id
+def preview_task_assignment(db: Session, payload: TaskCreate, user_id: int | None = None, role: str = "operator") -> TaskAssignmentPreviewRead:
+    user_id_filter = None if role == "admin" else user_id
+    inputs = _validated_task_inputs(db, payload, user_id=user_id_filter)
     assignments = _build_assignments(inputs.article_ids, inputs.accounts)
     return TaskAssignmentPreviewRead(
         task_type=payload.task_type,
@@ -824,7 +827,7 @@ def _add_log(
 
 
 # 校验任务输入参数
-def _validated_task_inputs(db: Session, payload: TaskCreate) -> TaskInputs:
+def _validated_task_inputs(db: Session, payload: TaskCreate, user_id: int | None = None) -> TaskInputs:
     if payload.task_type not in VALID_TASK_TYPES:
         raise ValidationError(f"Invalid task_type: {payload.task_type}")
 
@@ -832,8 +835,8 @@ def _validated_task_inputs(db: Session, payload: TaskCreate) -> TaskInputs:
     if platform is None:
         raise ValueError(f"Platform not found: {payload.platform_code}")
 
-    ordered_accounts = _validated_accounts(db, platform.id, payload.accounts)
-    article_ids = _article_ids_for_task(db, payload)
+    ordered_accounts = _validated_accounts(db, platform.id, payload.accounts, user_id=user_id)
+    article_ids = _article_ids_for_task(db, payload, user_id=user_id)
     _validate_unique_articles(article_ids)
 
     if payload.task_type == "single" and len(ordered_accounts) != 1:
@@ -860,6 +863,7 @@ def _validated_accounts(
     db: Session,
     platform_id: int,
     account_inputs: list[TaskAccountInput],
+    user_id: int | None = None,
 ) -> list[tuple[int, Account]]:
     if not account_inputs:
         raise ValidationError("At least one account is required")
@@ -881,7 +885,7 @@ def _validated_accounts(
     ordered_accounts: list[tuple[int, Account]] = []
     for sort_order, account_id in ordered_inputs:
         account = accounts.get(account_id)
-        if account is None:
+        if account is None or (user_id is not None and account.user_id != user_id):
             raise AccountError(f"Account not found: {account_id}")
         if account.platform_id != platform_id:
             raise AccountError(f"Account platform mismatch: {account_id}")
@@ -898,18 +902,19 @@ def _validate_unique_articles(article_ids: list[int]) -> None:
 
 
 # 根据任务类型获取文章 ID 列表
-def _article_ids_for_task(db: Session, payload: TaskCreate) -> list[int]:
+def _article_ids_for_task(db: Session, payload: TaskCreate, user_id: int | None = None) -> list[int]:
     if payload.task_type == "single":
         if payload.article_id is None:
             raise ValueError("article_id is required for single task")
-        if db.get(Article, payload.article_id) is None:
+        article = db.get(Article, payload.article_id)
+        if article is None or (user_id is not None and article.user_id != user_id):
             raise ValueError(f"Article not found: {payload.article_id}")
         return [payload.article_id]
 
     if payload.group_id is None:
         raise ValueError("group_id is required for group_round_robin task")
     group = db.get(ArticleGroup, payload.group_id)
-    if group is None:
+    if group is None or (user_id is not None and group.user_id != user_id):
         raise ValueError(f"Article group not found: {payload.group_id}")
     items = list(
         db.execute(

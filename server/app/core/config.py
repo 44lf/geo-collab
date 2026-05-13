@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     publish_remote_browser_novnc_base_port: int = 6080
     publish_remote_browser_start_timeout_seconds: float = 15.0
     publish_remote_browser_idle_timeout_seconds: int = 300  # 5 分钟无操作自动清理
+    secure_cookie: bool = False  # 生产 HTTPS 时设为 True（GEO_SECURE_COOKIE=true）
 
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env")
 

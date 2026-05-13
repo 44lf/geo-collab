@@ -1,6 +1,8 @@
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+
+from server.app.core.config import get_settings
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -44,6 +46,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
         samesite="lax",
         path="/",
         max_age=max_age,
+        secure=get_settings().secure_cookie,
     )
     return {
         "username": user.username,
@@ -61,6 +64,7 @@ def logout(response: Response) -> dict:
         samesite="lax",
         path="/",
         max_age=0,
+        secure=get_settings().secure_cookie,
     )
     return {"detail": "Logged out"}
 

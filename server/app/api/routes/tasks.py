@@ -79,7 +79,7 @@ def create_task_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> TaskRead:
     try:
-        return to_task_read(create_task(db, current_user.id, payload))
+        return to_task_read(create_task(db, current_user.id, payload, role=current_user.role))
     except IntegrityError as exc:
         db.rollback()
         if payload.client_request_id:
@@ -102,7 +102,7 @@ def preview_task_assignment_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> TaskAssignmentPreviewRead:
-    return preview_task_assignment(db, payload)
+    return preview_task_assignment(db, payload, user_id=current_user.id, role=current_user.role)
 
 
 # 执行任务（启动后台线程立即执行，非队列模式）

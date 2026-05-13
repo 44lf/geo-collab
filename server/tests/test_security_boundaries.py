@@ -4,6 +4,7 @@ Security boundary tests covering:
 - R2:    article client_request_id dedup still works for same user (regression guard)
 - R4:    /api/tasks/preview requires authentication
 - R5:    must_change_password blocks all protected endpoints, allows /auth/change-password
+- R9:    task creation validates account/article ownership per user
 - P1:    operator cannot delete articles
 - P2:    operator cannot delete article groups
 - P4:    operator cannot delete accounts
@@ -54,11 +55,12 @@ def _create_article(client, title="Test Article", crid=None) -> int:
     return resp.json()["id"]
 
 
-def _create_account(test_app, key="sec-acc") -> int:
+def _create_account(test_app, key="sec-acc", client=None) -> int:
     state_dir = test_app.data_dir / "browser_states" / "toutiao" / key
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "storage_state.json").write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
-    resp = test_app.client.post(
+    c = client or test_app.client
+    resp = c.post(
         "/api/accounts/toutiao/login",
         json={"display_name": "Test", "account_key": key, "use_browser": False},
     )
@@ -302,6 +304,102 @@ class TestOperatorCannotAccessSystemStatus:
         test_app = build_test_app(monkeypatch)
         try:
             resp = test_app.client.get("/api/system/status")
+            assert resp.status_code == 200
+        finally:
+            test_app.cleanup()
+
+
+# ── R9: task ownership validation ─────────────────────────────────────────────
+
+class TestTaskOwnershipValidation:
+    def test_operator_cannot_use_admin_account(self, monkeypatch):
+        """Operator cannot create a task with another user's account — returns 400."""
+        test_app = build_test_app(monkeypatch)
+        try:
+            # Admin creates an account (belongs to admin)
+            admin_account_id = _create_account(test_app, key="admin-acc-r9")
+            # Operator creates their own article
+            op_client, _ = _make_operator_client(test_app)
+            op_article_id = _create_article(op_client, title="Op Article R9")
+
+            resp = op_client.post(
+                "/api/tasks",
+                json={
+                    "name": "Bad Task",
+                    "task_type": "single",
+                    "article_id": op_article_id,
+                    "accounts": [{"account_id": admin_account_id, "sort_order": 0}],
+                },
+            )
+            assert resp.status_code == 400
+            assert "Account not found" in resp.json()["detail"]
+        finally:
+            test_app.cleanup()
+
+    def test_operator_cannot_use_admin_article(self, monkeypatch):
+        """Operator cannot create a task with another user's article — returns 400."""
+        test_app = build_test_app(monkeypatch)
+        try:
+            # Admin creates an article (belongs to admin)
+            admin_article_id = _create_article(test_app.client, title="Admin Article R9")
+            # Operator creates their own account
+            op_client, _ = _make_operator_client(test_app)
+            op_account_id = _create_account(test_app, key="op-acc-r9", client=op_client)
+
+            resp = op_client.post(
+                "/api/tasks",
+                json={
+                    "name": "Bad Task",
+                    "task_type": "single",
+                    "article_id": admin_article_id,
+                    "accounts": [{"account_id": op_account_id, "sort_order": 0}],
+                },
+            )
+            assert resp.status_code == 400
+            assert "Article not found" in resp.json()["detail"]
+        finally:
+            test_app.cleanup()
+
+    def test_admin_can_use_any_account(self, monkeypatch):
+        """Admin bypasses ownership check and can create a task with any user's account."""
+        test_app = build_test_app(monkeypatch)
+        try:
+            # Operator creates their own account
+            op_client, _ = _make_operator_client(test_app)
+            op_account_id = _create_account(test_app, key="op-acc-r9-admin", client=op_client)
+            # Admin creates their own article
+            admin_article_id = _create_article(test_app.client, title="Admin Article R9 Admin")
+
+            resp = test_app.client.post(
+                "/api/tasks",
+                json={
+                    "name": "Admin Task",
+                    "task_type": "single",
+                    "article_id": admin_article_id,
+                    "accounts": [{"account_id": op_account_id, "sort_order": 0}],
+                },
+            )
+            assert resp.status_code == 200
+        finally:
+            test_app.cleanup()
+
+    def test_operator_can_use_own_account_and_article(self, monkeypatch):
+        """Operator can create a task with their own account and article."""
+        test_app = build_test_app(monkeypatch)
+        try:
+            op_client, _ = _make_operator_client(test_app)
+            op_account_id = _create_account(test_app, key="op-own-acc-r9", client=op_client)
+            op_article_id = _create_article(op_client, title="Op Own Article R9")
+
+            resp = op_client.post(
+                "/api/tasks",
+                json={
+                    "name": "Own Task",
+                    "task_type": "single",
+                    "article_id": op_article_id,
+                    "accounts": [{"account_id": op_account_id, "sort_order": 0}],
+                },
+            )
             assert resp.status_code == 200
         finally:
             test_app.cleanup()
