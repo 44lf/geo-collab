@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from server.app.core.security import get_current_user
+from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
 from server.app.models import ArticleGroup, User
 from server.app.schemas.article_group import (
@@ -92,7 +92,7 @@ def update_group_endpoint(
 def delete_group_endpoint(
     group_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ) -> Response:
     group = _verify_group_ownership(get_group(db, group_id), current_user)
     delete_group(db, group)

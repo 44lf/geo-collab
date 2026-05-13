@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from server.app.core.security import require_admin
 from server.app.db.session import get_db
-from server.app.models import Account, Article, PublishTask
+from server.app.models import Account, Article, PublishTask, User
 from server.app.schemas.system import SystemStatus
 from server.app.services.system_status import get_system_status
 
@@ -31,7 +32,10 @@ def _browser_ready() -> bool:
 
 # 获取系统运行状态
 @router.get("/status", response_model=SystemStatus)
-def read_system_status(db: Session = Depends(get_db)) -> SystemStatus:
+def read_system_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+) -> SystemStatus:
     base = get_system_status()
     data = base.model_dump()
     try:

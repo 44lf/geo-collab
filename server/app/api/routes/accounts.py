@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from server.app.core.security import get_current_user
+from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
 from server.app.models import Account as AccountModel, User
 from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, AccountRead, AccountRenameRequest, ToutiaoLoginRequest
@@ -157,7 +157,7 @@ def rename_existing_account(
 def delete_existing_account(
     account_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ) -> Response:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
     delete_account(db, account)

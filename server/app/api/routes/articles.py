@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from server.app.core.security import get_current_user
+from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
 from server.app.models import Article, PublishRecord, User
 from server.app.schemas.article import ArticleCoverUpdate, ArticleCreate, ArticleListRead, ArticleRead, ArticleUpdate
@@ -116,7 +116,7 @@ def update_article_endpoint(
 def delete_article_endpoint(
     article_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ) -> Response:
     article = _verify_article_ownership(get_article(db, article_id), current_user)
     delete_article(db, article)
