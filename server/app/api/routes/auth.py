@@ -6,7 +6,7 @@ from server.app.core.config import get_settings
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from server.app.core.security import create_access_token, verify_token
+from server.app.core.security import create_access_token, get_current_user, require_admin, verify_token
 from server.app.db.session import get_db
 from server.app.models.user import User
 
@@ -27,6 +27,27 @@ class CreateUserRequest(BaseModel):
     username: str
     password: str
     role: str = "operator"
+
+
+class UpdateUserRequest(BaseModel):
+    is_active: bool | None = None
+    role: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str
+
+
+def _user_dict(u: User) -> dict:
+    return {
+        "id": u.id,
+        "username": u.username,
+        "role": u.role,
+        "is_active": u.is_active,
+        "must_change_password": u.must_change_password,
+        "created_at": u.created_at,
+        "last_login_at": u.last_login_at,
+    }
 
 
 @router.post("/login")
@@ -165,3 +186,48 @@ def create_user(payload: CreateUserRequest, request: Request) -> dict:
         }
     finally:
         db.close()
+
+
+@router.get("/users")
+def list_users(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> list[dict]:
+    users = db.query(User).order_by(User.created_at).all()
+    return [_user_dict(u) for u in users]
+
+
+@router.patch("/users/{user_id}")
+def update_user(
+    user_id: int,
+    payload: UpdateUserRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+) -> dict:
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot modify your own account")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+    if payload.role is not None:
+        user.role = payload.role
+    db.flush()
+    return _user_dict(user)
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_password(
+    user_id: int,
+    payload: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> dict:
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.set_password(payload.new_password)
+    user.must_change_password = True
+    db.flush()
+    return {"detail": "Password reset"}

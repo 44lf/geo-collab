@@ -10,7 +10,8 @@ import { SystemWorkspace } from "./features/system/SystemWorkspace";
 import { AuthProvider, useAuth } from "./features/auth/AuthContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { ChangePasswordPage } from "./features/auth/ChangePasswordPage";
-import { LogOut } from "lucide-react";
+import { UsersWorkspace } from "./features/auth/UsersWorkspace";
+import { LogOut, Users } from "lucide-react";
 import "./styles.css";
 
 function AppShell() {
@@ -70,6 +71,17 @@ function AppShell() {
                 </button>
               );
             })}
+            {user.role === "admin" && (
+              <button
+                className={`navItem ${activeNav === "admin" ? "active" : ""}`}
+                type="button"
+                onClick={() => handleNavClick("admin")}
+              >
+                <Users size={17} />
+                <span>用户管理</span>
+                <span className="navDot" />
+              </button>
+            )}
           </nav>
           <div className="sidebarUser">
             <span className="sidebarUsername">{user.username}</span>
@@ -100,6 +112,13 @@ function AppShell() {
                 <SystemWorkspace />
               </ErrorBoundary>
             </div>
+            {user.role === "admin" && (
+              <div style={{ display: activeNav === "admin" ? undefined : "none" }}>
+                <ErrorBoundary fallback={<p role="alert">用户管理出错，请刷新重试</p>}>
+                  <UsersWorkspace />
+                </ErrorBoundary>
+              </div>
+            )}
           </div>
         </section>
       </main>

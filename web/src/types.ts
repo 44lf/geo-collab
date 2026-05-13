@@ -1,7 +1,7 @@
 import { FileText, MonitorCog, RadioTower, Send } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "content" | "media" | "tasks" | "system";
+export type NavKey = "content" | "media" | "tasks" | "system" | "admin";
 
 export type Asset = {
   id: string;
@@ -218,6 +218,16 @@ export type UserInfo = {
   username: string;
   role: "admin" | "operator";
   must_change_password: boolean;
+};
+
+export type UserRecord = {
+  id: number;
+  username: string;
+  role: "admin" | "operator";
+  is_active: boolean;
+  must_change_password: boolean;
+  created_at: string;
+  last_login_at: string | null;
 };
 
 export const ITEM_HEIGHT = 82;
