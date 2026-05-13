@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     secure_cookie: bool = False  # 生产 HTTPS 时设为 True（GEO_SECURE_COOKIE=true）
     feishu_webhook_url: str | None = None  # GEO_FEISHU_WEBHOOK_URL，不设则静默跳过
 
-    model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env", extra="ignore")
 
 
 @lru_cache
