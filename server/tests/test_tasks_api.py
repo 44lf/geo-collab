@@ -332,6 +332,44 @@ def test_execute_single_task_auto_succeeds(monkeypatch):
         test_app.cleanup()
 
 
+def test_execute_task_records_publish_diagnostics(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    def runner(article, account, *, stop_before_publish=False):
+        from server.app.services.publish_diagnostics import record_publish_diagnostic
+
+        record_publish_diagnostic("probe step elapsed_ms=12", level="warn")
+        return PublishFillResult(
+            url="https://mp.toutiao.com/article/diagnostic",
+            title=article.title,
+            message="published",
+        )
+
+    try:
+        monkeypatch.setattr("server.app.services.tasks.build_publish_runner_for_record", lambda record: runner)
+        cover_id = _upload_cover_image(client)
+        article_id = create_article(client, "Diagnostic Article", plain_text="Article body", cover_asset_id=cover_id)
+        account_id = create_account(client, test_app.data_dir, "account-diagnostic", "Account Diagnostic")
+        task = client.post(
+            "/api/tasks",
+            json={
+                "name": "diagnostic publish",
+                "task_type": "single",
+                "article_id": article_id,
+                "accounts": [{"account_id": account_id}],
+            },
+        ).json()
+
+        executed = _execute_and_wait(client, task["id"])
+
+        assert executed["status"] == "succeeded"
+        logs = client.get(f"/api/tasks/{task['id']}/logs").json()
+        assert any("[publish diagnostic] probe step elapsed_ms=12" in log["message"] for log in logs)
+    finally:
+        test_app.cleanup()
+
+
 def test_execute_group_task_auto_completes_all_records(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client

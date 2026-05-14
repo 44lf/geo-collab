@@ -70,6 +70,7 @@ from server.app.services.browser_sessions import (
 from server.app.services.errors import AccountError, ConflictError, ValidationError
 from server.app.services.feishu import notify_task_finished
 from server.app.services.drivers.toutiao import ToutiaoPublishError, ToutiaoUserInputRequired
+from server.app.services.publish_diagnostics import PublishDiagnosticEvent, capture_publish_diagnostics
 from server.app.schemas.task import (
     TaskAccountInput,
     TaskAssignmentPreviewItemRead,
@@ -108,6 +109,12 @@ class RunningRecord:
     record_id: int
     account_id: int
     started_monotonic: float
+
+
+@dataclass(frozen=True)
+class RecordPublishOutcome:
+    result: object
+    diagnostics: list[PublishDiagnosticEvent]
 
 
 # 验证通过后的任务输入
@@ -524,9 +531,15 @@ def _detach_record_inputs(db: Session, record: PublishRecord, article: Article, 
 def _publish_record(record: PublishRecord, article: Article, account: Account, stop_before_publish: bool):
     _logger.info("Publishing record %d for article %d to account %d", record.id, article.id, account.id)
     _global_publish_sem.acquire()
+    diagnostics: list[PublishDiagnosticEvent] = []
     try:
-        runner = build_publish_runner_for_record(record)
-        return runner(article, account, stop_before_publish=stop_before_publish)
+        with capture_publish_diagnostics(diagnostics):
+            runner = build_publish_runner_for_record(record)
+            result = runner(article, account, stop_before_publish=stop_before_publish)
+            return RecordPublishOutcome(result=result, diagnostics=list(diagnostics))
+    except BaseException as exc:
+        setattr(exc, "publish_diagnostics", list(diagnostics))
+        raise
     finally:
         _global_publish_sem.release()
 
@@ -541,11 +554,17 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
       - 其他异常 → 标记 failed（附失败截图 asset_id）
     """
     try:
-        result = future.result()
+        outcome = future.result()
+        if isinstance(outcome, RecordPublishOutcome):
+            _add_publish_diagnostics(db, task.id, record_id, outcome.diagnostics, task.user_id)
+            result = outcome.result
+        else:
+            result = outcome
     except FutureTimeoutError:
         _mark_record_failed(db, task.id, record_id, "Timeout: record execution exceeded 300s")
         _logger.warning("Record %d timed out", record_id)
     except ToutiaoUserInputRequired as exc:
+        _add_publish_diagnostics(db, task.id, record_id, _diagnostics_from_exception(exc), task.user_id)
         # 人工介入：保持浏览器打开，将 session 关联到 record
         # 前端会读取 record.novnc_url 展示"打开远程浏览器"按钮
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot, task.user_id)
@@ -556,13 +575,16 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
             associate_record_with_session(record_id, exc.session_id)
         _logger.info("Record %d waiting user input (type=%s)", record_id, error_type)
     except ToutiaoPublishError as exc:
+        _add_publish_diagnostics(db, task.id, record_id, _diagnostics_from_exception(exc), task.user_id)
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot, task.user_id)
         _mark_record_failed(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
         _logger.error("Record %d publish error: %s", record_id, exc)
     except ValueError as exc:
+        _add_publish_diagnostics(db, task.id, record_id, _diagnostics_from_exception(exc), task.user_id)
         _mark_record_failed(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}")
         _logger.error("Record %d value error: %s", record_id, exc)
     except Exception as exc:
+        _add_publish_diagnostics(db, task.id, record_id, _diagnostics_from_exception(exc), task.user_id)
         _mark_record_failed(db, task.id, record_id, f"Unexpected error: {exc}\n{traceback.format_exc()}")
         _logger.error("Record %d unexpected error", record_id, exc_info=True)
     else:
@@ -583,6 +605,24 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
         if db.execute(stmt).rowcount > 0:
             _add_log(db, task.id, record_id, "info", message)
         _logger.info("Record %d succeeded", record_id)
+
+
+def _diagnostics_from_exception(exc: BaseException) -> list[PublishDiagnosticEvent]:
+    diagnostics = getattr(exc, "publish_diagnostics", [])
+    return diagnostics if isinstance(diagnostics, list) else []
+
+
+def _add_publish_diagnostics(
+    db: Session,
+    task_id: int,
+    record_id: int,
+    diagnostics: list[PublishDiagnosticEvent],
+    user_id: int,
+) -> None:
+    for event in diagnostics:
+        level = event.level if event.level in {"info", "warn", "error"} else "info"
+        screenshot_asset_id = _store_failure_screenshot(db, task_id, record_id, event.screenshot, user_id)
+        _add_log(db, task_id, record_id, level, f"[publish diagnostic] {event.message}", screenshot_asset_id=screenshot_asset_id)
 
 
 def _mark_record_failed(

@@ -420,13 +420,88 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     return api<Asset>("/api/assets", { method: "POST", body: form });
   }
 
+  function applySavedArticle(saved: Article, contentJson?: Record<string, unknown>) {
+    setSelectedArticle(saved);
+    setDraft({
+      id: saved.id,
+      title: saved.title,
+      author: saved.author?.trim() ?? "",
+      cover_asset_id: saved.cover_asset_id,
+      status: saved.status,
+      version: saved.version,
+    });
+    savedStateRef.current = {
+      title: saved.title?.trim() ?? "",
+      author: saved.author ?? "",
+      cover_asset_id: saved.cover_asset_id,
+      bodyState: contentJson
+        ? stableStringify(contentJson)
+        : stableStringify(normalizeEditorDocument(saved.content_json || emptyDoc, "save")),
+    };
+  }
+
+  async function persistArticle({ quiet = false }: { quiet?: boolean } = {}): Promise<Article | null> {
+    if (!editor || !draft.title.trim()) {
+      if (!quiet) toast("标题不能为空", "error");
+      return null;
+    }
+    setLoading(true);
+    try {
+      const contentJson = normalizeEditorDocument(editor.getJSON(), "save");
+      const base = {
+        title: draft.title.trim(),
+        author: draft.author.trim() || null,
+        cover_asset_id: draft.cover_asset_id,
+        content_json: contentJson,
+        content_html: cleanLocalAssetUrlsInHtml(editor.getHTML()),
+        plain_text: editor.getText(),
+        word_count: countWords(editor.getText()),
+        status: draft.status,
+        version: draft.version,
+      };
+      const saved = draft.id
+        ? await singleFlight(`article-save-${draft.id}`, () => {
+            const payload: ArticleUpdatePayload = { ...base };
+            return api<Article>(`/api/articles/${draft.id}`, { method: "PUT", body: JSON.stringify(payload) });
+          })
+        : await singleFlight("article-create", () => {
+            const payload: ArticleCreatePayload = { ...base, client_request_id: newClientRequestId("article") };
+            return api<Article>("/api/articles", { method: "POST", body: JSON.stringify(payload) });
+          });
+      if (!saved) return null;
+      applySavedArticle(saved, contentJson);
+      await refreshArticles();
+      if (!quiet) toast("文章已保存", "success");
+      return saved;
+    } catch (error) {
+      if (!quiet) toast(error instanceof Error ? error.message : "保存失败", "error");
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleCoverUpload(file: File | null) {
     if (!file) return;
     setLoading(true);
     try {
       const asset = await uploadAsset(file);
       setDraft((current) => ({ ...current, cover_asset_id: asset.id }));
-      toast("封面已上传", "success");
+      if (draft.id) {
+        const saved = await api<Article>(`/api/articles/${draft.id}/cover`, {
+          method: "POST",
+          body: JSON.stringify({ cover_asset_id: asset.id, version: draft.version }),
+        });
+        setSelectedArticle(saved);
+        setDraft((current) => ({ ...current, cover_asset_id: saved.cover_asset_id, version: saved.version }));
+        if (savedStateRef.current) {
+          savedStateRef.current = { ...savedStateRef.current, cover_asset_id: saved.cover_asset_id };
+        }
+        await refreshArticles();
+        toast("封面已上传并保存", "success");
+      } else {
+        toast("封面已上传，保存文章后生效", "success");
+      }
     } catch (error) {
       toast(error instanceof Error ? error.message : "封面上传失败", "error");
     } finally {
@@ -452,7 +527,16 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
           },
         })
         .run();
-      toast("正文图片已插入", "success");
+      const attemptedAutoSave = Boolean(draft.id && draft.title.trim());
+      const saved = attemptedAutoSave ? await persistArticle({ quiet: true }) : null;
+      toast(
+        saved
+          ? "正文图片已插入并保存"
+          : attemptedAutoSave
+            ? "正文图片已插入，自动保存失败，请手动保存"
+            : "正文图片已插入，保存文章后生效",
+        saved || !attemptedAutoSave ? "success" : "error",
+      );
     } catch (error) {
       toast(error instanceof Error ? error.message : "正文图片上传失败", "error");
     } finally {
@@ -462,52 +546,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   pasteImageRef.current = (file: File) => void handleBodyImageUpload(file);
 
   async function saveArticle() {
-    if (!editor || !draft.title.trim()) {
-      toast("标题不能为空", "error");
-      return;
-    }
-    setLoading(true);
-    try {
-      const contentJson = normalizeEditorDocument(editor.getJSON(), "save");
-      const base = {
-        title: draft.title.trim(),
-        author: draft.author.trim() || null,
-        cover_asset_id: draft.cover_asset_id,
-        content_json: contentJson,
-        content_html: cleanLocalAssetUrlsInHtml(editor.getHTML()),
-        plain_text: editor.getText(),
-        word_count: countWords(editor.getText()),
-        status: draft.status,
-        version: draft.version,
-      };
-      const saved = draft.id
-        ? (() => {
-            const payload: ArticleUpdatePayload = { ...base };
-            return singleFlight(`article-save-${draft.id}`, () =>
-              api<Article>(`/api/articles/${draft.id}`, { method: "PUT", body: JSON.stringify(payload) }),
-            );
-          })()
-        : (() => {
-            const payload: ArticleCreatePayload = { ...base, client_request_id: newClientRequestId("article") };
-            return singleFlight("article-create", () =>
-              api<Article>("/api/articles", { method: "POST", body: JSON.stringify(payload) }),
-            );
-          })();
-      if (!saved) return;
-      savedStateRef.current = {
-        title: draft.title.trim(),
-        author: draft.author.trim() || "",
-        cover_asset_id: draft.cover_asset_id,
-        bodyState: stableStringify(contentJson),
-      };
-      await refreshArticles();
-      resetDraft();
-      toast("文章已保存", "success");
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "保存失败", "error");
-    } finally {
-      setLoading(false);
-    }
+    await persistArticle();
   }
 
   async function deleteCurrentArticle() {
@@ -837,7 +876,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
             <label className="fileButton">
               <Upload size={16} />
               上传封面
-              <input accept="image/*" type="file" onChange={(event) => void handleCoverUpload(event.target.files?.[0] ?? null)} />
+              <input accept="image/*" type="file" onChange={(event) => { void handleCoverUpload(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} />
             </label>
             {selectedArticle ? <span className="metaText">正文图片 {selectedArticle.body_assets.length} 张</span> : null}
           </section>

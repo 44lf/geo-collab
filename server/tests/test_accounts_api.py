@@ -54,6 +54,47 @@ def test_start_login_browser_runs_impl_in_plain_thread(monkeypatch):
     assert seen["thread"] != caller_thread
 
 
+def test_login_page_loader_runs_in_background(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class FakePage:
+        def goto(self, *_args, **_kwargs):
+            started.set()
+            release.wait(timeout=2)
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+    try:
+        from server.app.services import accounts, browser_sessions
+
+        session = RemoteBrowserSession(
+            id="loader-session",
+            account_key="demo",
+            display_number=99,
+            display=":99",
+            vnc_port=5900,
+            novnc_port=6080,
+            novnc_url="http://127.0.0.1:6080/vnc.html",
+            log_dir=test_app.data_dir,
+            page=FakePage(),
+        )
+        with browser_sessions._sessions_lock:
+            browser_sessions._active_sessions[session.id] = session
+
+        accounts._start_login_page_loader(session.id, "toutiao", "demo", "https://mp.toutiao.com")
+
+        assert started.wait(timeout=1)
+        assert session.operation_lock.acquire(blocking=False) is False
+        release.set()
+    finally:
+        release.set()
+        test_app.cleanup()
+
+
 def test_toutiao_login_registers_existing_storage_and_lists_account(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client

@@ -47,6 +47,7 @@ class RemoteBrowserSession:
     playwright: Any | None = field(default=None, repr=False)
     browser_context: Any | None = field(default=None, repr=False)
     page: Any | None = field(default=None, repr=False)
+    operation_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     started_at: float = field(default_factory=time.monotonic)  # 用于空闲超时判断
 
 
@@ -353,19 +354,20 @@ def _stop_session_processes(session: RemoteBrowserSession) -> None:
 
 
 def _close_browser_handles(session: RemoteBrowserSession) -> None:
-    if session.browser_context is not None:
-        try:
-            session.browser_context.close()
-        except Exception:
-            pass
-    if session.playwright is not None:
-        try:
-            session.playwright.stop()
-        except Exception:
-            pass
-    session.browser_context = None
-    session.playwright = None
-    session.page = None
+    with session.operation_lock:
+        if session.browser_context is not None:
+            try:
+                session.browser_context.close()
+            except Exception:
+                pass
+        if session.playwright is not None:
+            try:
+                session.playwright.stop()
+            except Exception:
+                pass
+        session.browser_context = None
+        session.playwright = None
+        session.page = None
 
 
 def _wait_for_x_display(display_number: int, timeout_seconds: float) -> None:

@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 from server.app.models import Account, Article, Asset
 from server.app.services.articles import article_has_publishable_body, loads_content_json
 from server.app.services.assets import resolve_asset_path
+from server.app.services.publish_diagnostics import publish_step, record_publish_diagnostic
 
 TOUTIAO_PUBLISH_URL = "https://mp.toutiao.com/profile_v4/graphic/publish"
 QR_HINTS = ("扫码", "扫一扫", "二维码")
@@ -342,12 +343,14 @@ def _paste_body_image(page: Any, asset: Asset) -> None:
         raise ToutiaoPublishError(f"正文图片文件不存在: {asset.id}")
 
     before_count = _body_image_count(page)
+    record_publish_diagnostic(f"body image upload start: asset_id={asset.id}; before_count={before_count}")
 
     try:
         _open_body_image_drawer(page)
         _upload_body_image_in_drawer(page, image_path)
         _confirm_body_image_drawer(page)
         _wait_body_image_inserted(page, before_count)
+        record_publish_diagnostic(f"body image inserted: asset_id={asset.id}; after_count={_body_image_count(page)}")
     except Exception as exc:
         after_count = _body_image_count(page)
         page_closed = _page_is_closed(page)
@@ -555,6 +558,7 @@ def _handle_cover(page: Any, article: Article) -> None:
     cover_path = resolve_asset_path(article.cover_asset)
     if not cover_path.exists():
         raise ToutiaoPublishError(f"Cover asset file not found: {article.cover_asset_id}")
+    record_publish_diagnostic(f"cover upload start: asset_id={article.cover_asset_id}; path={cover_path.name}")
 
     if _cover_already_present(page):
         return
@@ -577,7 +581,7 @@ def _handle_cover(page: Any, article: Article) -> None:
         raise ToutiaoPublishError(f"封面文件选择失败: {exc}") from exc
 
     try:
-        page.get_by_text("已上传 1 张图片").wait_for(timeout=60000)
+        page.get_by_text(re.compile(r"已上传\s*1\s*张图片")).wait_for(timeout=60000)
     except Exception as exc:
         raise ToutiaoPublishError(f"封面上传超时（60s）: {exc}") from exc
 
@@ -762,23 +766,32 @@ def _do_publish(page, context, article, account, state_path, stop_before_publish
       1. 打开头条发布页 → 2. 填标题 → 3. 上传封面 → 4. 填正文 → 5. 等待图片就绪 → 6. 点击发布
     每步之间尝试关闭阻塞弹窗（营销/引导弹窗会遮挡操作区域）。
     """
-    page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
+    with publish_step("open Toutiao publish page", page=page):
+        page.goto(TOUTIAO_PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
     try:
         page.get_by_role("textbox", name="请输入文章标题").wait_for(state="visible", timeout=20000)
     except Exception:
         pass
-    _ensure_publish_page(page)
-    _close_ai_drawer(page)
-    _dismiss_blocking_popups(page)
-    _fill_title(page, article.title)
-    _dismiss_blocking_popups(page)
-    _handle_cover(page, article)
-    _dismiss_blocking_popups(page)
-    _fill_body(page, article)
-    _dismiss_blocking_popups(page)
-    _wait_publish_images_ready(page)
-    publish_url = _click_publish_and_wait(page, stop_before_publish)
-    context.storage_state(path=str(state_path))
+    with publish_step("ensure publish page", page=page):
+        _ensure_publish_page(page)
+    with publish_step("prepare editor", page=page):
+        _close_ai_drawer(page)
+        _dismiss_blocking_popups(page)
+    with publish_step("fill title", page=page):
+        _fill_title(page, article.title)
+        _dismiss_blocking_popups(page)
+    with publish_step("upload cover", page=page):
+        _handle_cover(page, article)
+        _dismiss_blocking_popups(page)
+    with publish_step("fill body", page=page):
+        _fill_body(page, article)
+        _dismiss_blocking_popups(page)
+    with publish_step("wait body images ready", page=page):
+        _wait_publish_images_ready(page)
+    with publish_step("click publish", page=page):
+        publish_url = _click_publish_and_wait(page, stop_before_publish)
+    with publish_step("save storage state"):
+        context.storage_state(path=str(state_path))
     message = "已进入发布预览，等待手动确认" if stop_before_publish else f"发布成功: {publish_url}"
     return PublishFillResult(
         url=publish_url,

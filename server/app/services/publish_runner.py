@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from playwright.sync_api import sync_playwright
 
@@ -19,6 +20,50 @@ from server.app.services.drivers.toutiao import (
     ToutiaoPublishError,
     ToutiaoUserInputRequired,
 )
+from server.app.services.publish_diagnostics import publish_step, record_publish_diagnostic
+
+
+def _short_url(url: str, limit: int = 180) -> str:
+    return url if len(url) <= limit else f"{url[:limit]}..."
+
+
+def _attach_page_network_diagnostics(page: Any) -> None:
+    counters = {"failed": 0, "bad_response": 0}
+
+    def on_request_failed(request: Any) -> None:
+        if counters["failed"] >= 20:
+            return
+        counters["failed"] += 1
+        try:
+            failure = getattr(request, "failure", None)
+            if callable(failure):
+                failure = failure()
+            error_text = failure or "unknown"
+            record_publish_diagnostic(
+                f"network request failed: {request.method} {_short_url(request.url)}; error={error_text}",
+                level="warn",
+            )
+        except Exception:
+            record_publish_diagnostic("network request failed: unable to read request details", level="warn")
+
+    def on_response(response: Any) -> None:
+        try:
+            status = int(response.status)
+        except Exception:
+            return
+        if status < 400 or counters["bad_response"] >= 20:
+            return
+        counters["bad_response"] += 1
+        try:
+            record_publish_diagnostic(
+                f"network response status={status}: {response.request.method} {_short_url(response.url)}",
+                level="warn",
+            )
+        except Exception:
+            record_publish_diagnostic(f"network response status={status}: unable to read response details", level="warn")
+
+    page.on("requestfailed", on_request_failed)
+    page.on("response", on_response)
 
 
 def run_publish(
@@ -42,29 +87,36 @@ def run_publish(
 
     driver = get_driver(platform_code)
 
-    with managed_remote_browser_session(account_key) as session:
+    with publish_step("remote browser session"):
+        session_cm = managed_remote_browser_session(account_key)
+        session = session_cm.__enter__()
+    try:
         pw = None
         context = None
         _keep_browser = False
         try:
-            pw = sync_playwright().start()
-            options = launch_options(channel, executable_path)
-            options["env"] = {**os.environ, "DISPLAY": session.display}
-            context = pw.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir_for_key(platform_code, account_key)),
-                **options,
-            )
+            with publish_step("start Playwright"):
+                pw = sync_playwright().start()
+            with publish_step("launch Chromium"):
+                options = launch_options(channel, executable_path)
+                options["env"] = {**os.environ, "DISPLAY": session.display}
+                context = pw.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir_for_key(platform_code, account_key)),
+                    **options,
+                )
             context.set_default_navigation_timeout(30000)
             page = context.new_page()
+            _attach_page_network_diagnostics(page)
             attach_browser_handles(session.id, pw, context, page)
-            return driver.publish(
-                page=page,
-                context=context,
-                article=article,
-                account=account,
-                state_path=state_path,
-                stop_before_publish=stop_before_publish,
-            )
+            with publish_step("driver publish flow", page=page):
+                return driver.publish(
+                    page=page,
+                    context=context,
+                    article=article,
+                    account=account,
+                    state_path=state_path,
+                    stop_before_publish=stop_before_publish,
+                )
         except ToutiaoUserInputRequired as exc:
             _keep_browser = True
             keep_session_alive(session.id)
@@ -84,3 +136,5 @@ def run_publish(
                     except Exception:
                         pass
                 attach_browser_handles(session.id, None, None, None)
+    finally:
+        session_cm.__exit__(None, None, None)

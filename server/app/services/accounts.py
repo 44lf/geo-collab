@@ -324,17 +324,8 @@ def _start_login_browser_impl(platform_code: str, account_key: str, channel: str
         context.set_default_navigation_timeout(30000)
         page = context.new_page()
         attach_browser_handles(session.id, pw, context, page)
-        page.goto(driver.home_url, wait_until="domcontentloaded", timeout=60000)
-        try:
-            page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            _logger.warning(
-                "Remote login page did not reach networkidle for %s account %s",
-                platform_code,
-                account_key,
-                exc_info=True,
-            )
         keep_session_alive(session.id)
+        _start_login_page_loader(session.id, platform_code, account_key, driver.home_url)
         return session
     except Exception:
         try:
@@ -347,10 +338,49 @@ def _start_login_browser_impl(platform_code: str, account_key: str, channel: str
         raise
 
 
+def _start_login_page_loader(session_id: str, platform_code: str, account_key: str, home_url: str) -> None:
+    def _load() -> None:
+        from server.app.services.browser_sessions import get_session
+
+        session = get_session(session_id)
+        if session is None or session.page is None:
+            return
+        with session.operation_lock:
+            page = session.page
+            if page is None:
+                return
+            try:
+                page.goto(home_url, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    _logger.warning(
+                        "Remote login page did not reach networkidle for %s account %s",
+                        platform_code,
+                        account_key,
+                        exc_info=True,
+                    )
+            except Exception:
+                _logger.warning(
+                    "Remote login page load failed for %s account %s",
+                    platform_code,
+                    account_key,
+                    exc_info=True,
+                )
+
+    worker = threading.Thread(
+        target=_load,
+        daemon=True,
+        name=f"geo-login-page-loader-{platform_code}-{account_key}",
+    )
+    worker.start()
+
+
 def _read_and_save_login_state_from_remote_session(session, platform_code: str, state_path: Path) -> BrowserCheckResult:
-    result = _read_login_state_from_remote_session(session, platform_code)
-    session.browser_context.storage_state(path=str(state_path))
-    return result
+    with session.operation_lock:
+        result = _read_login_state_from_remote_session(session, platform_code)
+        session.browser_context.storage_state(path=str(state_path))
+        return result
 
 
 def _read_login_state_from_remote_session(session, platform_code: str) -> BrowserCheckResult:
