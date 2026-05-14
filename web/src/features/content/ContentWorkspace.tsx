@@ -14,6 +14,7 @@ import { useToast } from "../../components/Toast";
 import { api, assetSrc, countWords, emptyDoc, newClientRequestId, singleFlight, withAssetToken } from "../../api/client";
 import type { Article, ArticleCreatePayload, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleSummary, ArticleUpdatePayload, Asset, Draft } from "../../types";
 import { EditorToolbar } from "../../components/editor/EditorToolbar";
+import { compressImage } from "../../lib/compress-image";
 import { ArticleListItem } from "../../components/ArticleListItem";
 import { Modal } from "../../components/Modal";
 import { Pagination } from "../../components/Pagination";
@@ -416,7 +417,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
 
   async function uploadAsset(file: File): Promise<Asset> {
     const form = new FormData();
-    form.append("file", file);
+    form.append("file", await compressImage(file));
     return api<Asset>("/api/assets", { method: "POST", body: form });
   }
 
