@@ -1,17 +1,18 @@
 # Geo 协作平台
 
-Geo 协作平台云端发布管理系统。
+Geo 协作平台云端发布管理系统。**仅支持 Linux 服务器部署（Docker Compose）**。
 
 ## Docker Compose 快速启动
 
-```powershell
-cp .env.example .env
+```bash
+cp .env .env.local
 # 编辑 .env，设置 MYSQL_ROOT_PASSWORD、GEO_JWT_SECRET、GEO_SEED_USERS
 docker-compose up -d
-docker-compose exec app alembic upgrade head
 docker-compose exec app python -m server.scripts.seed_users
 # 打开浏览器访问 http://服务器IP:8000
 ```
+
+Docker 启动时自动执行 `alembic upgrade head`，无需手动迁移。
 
 ## 代码阅读顺序
 
@@ -24,18 +25,15 @@ docker-compose exec app python -m server.scripts.seed_users
 
 ### 第二层：业务逻辑
 4. **`server/app/services/accounts.py`** — 账号登录 / 检测 / 导入导出，了解 storage_state 生命周期
-5. **`server/app/services/toutiao_publisher.py`** — Playwright 自动化发文，了解头条页面操作流程
-6. **`server/app/services/tasks.py`** — 任务调度引擎，了解 publish 执行链路和状态机
+5. **`server/app/services/drivers/toutiao.py`** — Playwright 自动化发文，了解头条页面操作流程
+6. **`server/app/services/publish_runner.py`** — 通用发布编排（`run_publish`），了解 Xvfb session 管理
+7. **`server/app/services/tasks.py`** — 任务调度引擎，了解 publish 执行链路和状态机
 
 ### 第三层：API 接口
-7. **`server/app/api/routes/`** — 7 个路由模块（accounts, article_groups, articles, assets, publish_records, system, tasks），加上 auth 路由
+8. **`server/app/api/routes/`** — 7 个路由模块（accounts, article_groups, articles, assets, publish_records, system, tasks），加上 auth 路由
 
 ### 第四层：前端
-8. **`web/src/`** — React 前端，feature-split 结构（`features/content/`, `features/accounts/`, `features/tasks/`, `features/system/`），Tiptap 富文本编辑器，Lucide 图标
-
-### 第五层：入口与测试
-9. **`launcher.py`** — 应用入口（Alembic 自动升级、启动 uvicorn）
-10. **`server/tests/`** — 关键测试文件，验证对各模块的理解
+9. **`web/src/`** — React 前端，feature-split 结构（`features/content/`, `features/accounts/`, `features/tasks/`, `features/system/`），Tiptap 富文本编辑器，Lucide 图标
 
 ## 环境
 
@@ -44,45 +42,39 @@ docker-compose exec app python -m server.scripts.seed_users
 
 ## 后端开发
 
-```powershell
+```bash
 conda activate geo_xzpt
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 alembic upgrade head
 uvicorn server.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 健康检查：
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/system/status
+```bash
+curl http://127.0.0.1:8000/api/system/status
 ```
 
 ## 前端开发
 
-```powershell
+```bash
 pnpm install
 pnpm --filter @geo/web dev
 ```
 
 ## 数据目录
 
-默认数据目录为 `%LOCALAPPDATA%/GeoCollab`，可用环境变量覆盖：
+`GEO_DATA_DIR` 环境变量控制数据存储位置，Docker 内默认为 `/app/data`：
 
-```powershell
-$env:GEO_DATA_DIR="E:\geo\GeoAppData"
 ```
-
-## 头条号 Spike
-
-先运行登录状态保存脚本，按浏览器提示人工登录或扫码：
-
-```powershell
-conda activate geo_xzpt
-python -m server.scripts.toutiao_login_spike --account-key spike
-```
-
-登录状态验证通过后，再打开发布页 Spike：
-
-```powershell
-python -m server.scripts.toutiao_publish_spike --account-key spike
+data/
+├── geo.db              # SQLite（开发/测试）
+├── assets/             # 上传图片
+├── browser_states/     # Playwright persistent profiles
+│   └── <platform_code>/
+│       └── <account_key>/
+│           ├── profile/            # Chromium profile 目录
+│           └── storage_state.json  # 登录态快照
+├── exports/            # 账号授权导出 ZIP
+└── logs/               # 远程浏览器 session 进程日志
 ```

@@ -1,22 +1,9 @@
 """
-远程浏览器会话管理（Linux 专用，仅用于云端部署）。
+Remote browser session management for the Linux server deployment.
 
-在 Linux 服务器上启动以下进程链：
-  Xvfb (虚拟显示) → x11vnc (VNC Server) → websockify (WebSocket → VNC) → noVNC (Web 客户端)
-
-示意图：
-  用户浏览器 ──websockify──→ x11vnc ──→ Xvfb (:99)
-                                      ──→ Chromium (Playwright, DISPLAY=:99)
-
-当记录进入 waiting_user_input 状态时，session 被标记为 keep_alive，
-不会在 context manager 退出时 stop。前端通过 PublishRecord.novnc_url
-拿到 noVNC 地址，用户可直接在浏览器中操作远程 Chrome。
-
-注意事项：
-  - 仅支持 Linux（sys.platform == "win32" 时抛出 RuntimeError）
-  - display/VNC port/noVNC port 基于配置中的 base 递增分配
-  - 所有日志写入 data_dir/logs/browser-sessions/<account_key>-<session_id>/
-  - 当前无空闲超时自动清理（需要外部进程或定时器）
+The runtime pipeline is Xvfb -> x11vnc -> websockify -> noVNC, with
+Playwright Chromium attached to the X display. The system is deployed on Linux
+servers, so this module does not need platform-specific branching.
 """
 from __future__ import annotations
 
@@ -25,7 +12,6 @@ import logging
 import shutil
 import socket
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -123,10 +109,6 @@ def keep_session_alive(session_id: str) -> None:
         _session_keep_alive.add(session_id)
 
 
-def remote_browser_enabled() -> bool:
-    return bool(get_settings().publish_remote_browser_enabled)
-
-
 def active_remote_browser_sessions() -> list[RemoteBrowserSession]:
     with _sessions_lock:
         return list(_active_sessions.values())
@@ -144,7 +126,7 @@ def remote_browser_runtime_status() -> dict[str, object]:
     if novnc_web_dir:
         novnc_web_ready = Path(novnc_web_dir).exists()
     return {
-        "enabled": remote_browser_enabled(),
+        "enabled": True,
         "ready": all(required.values()) and novnc_web_ready,
         "active_sessions": len(active_remote_browser_sessions()),
         "tools": {name: bool(path) for name, path in required.items()},
@@ -161,10 +143,6 @@ def managed_remote_browser_session(account_key: str) -> Iterator[RemoteBrowserSe
     特殊情况：如果 session 被 keep_session_alive() 标记（waiting_user_input 场景），
     则 exit 时不 stop，由调用方（cancel_task / resolve_user_input_record）显式清理。
     """
-    if not remote_browser_enabled():
-        yield None
-        return
-
     session = start_remote_browser_session(account_key)
     try:
         yield session
@@ -177,7 +155,6 @@ def managed_remote_browser_session(account_key: str) -> Iterator[RemoteBrowserSe
 
 def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
     settings = get_settings()
-    _ensure_linux_runtime()
 
     xvfb = _require_command(settings.publish_xvfb_path, "Xvfb")
     x11vnc = _require_command(settings.publish_x11vnc_path, "x11vnc")
@@ -510,15 +487,6 @@ def _stop_idle_cleanup() -> None:
     if _idle_cleanup_thread is not None:
         _idle_cleanup_thread.join(timeout=3)
         _idle_cleanup_thread = None
-
-
-def _ensure_linux_runtime() -> None:
-    if _is_windows_runtime():
-        raise RuntimeError("Remote browser sessions require a Linux runtime")
-
-
-def _is_windows_runtime() -> bool:
-    return sys.platform == "win32"
 
 
 def _novnc_url(host: str, port: int) -> str:

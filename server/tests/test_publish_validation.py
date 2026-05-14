@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from server.app.services.toutiao_publisher import PublishFillResult
+from server.app.services.drivers.toutiao import PublishFillResult
 from server.tests.utils import build_test_app
 
 
@@ -12,7 +12,7 @@ class FakePublisher:
             message="发布成功: https://mp.toutiao.com/article/123456",
         )
 
-    def publish_article(self, article, account, stop_before_publish=False):
+    def __call__(self, article, account, *, stop_before_publish=False):
         return self.result
 
 
@@ -89,7 +89,7 @@ def test_empty_body_fails_publish(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -123,7 +123,7 @@ def test_image_only_body_is_publishable(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -175,7 +175,7 @@ def test_no_cover_fails_publish(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         article_id = _create_article(client, "Test Article", plain_text="Some body text", cover_asset_id=None)
@@ -209,7 +209,7 @@ def test_empty_title_fails_publish(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)

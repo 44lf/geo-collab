@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import type { Account, AccountBrowserSession, AccountBrowserSessionFinish, AccountLoginPayload } from "../../types";
+import type { Account, AccountBrowserSession, AccountBrowserSessionFinish, PlatformLoginPayload } from "../../types";
 import { CheckCircle2, Download, ExternalLink, Plus, RefreshCw, Trash2, Upload, UserPlus, X } from "lucide-react";
 import { useToast } from "../../components/Toast";
+
+const DEFAULT_PLATFORM_CODE = "toutiao";
 
 type ActiveLoginSession = {
   sessionId: string;
@@ -37,12 +39,12 @@ export function AccountsWorkspace() {
     setLoading(true);
     toast("正在复用已保存状态", "info");
     try {
-      const payload: AccountLoginPayload = {
+      const payload: PlatformLoginPayload = {
         display_name: displayName,
         account_key: accountKey,
         use_browser: useBrowser,
       };
-      await api<Account>("/api/accounts/toutiao/login", {
+      await api<Account>(`/api/accounts/${DEFAULT_PLATFORM_CODE}/login`, {
         method: "POST",
         body: JSON.stringify({ ...payload, channel: "chromium", wait_seconds: 180 }),
       });
@@ -68,12 +70,12 @@ export function AccountsWorkspace() {
   async function startNewRemoteLogin() {
     setLoading(true);
     try {
-      const payload: AccountLoginPayload = {
+      const payload: PlatformLoginPayload = {
         display_name: displayName,
         account_key: accountKey,
         use_browser: true,
       };
-      const result = await api<AccountBrowserSession>("/api/accounts/toutiao/login-session", {
+      const result = await api<AccountBrowserSession>(`/api/accounts/${DEFAULT_PLATFORM_CODE}/login-session`, {
         method: "POST",
         body: JSON.stringify({ ...payload, channel: "chromium", wait_seconds: 180 }),
       });
@@ -93,7 +95,7 @@ export function AccountsWorkspace() {
     try {
       const result = await api<AccountBrowserSession>(`/api/accounts/${account.id}/login-session`, {
         method: "POST",
-        body: JSON.stringify({ channel: "chromium", wait_seconds: 180, use_browser: true }),
+        body: JSON.stringify({ channel: "chromium", use_browser: true }),
       });
       rememberLoginSession(result);
       openRemoteBrowser(result.novnc_url);
@@ -261,7 +263,7 @@ export function AccountsWorkspace() {
       <header className="topbar">
         <div>
           <p className="eyebrow">媒体矩阵</p>
-          <h1>头条号授权</h1>
+          <h1>平台账号授权</h1>
         </div>
         <div className="topActions">
           <label className="secondaryButton" style={{ cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.5 : 1 }}>
@@ -288,7 +290,7 @@ export function AccountsWorkspace() {
 
       <section className="mediaGrid">
         <section className="accountForm">
-          <h2>添加头条号</h2>
+          <h2>添加平台账号</h2>
           <label>
             显示名称
             <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />

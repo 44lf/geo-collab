@@ -277,10 +277,8 @@ class TestNotifyTriggeredOnTaskCompletion:
                 message = "Published"
 
             monkeypatch.setattr(
-                "server.app.services.tasks.build_publisher_for_record",
-                lambda _r: type("P", (), {
-                    "publish_article": lambda self, *a, **kw: FakeResult()
-                })(),
+                "server.app.services.tasks.build_publish_runner_for_record",
+                lambda _r: (lambda article, account, *, stop_before_publish=False: FakeResult()),
             )
 
             test_app.client.post(f"/api/tasks/{task_id}/execute")
@@ -328,15 +326,13 @@ class TestNotifyTriggeredOnTaskCompletion:
             task_data = _create_task(test_app.client, article_id, account_id, name="Fail task")
             task_id = task_data["id"]
 
-            from server.app.services.toutiao_publisher import ToutiaoPublishError
+            from server.app.services.drivers.toutiao import ToutiaoPublishError
 
             monkeypatch.setattr(
-                "server.app.services.tasks.build_publisher_for_record",
-                lambda _r: type("P", (), {
-                    "publish_article": lambda self, *a, **kw: (_ for _ in ()).throw(
-                        ToutiaoPublishError("publish failed", screenshot=None)
-                    )
-                })(),
+                "server.app.services.tasks.build_publish_runner_for_record",
+                lambda _r: (lambda article, account, *, stop_before_publish=False: (_ for _ in ()).throw(
+                    ToutiaoPublishError("publish failed", screenshot=None)
+                )),
             )
 
             test_app.client.post(f"/api/tasks/{task_id}/execute")
@@ -382,10 +378,8 @@ class TestNotifyTriggeredOnTaskCompletion:
                 message = "Published"
 
             monkeypatch.setattr(
-                "server.app.services.tasks.build_publisher_for_record",
-                lambda _r: type("P", (), {
-                    "publish_article": lambda self, *a, **kw: FakeResult()
-                })(),
+                "server.app.services.tasks.build_publish_runner_for_record",
+                lambda _r: (lambda article, account, *, stop_before_publish=False: FakeResult()),
             )
 
             test_app.client.post(f"/api/tasks/{task_id}/execute")

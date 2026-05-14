@@ -6,11 +6,10 @@
   测试中环境变更后需调用 get_settings.cache_clear()
 
 本地开发关键配置：
-  GEO_DATA_DIR                    数据目录（默认 %LOCALAPPDATA%/GeoCollab）
+  GEO_DATA_DIR                    数据目录（必填）
   GEO_PUBLISH_MAX_CONCURRENT_RECORDS  并发发布记录数（上限 5）
 
 云端远程浏览器配置：
-  GEO_PUBLISH_REMOTE_BROWSER_ENABLED  启用远程 Xvfb + noVNC（Linux 必需）
   GEO_PUBLISH_XVFB_PATH               Xvfb 可执行路径
   GEO_PUBLISH_X11VNC_PATH             x11vnc 可执行路径
   GEO_PUBLISH_WEBSOCKIFY_PATH         websockify 可执行路径
@@ -39,7 +38,6 @@ class Settings(BaseSettings):
     publish_record_timeout_seconds: int = 300
     publish_browser_channel: str = "chromium"
     publish_browser_executable_path: str | None = None
-    publish_remote_browser_enabled: bool = False
     publish_xvfb_path: str = "Xvfb"
     publish_x11vnc_path: str = "x11vnc"
     publish_websockify_path: str = "websockify"

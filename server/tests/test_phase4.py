@@ -13,7 +13,7 @@ import pytest
 from server.app.core.time import utcnow
 from server.app.models import PublishRecord, PublishTask, TaskLog
 from server.app.services.tasks import recover_stuck_records
-from server.app.services.toutiao_publisher import (
+from server.app.services.drivers.toutiao import (
     ToutiaoPublishError,
     ToutiaoUserInputRequired,
     QR_HINTS,
@@ -96,12 +96,10 @@ class TestErrorTypeClassification:
             task_id = task_data["id"]
 
             monkeypatch.setattr(
-                "server.app.services.tasks.build_publisher_for_record",
-                lambda _r: type("P", (), {
-                    "publish_article": lambda self, *a, **kw: (_ for _ in ()).throw(
-                        ToutiaoUserInputRequired("需要扫码", error_type="qr_scan_required")
-                    )
-                })(),
+                "server.app.services.tasks.build_publish_runner_for_record",
+                lambda _r: (lambda article, account, *, stop_before_publish=False: (_ for _ in ()).throw(
+                    ToutiaoUserInputRequired("需要扫码", error_type="qr_scan_required")
+                )),
             )
 
             import time as _time
@@ -201,10 +199,10 @@ class TestManualInterventionEndpoints:
         test_app, record_id, task_id = self._setup_waiting_record(monkeypatch, "waiting_user_input")
         try:
             monkeypatch.setattr(
-                "server.app.services.tasks.build_publisher_for_record",
-                lambda _r: type("P", (), {"publish_article": lambda self, *a, **kw: (_ for _ in ()).throw(
+                "server.app.services.tasks.build_publish_runner_for_record",
+                lambda _r: (lambda article, account, *, stop_before_publish=False: (_ for _ in ()).throw(
                     Exception("stop immediately")
-                )})(),
+                )),
             )
             resp = test_app.client.post(f"/api/publish-records/{record_id}/resolve-user-input")
             assert resp.status_code == 200, resp.text

@@ -55,4 +55,4 @@ RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright \
 
 EXPOSE 8000
 
-CMD ["python", "launcher.py"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn server.app.main:app --host 0.0.0.0 --port 8000"]

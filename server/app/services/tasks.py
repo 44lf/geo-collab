@@ -10,7 +10,7 @@
           并发循环：
             ThreadPoolExecutor (max 5 workers)
             → _start_runnable_records → _publish_record (后台线程)
-              → ToutiaoPublisher.publish_article()
+              → build_publish_runner_for_record → _runner()
             → _finish_record_future() 处理结果
             → 继续处理下一条 pending record
 
@@ -69,7 +69,7 @@ from server.app.services.browser_sessions import (
 )
 from server.app.services.errors import AccountError, ConflictError, ValidationError
 from server.app.services.feishu import notify_task_finished
-from server.app.services.toutiao_publisher import ToutiaoPublisher, ToutiaoPublishError, ToutiaoUserInputRequired
+from server.app.services.drivers.toutiao import ToutiaoPublishError, ToutiaoUserInputRequired
 from server.app.schemas.task import (
     TaskAccountInput,
     TaskAssignmentPreviewItemRead,
@@ -462,7 +462,7 @@ def _claim_record(db: Session, task_id: int, record: PublishRecord) -> bool:
 
 
 def _load_article_for_publish(db: Session, article_id: int) -> Article | None:
-    # ALL relationships accessed by publish_article (via ToutiaoPublisher) must be eagerly loaded here.
+    # ALL relationships accessed by the publish runner must be eagerly loaded here.
     # Missing selectinload will be caught by _detach_record_inputs at detach time.
     return db.execute(
         select(Article)
@@ -525,8 +525,8 @@ def _publish_record(record: PublishRecord, article: Article, account: Account, s
     _logger.info("Publishing record %d for article %d to account %d", record.id, article.id, account.id)
     _global_publish_sem.acquire()
     try:
-        publisher = build_publisher_for_record(record)
-        return publisher.publish_article(article, account, stop_before_publish=stop_before_publish)
+        runner = build_publish_runner_for_record(record)
+        return runner(article, account, stop_before_publish=stop_before_publish)
     finally:
         _global_publish_sem.release()
 
@@ -722,13 +722,22 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
     return new_record
 
 
-# 为记录构建发布器实例（由子类或 mock 重写）
-def build_publisher_for_record(record: PublishRecord) -> ToutiaoPublisher:
+def build_publish_runner_for_record(record: PublishRecord):
+    from server.app.services.publish_runner import run_publish
     settings = get_settings()
-    return ToutiaoPublisher(
-        channel=settings.publish_browser_channel,
-        executable_path=settings.publish_browser_executable_path,
-    )
+    channel = settings.publish_browser_channel
+    executable_path = settings.publish_browser_executable_path
+
+    def _runner(article, account, *, stop_before_publish=False):
+        return run_publish(
+            article=article,
+            account=account,
+            channel=channel,
+            executable_path=executable_path,
+            stop_before_publish=stop_before_publish,
+        )
+
+    return _runner
 
 
 # 存储失败截图并返回资源 ID

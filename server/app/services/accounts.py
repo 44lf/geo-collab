@@ -5,14 +5,13 @@ import json
 import logging
 import os
 import re
-import sys
 import tempfile
 import uuid
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-import zipfile
 
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session, selectinload
@@ -21,15 +20,11 @@ from server.app.core.config import get_settings
 from server.app.core.paths import ensure_data_dirs, get_data_dir
 from server.app.core.time import utcnow
 from server.app.models import Account, Platform, PublishRecord, PublishTaskAccount, TaskLog
-from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, ToutiaoLoginRequest
-
-TOUTIAO_HOME = "https://mp.toutiao.com"
-LOGIN_HINTS = ("login", "passport", "sso", "验证码", "扫码", "登录")
+from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, PlatformLoginRequest
 
 _logger = logging.getLogger(__name__)
 
 
-# 浏览器检查结果
 @dataclass(frozen=True)
 class BrowserCheckResult:
     logged_in: bool
@@ -40,146 +35,141 @@ class BrowserCheckResult:
 @dataclass(frozen=True)
 class AccountBrowserSessionResult:
     account: Account
+    platform_code: str
     account_key: str
     session_id: str
     novnc_url: str
 
 
-# 规范化账号本地标识：只保留字母数字和下划线
 def normalize_account_key(account_key: str | None) -> str:
     raw = account_key or uuid.uuid4().hex
     value = re.sub(r"[^a-zA-Z0-9_-]+", "-", raw).strip("-")
     return value or uuid.uuid4().hex
 
 
-# 账号的浏览器状态目录（含 profile 和 storage_state.json）
-def state_dir_for_key(account_key: str) -> Path:
-    return get_data_dir() / "browser_states" / "toutiao" / account_key
+def state_dir_for_key(platform_code: str, account_key: str) -> Path:
+    return get_data_dir() / "browser_states" / platform_code / account_key
 
 
-# Playwright storage_state.json 的完整路径
-def state_path_for_key(account_key: str) -> Path:
-    return state_dir_for_key(account_key) / "storage_state.json"
+def state_path_for_key(platform_code: str, account_key: str) -> Path:
+    return state_dir_for_key(platform_code, account_key) / "storage_state.json"
 
 
-# Playwright 持久化浏览器配置目录
-def profile_dir_for_key(account_key: str) -> Path:
-    return state_dir_for_key(account_key) / "profile"
+def profile_dir_for_key(platform_code: str, account_key: str) -> Path:
+    return state_dir_for_key(platform_code, account_key) / "profile"
 
 
-# 将绝对路径转为相对 data_dir 的 POSIX 路径（用于数据库存储）
 def relative_to_data_dir(path: Path) -> str:
     return path.resolve().relative_to(get_data_dir().resolve()).as_posix()
 
 
-# 从 storage_state_path 中提取 account_key
-def account_key_from_state_path(state_path: str) -> str:
+def account_key_from_state_path(state_path: str) -> tuple[str, str]:
     parts = Path(state_path).parts
     try:
-        toutiao_index = parts.index("toutiao")
-        return parts[toutiao_index + 1]
+        idx = parts.index("browser_states")
+        return parts[idx + 1], parts[idx + 2]
     except (ValueError, IndexError):
-        raise ValueError("Invalid toutiao state path") from None
+        raise ValueError(f"Invalid state path: {state_path}") from None
 
 
-# 获取或创建头条号平台记录
-def get_or_create_toutiao_platform(db: Session) -> Platform:
-    platform = db.execute(select(Platform).where(Platform.code == "toutiao")).scalar_one_or_none()
+def get_or_create_platform(db: Session, code: str, name: str, base_url: str | None) -> Platform:
+    platform = db.execute(select(Platform).where(Platform.code == code)).scalar_one_or_none()
     if platform is not None:
         return platform
 
-    platform = Platform(code="toutiao", name="头条号", base_url="https://mp.toutiao.com", enabled=True)
+    platform = Platform(code=code, name=name, base_url=base_url, enabled=True)
     db.add(platform)
     db.flush()
     db.refresh(platform)
     return platform
 
 
-import re
-
-VALID_EXE_RE = re.compile(r"^[a-zA-Z0-9_\-/.\\: ]+\.(exe|bat|cmd)$", re.IGNORECASE)
-
-
-# Playwright 浏览器启动参数
 def launch_options(channel: str, executable_path: str | None) -> dict[str, Any]:
-    from pathlib import Path
     options: dict[str, Any] = {
         "headless": False,
         "viewport": {"width": 1440, "height": 900},
+        "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
     }
-    if sys.platform != "win32":
-        options["args"] = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
     if channel and channel.lower() != "chromium":
         options["channel"] = channel
     if executable_path:
-        if sys.platform == "win32" and not VALID_EXE_RE.match(executable_path):
-            raise ValueError(f"Invalid executable_path: {executable_path}")
-        if sys.platform != "win32" and not Path(executable_path).is_absolute():
+        path = Path(executable_path)
+        if not path.is_absolute():
             raise ValueError(f"Executable path must be absolute: {executable_path}")
-        if not Path(executable_path).is_file():
+        if not path.is_file():
             raise ValueError(f"Executable not found: {executable_path}")
         options["executable_path"] = executable_path
     return options
 
 
-# 根据页面文字判断是否已登录
-def detect_login_state_text(url: str, title: str, body: str) -> bool:
-    haystack = f"{url}\n{title}\n{body}"
-    if any(hint in haystack for hint in LOGIN_HINTS):
-        return False
-    return "mp.toutiao.com" in url and ("profile_v4" in url or "头条号" in title)
+def list_accounts(db: Session) -> list[Account]:
+    stmt = select(Account).options(selectinload(Account.platform)).order_by(Account.updated_at.desc())
+    return list(db.execute(stmt).scalars().all())
 
 
-# 使用 Playwright 检查账号登录状态（打开浏览器访问头条号）
-def run_toutiao_browser_check(
-    account_key: str,
-    channel: str,
-    executable_path: str | None,
-    wait_seconds: int,
-) -> BrowserCheckResult:
-    from server.app.services.browser import managed_browser_context
-
-    ensure_data_dirs()
-    state_dir_for_key(account_key).mkdir(parents=True, exist_ok=True)
-    with managed_browser_context(
-        account_key=account_key,
-        channel=channel,
-        executable_path=executable_path,
-    ) as (playwright, context, page):
-        page.goto(TOUTIAO_HOME, wait_until="domcontentloaded", timeout=60000)
-        try:
-            page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            _logger.warning("Browser check failed for account %s", account_key, exc_info=True)
-            pass
-
-        deadline = wait_seconds * 1000
-        elapsed = 0
-        logged_in = False
-        url = page.url
-        title = ""
-        while elapsed <= deadline:
-            page.wait_for_timeout(1000)
-            elapsed += 1000
-            try:
-                url = page.url
-                title = page.title()
-                body = page.locator("body").inner_text(timeout=3000)
-            except Exception:
-                _logger.warning("Browser check iteration failed", exc_info=True)
-                continue
-            logged_in = detect_login_state_text(url, title, body)
-            if logged_in:
-                break
-
-        context.storage_state(path=str(state_path_for_key(account_key)))
-        return BrowserCheckResult(logged_in=logged_in, url=url, title=title)
+def get_account(db: Session, account_id: int) -> Account | None:
+    stmt = select(Account).where(Account.id == account_id).options(selectinload(Account.platform))
+    return db.execute(stmt).scalar_one_or_none()
 
 
-def start_toutiao_login_session(db: Session, user_id: int, payload: ToutiaoLoginRequest) -> AccountBrowserSessionResult:
-    platform = get_or_create_toutiao_platform(db)
+def register_account_from_storage_state(
+    db: Session,
+    user_id: int,
+    platform_code: str,
+    payload: PlatformLoginRequest,
+) -> Account:
+    if payload.use_browser:
+        raise ValueError("Browser login must use login-session")
+
+    driver = _get_driver(platform_code)
+    platform = get_or_create_platform(db, driver.code, driver.name, driver.home_url)
     account_key = normalize_account_key(payload.account_key)
-    state_path = state_path_for_key(account_key)
+    state_path = state_path_for_key(platform_code, account_key)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not state_path.exists():
+        raise ValueError(f"Storage state not found: {state_path}")
+
+    relative_state_path = relative_to_data_dir(state_path)
+    account = db.execute(
+        select(Account).where(Account.platform_id == platform.id, Account.state_path == relative_state_path)
+    ).scalar_one_or_none()
+    now = utcnow()
+    if account is None:
+        account = Account(
+            user_id=user_id,
+            platform=platform,
+            display_name=payload.display_name,
+            platform_user_id=None,
+            status="valid",
+            state_path=relative_state_path,
+            note=payload.note,
+            last_login_at=now,
+            last_checked_at=now,
+        )
+        db.add(account)
+    else:
+        account.display_name = payload.display_name
+        account.status = "valid"
+        account.note = payload.note
+        account.last_login_at = now
+        account.last_checked_at = now
+        account.updated_at = now
+
+    db.flush()
+    return get_account(db, account.id) or account
+
+
+def start_login_session(
+    db: Session,
+    user_id: int,
+    platform_code: str,
+    payload: PlatformLoginRequest,
+) -> AccountBrowserSessionResult:
+    driver = _get_driver(platform_code)
+    platform = get_or_create_platform(db, driver.code, driver.name, driver.home_url)
+    account_key = normalize_account_key(payload.account_key)
+    state_path = state_path_for_key(platform_code, account_key)
     state_path.parent.mkdir(parents=True, exist_ok=True)
 
     relative_state_path = relative_to_data_dir(state_path)
@@ -207,9 +197,10 @@ def start_toutiao_login_session(db: Session, user_id: int, payload: ToutiaoLogin
         account.updated_at = now
     db.flush()
 
-    session = _start_remote_account_browser(account_key, payload.channel, payload.executable_path)
+    session = _start_login_browser(platform_code, account_key, payload.channel, payload.executable_path)
     return AccountBrowserSessionResult(
         account=get_account(db, account.id) or account,
+        platform_code=platform_code,
         account_key=account_key,
         session_id=session.id,
         novnc_url=session.novnc_url,
@@ -217,15 +208,16 @@ def start_toutiao_login_session(db: Session, user_id: int, payload: ToutiaoLogin
 
 
 def start_account_login_session(db: Session, account: Account, payload: AccountCheckRequest) -> AccountBrowserSessionResult:
-    account_key = account_key_from_state_path(account.state_path)
+    platform_code, account_key = account_key_from_state_path(account.state_path)
     account.status = "unknown"
     account.last_checked_at = utcnow()
     account.updated_at = account.last_checked_at
     db.flush()
 
-    session = _start_remote_account_browser(account_key, payload.channel, payload.executable_path)
+    session = _start_login_browser(platform_code, account_key, payload.channel, payload.executable_path)
     return AccountBrowserSessionResult(
         account=get_account(db, account.id) or account,
+        platform_code=platform_code,
         account_key=account_key,
         session_id=session.id,
         novnc_url=session.novnc_url,
@@ -235,7 +227,7 @@ def start_account_login_session(db: Session, account: Account, payload: AccountC
 def finish_account_login_session(db: Session, account: Account, session_id: str) -> tuple[Account, BrowserCheckResult]:
     from server.app.services.browser_sessions import get_session, stop_remote_browser_session
 
-    account_key = account_key_from_state_path(account.state_path)
+    platform_code, account_key = account_key_from_state_path(account.state_path)
     session = get_session(session_id)
     if session is None:
         raise ValueError(f"Remote browser session not found: {session_id}")
@@ -245,8 +237,8 @@ def finish_account_login_session(db: Session, account: Account, session_id: str)
         raise ValueError("Remote browser session has no browser context")
 
     try:
-        result = _read_login_state_from_remote_session(session)
-        session.browser_context.storage_state(path=str(state_path_for_key(account_key)))
+        result = _read_login_state_from_remote_session(session, platform_code)
+        session.browser_context.storage_state(path=str(state_path_for_key(platform_code, account_key)))
     finally:
         stop_remote_browser_session(session_id)
 
@@ -263,7 +255,7 @@ def finish_account_login_session(db: Session, account: Account, session_id: str)
 def stop_account_login_session(account: Account, session_id: str) -> None:
     from server.app.services.browser_sessions import get_session, stop_remote_browser_session
 
-    account_key = account_key_from_state_path(account.state_path)
+    _, account_key = account_key_from_state_path(account.state_path)
     session = get_session(session_id)
     if session is None:
         return
@@ -272,22 +264,19 @@ def stop_account_login_session(account: Account, session_id: str) -> None:
     stop_remote_browser_session(session_id)
 
 
-def _start_remote_account_browser(account_key: str, channel: str, executable_path: str | None):
+def _start_login_browser(platform_code: str, account_key: str, channel: str, executable_path: str | None):
     from playwright.sync_api import sync_playwright
 
     from server.app.services.browser_sessions import (
         attach_browser_handles,
         keep_session_alive,
-        remote_browser_enabled,
         start_remote_browser_session,
         stop_remote_browser_session,
     )
 
-    if not remote_browser_enabled():
-        raise ValueError("Remote browser sessions are disabled")
-
+    driver = _get_driver(platform_code)
     ensure_data_dirs()
-    state_dir_for_key(account_key).mkdir(parents=True, exist_ok=True)
+    state_dir_for_key(platform_code, account_key).mkdir(parents=True, exist_ok=True)
     session = start_remote_browser_session(account_key)
     pw = None
     context = None
@@ -296,17 +285,22 @@ def _start_remote_account_browser(account_key: str, channel: str, executable_pat
         options = launch_options(channel, executable_path)
         options["env"] = {**os.environ, "DISPLAY": session.display}
         context = pw.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir_for_key(account_key)),
+            user_data_dir=str(profile_dir_for_key(platform_code, account_key)),
             **options,
         )
         context.set_default_navigation_timeout(30000)
         page = context.new_page()
         attach_browser_handles(session.id, pw, context, page)
-        page.goto(TOUTIAO_HOME, wait_until="domcontentloaded", timeout=60000)
+        page.goto(driver.home_url, wait_until="domcontentloaded", timeout=60000)
         try:
             page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
-            _logger.warning("Remote login page did not reach networkidle for account %s", account_key, exc_info=True)
+            _logger.warning(
+                "Remote login page did not reach networkidle for %s account %s",
+                platform_code,
+                account_key,
+                exc_info=True,
+            )
         keep_session_alive(session.id)
         return session
     except Exception:
@@ -320,7 +314,8 @@ def _start_remote_account_browser(account_key: str, channel: str, executable_pat
         raise
 
 
-def _read_login_state_from_remote_session(session) -> BrowserCheckResult:
+def _read_login_state_from_remote_session(session, platform_code: str) -> BrowserCheckResult:
+    driver = _get_driver(platform_code)
     context = session.browser_context
     page = session.page
     if page is None and context is not None:
@@ -343,116 +338,69 @@ def _read_login_state_from_remote_session(session) -> BrowserCheckResult:
         _logger.warning("Remote login state read failed", exc_info=True)
 
     return BrowserCheckResult(
-        logged_in=detect_login_state_text(url, title, body),
+        logged_in=driver.detect_logged_in(url=url, title=title, body=body),
         url=url,
         title=title,
     )
 
 
-# 获取所有账号列表
-def list_accounts(db: Session) -> list[Account]:
-    stmt = select(Account).options(selectinload(Account.platform)).order_by(Account.updated_at.desc())
-    return list(db.execute(stmt).scalars().all())
-
-
-# 获取单个账号
-def get_account(db: Session, account_id: int) -> Account | None:
-    stmt = select(Account).where(Account.id == account_id).options(selectinload(Account.platform))
-    return db.execute(stmt).scalar_one_or_none()
-
-
-# 添加头条号账号
-def login_toutiao(db: Session, user_id: int, payload: ToutiaoLoginRequest) -> Account:
-    platform = get_or_create_toutiao_platform(db)
-    account_key = normalize_account_key(payload.account_key)
-    state_path = state_path_for_key(account_key)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-
-    status = "unknown"
-    if payload.use_browser:
-        # 打开浏览器让用户交互登录
-        result = run_toutiao_browser_check(
-            account_key=account_key,
-            channel=payload.channel,
-            executable_path=payload.executable_path,
-            wait_seconds=payload.wait_seconds,
-        )
-        status = "valid" if result.logged_in else "unknown"
-    elif state_path.exists():
-        # 复用已保存的 storage_state
-        status = "valid"
-    else:
-        raise ValueError(f"Storage state not found: {state_path}")
-
-    relative_state_path = relative_to_data_dir(state_path)
-    account = db.execute(
-        select(Account).where(Account.platform_id == platform.id, Account.state_path == relative_state_path)
-    ).scalar_one_or_none()
-    now = utcnow()
-    if account is None:
-        account = Account(
-            user_id=user_id,
-            platform=platform,
-            display_name=payload.display_name,
-            platform_user_id=None,
-            status=status,
-            state_path=relative_state_path,
-            note=payload.note,
-            last_login_at=now if status == "valid" else None,
-            last_checked_at=now,
-        )
-        db.add(account)
-    else:
-        account.display_name = payload.display_name
-        account.status = status
-        account.note = payload.note
-        account.last_checked_at = now
-        if status == "valid":
-            account.last_login_at = now
-        account.updated_at = now
-
-    db.flush()
-    return get_account(db, account.id) or account
-
-
-# 检查账号登录状态
 def check_account(db: Session, account: Account, payload: AccountCheckRequest) -> Account:
-    now = utcnow()
-    account_key = account_key_from_state_path(account.state_path)
+    platform_code, _ = account_key_from_state_path(account.state_path)
+    driver = _get_driver(platform_code)
     abs_state_path = get_data_dir() / account.state_path
-    if payload.use_browser:
-        result = run_toutiao_browser_check(
-            account_key=account_key,
-            channel=payload.channel,
-            executable_path=payload.executable_path,
-            wait_seconds=payload.wait_seconds,
-        )
-        account.status = "valid" if result.logged_in else "expired"
-    else:
-        account.status = "valid" if abs_state_path.exists() else "expired"
 
+    logged_in = False
+    if payload.use_browser and abs_state_path.exists():
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            browser_options = launch_options(payload.channel, payload.executable_path)
+            viewport = browser_options.pop("viewport", None)
+            browser_options["headless"] = True
+            browser = pw.chromium.launch(**browser_options)
+            context = browser.new_context(storage_state=str(abs_state_path), viewport=viewport)
+            page = context.new_page()
+            try:
+                page.goto(driver.home_url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8000)
+                except Exception:
+                    pass
+                url = page.url
+                title = page.title()
+                try:
+                    body = page.locator("body").inner_text(timeout=3000)
+                except Exception:
+                    body = ""
+                logged_in = driver.detect_logged_in(url=url, title=title, body=body)
+                context.storage_state(path=str(abs_state_path))
+            finally:
+                context.close()
+                browser.close()
+    else:
+        logged_in = abs_state_path.exists()
+
+    now = utcnow()
+    account.status = "valid" if logged_in else "expired"
     account.last_checked_at = now
     account.updated_at = now
     db.flush()
     return get_account(db, account.id) or account
 
 
-# 重新登录账号（本质是重新调用 login_toutiao）
 def relogin_account(db: Session, account: Account, payload: AccountCheckRequest) -> Account:
-    account_key = account_key_from_state_path(account.state_path)
-    request = ToutiaoLoginRequest(
+    platform_code, account_key = account_key_from_state_path(account.state_path)
+    request = PlatformLoginRequest(
         display_name=account.display_name,
         account_key=account_key,
         channel=payload.channel,
         executable_path=payload.executable_path,
-        wait_seconds=payload.wait_seconds,
-        use_browser=payload.use_browser,
+        use_browser=False,  # always re-register from stored state, never opens browser
         note=account.note,
     )
-    return login_toutiao(db, account.user_id, request)
+    return register_account_from_storage_state(db, account.user_id, platform_code, request)
 
 
-# 重命名账号显示名称
 def rename_account(db: Session, account: Account, display_name: str) -> Account:
     account.display_name = display_name.strip()
     account.updated_at = utcnow()
@@ -460,7 +408,6 @@ def rename_account(db: Session, account: Account, display_name: str) -> Account:
     return get_account(db, account.id) or account
 
 
-# 删除账号（先清除关联记录，避免 NOT NULL FK 约束阻塞）
 def delete_account(db: Session, account: Account) -> None:
     account_id = account.id
 
@@ -484,7 +431,6 @@ def delete_account(db: Session, account: Account) -> None:
     db.flush()
 
 
-# 导出账号授权包（ZIP 格式，含 storage_state.json）
 def export_accounts_auth_package(db: Session, payload: AccountExportRequest) -> Path:
     ensure_data_dirs()
     accounts = _accounts_for_export(db, payload.account_ids)
@@ -524,7 +470,6 @@ def export_accounts_auth_package(db: Session, payload: AccountExportRequest) -> 
     return export_path
 
 
-# 导入账号授权包（ZIP 格式），返回新增和跳过的账号名称列表
 def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) -> dict[str, list[str]]:
     ensure_data_dirs()
     imported: list[str] = []
@@ -544,7 +489,6 @@ def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) ->
                 skipped.append(f"{display_name}（缺少 state_path）")
                 continue
 
-            # 去重：state_path 已存在则跳过
             existing = db.execute(
                 select(Account).where(Account.state_path == state_path_rel)
             ).scalar_one_or_none()
@@ -552,26 +496,30 @@ def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) ->
                 skipped.append(display_name)
                 continue
 
-            # 写入 storage_state.json
-            account_dir_in_zip = f"accounts/{entry.get('platform_code', 'toutiao')}-{entry['id']}"
+            try:
+                platform_code, account_key = account_key_from_state_path(state_path_rel)
+            except ValueError:
+                skipped.append(f"{display_name}（state_path 格式无效）")
+                continue
+
+            account_dir_in_zip = f"accounts/{entry.get('platform_code', platform_code)}-{entry['id']}"
             archive_state_path = f"{account_dir_in_zip}/storage_state.json"
             if archive_state_path not in archive.namelist():
                 skipped.append(f"{display_name}（ZIP 中缺少 storage_state.json）")
                 continue
 
-            try:
-                account_key = account_key_from_state_path(state_path_rel)
-            except ValueError:
-                skipped.append(f"{display_name}（state_path 格式无效）")
-                continue
-
-            dest = state_path_for_key(account_key)
+            dest = state_path_for_key(platform_code, account_key)
             dest.parent.mkdir(parents=True, exist_ok=True)
             if not dest.resolve().is_relative_to(get_data_dir().resolve()):
                 raise ValueError(f"ZIP entry path escapes data directory: {state_path_rel}")
             dest.write_bytes(archive.read(archive_state_path))
 
-            platform = get_or_create_toutiao_platform(db)
+            platform = get_or_create_platform(
+                db,
+                platform_code,
+                entry.get("platform_name") or platform_code,
+                entry.get("platform_base_url"),
+            )
             now = utcnow()
             last_login_raw = entry.get("last_login_at")
             account = Account(
@@ -592,7 +540,6 @@ def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) ->
     return {"imported": imported, "skipped": skipped}
 
 
-# 生成导出文件路径（优先数据目录，兜底系统临时目录）
 def _new_export_path(now) -> Path:
     filename = f"geo-auth-export-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}.zip"
     export_dir = get_data_dir() / "exports"
@@ -609,7 +556,6 @@ def _new_export_path(now) -> Path:
         return fallback_dir / filename
 
 
-# 获取要导出的账号列表
 def _accounts_for_export(db: Session, account_ids: list[int] | None) -> list[Account]:
     stmt = select(Account).options(selectinload(Account.platform))
     if account_ids:
@@ -626,7 +572,6 @@ def _accounts_for_export(db: Session, account_ids: list[int] | None) -> list[Acc
     return accounts
 
 
-# 校验并解析 data_dir 下的相对路径
 def _resolve_data_file(relative_path: str) -> Path:
     data_dir = get_data_dir().resolve()
     path = (data_dir / relative_path).resolve()
@@ -635,7 +580,6 @@ def _resolve_data_file(relative_path: str) -> Path:
     return path
 
 
-# 构造账号导出 JSON 载荷
 def _account_export_payload(account: Account) -> dict[str, Any]:
     return {
         "id": account.id,
@@ -653,4 +597,7 @@ def _account_export_payload(account: Account) -> dict[str, Any]:
     }
 
 
+def _get_driver(platform_code: str):
+    from server.app.services.drivers import get_driver
 
+    return get_driver(platform_code)

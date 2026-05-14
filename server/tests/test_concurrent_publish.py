@@ -76,13 +76,12 @@ class TestSemaphoreIntegrity:
             nonlocal call_count
             call_count += 1
 
-            class P:
-                def publish_article(self, *a, **kw):
-                    raise RuntimeError("simulated failure")
+            def _runner(article, account, *, stop_before_publish=False):
+                raise RuntimeError("simulated failure")
 
-            return P()
+            return _runner
 
-        monkeypatch.setattr(tasks_mod, "build_publisher_for_record", raise_publisher)
+        monkeypatch.setattr(tasks_mod, "build_publish_runner_for_record", raise_publisher)
 
         test_app = build_test_app(monkeypatch)
         try:
@@ -124,12 +123,11 @@ class TestSemaphoreIntegrity:
             message = "Published"
 
         def ok_publisher(_record):
-            class P:
-                def publish_article(self, *a, **kw):
-                    return FakeResult()
-            return P()
+            def _runner(article, account, *, stop_before_publish=False):
+                return FakeResult()
+            return _runner
 
-        monkeypatch.setattr(tasks_mod, "build_publisher_for_record", ok_publisher)
+        monkeypatch.setattr(tasks_mod, "build_publish_runner_for_record", ok_publisher)
 
         test_app = build_test_app(monkeypatch)
         try:
@@ -186,13 +184,12 @@ class TestConcurrentTaskIsolation:
             message = "Published"
 
         def ok_publisher(_record):
-            class P:
-                def publish_article(self, *a, **kw):
-                    time.sleep(0.05)
-                    return FakeResult()
-            return P()
+            def _runner(article, account, *, stop_before_publish=False):
+                time.sleep(0.05)
+                return FakeResult()
+            return _runner
 
-        monkeypatch.setattr(tasks_mod, "build_publisher_for_record", ok_publisher)
+        monkeypatch.setattr(tasks_mod, "build_publish_runner_for_record", ok_publisher)
 
         test_app = build_test_app(monkeypatch)
         try:
@@ -245,23 +242,22 @@ class TestConcurrentTaskIsolation:
         release_event = threading.Event()
 
         def counting_publisher(_record):
-            class P:
-                def publish_article(self, *a, **kw):
-                    with count_lock:
-                        current_concurrent[0] += 1
-                        if current_concurrent[0] > max_concurrent[0]:
-                            max_concurrent[0] = current_concurrent[0]
-                    release_event.wait(timeout=3)
-                    with count_lock:
-                        current_concurrent[0] -= 1
+            def _runner(article, account, *, stop_before_publish=False):
+                with count_lock:
+                    current_concurrent[0] += 1
+                    if current_concurrent[0] > max_concurrent[0]:
+                        max_concurrent[0] = current_concurrent[0]
+                release_event.wait(timeout=3)
+                with count_lock:
+                    current_concurrent[0] -= 1
 
-                    class R:
-                        url = None
-                        message = "ok"
-                    return R()
-            return P()
+                class R:
+                    url = None
+                    message = "ok"
+                return R()
+            return _runner
 
-        monkeypatch.setattr(tasks_mod, "build_publisher_for_record", counting_publisher)
+        monkeypatch.setattr(tasks_mod, "build_publish_runner_for_record", counting_publisher)
 
         test_app = build_test_app(monkeypatch)
         try:

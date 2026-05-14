@@ -62,6 +62,7 @@ export type Account = {
 
 export type AccountBrowserSession = {
   account: Account;
+  platform_code: string;
   account_key: string;
   session_id: string;
   novnc_url: string;
@@ -188,7 +189,7 @@ export type TaskCreatePayload = {
   platform_code?: string;
 };
 
-export type AccountLoginPayload = {
+export type PlatformLoginPayload = {
   display_name: string;
   account_key: string;
   use_browser?: boolean;

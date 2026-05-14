@@ -7,6 +7,24 @@ from server.app.services.browser_sessions import RemoteBrowserSession
 from server.tests.utils import build_test_app
 
 
+class FakeDriver:
+    code = "toutiao"
+    name = "头条号"
+    home_url = "https://mp.toutiao.com"
+    publish_url = "https://mp.toutiao.com/profile_v4/graphic/publish"
+
+    def detect_logged_in(self, *, url: str, title: str, body: str) -> bool:
+        haystack = f"{url}\n{title}\n{body}"
+        if any(hint in haystack for hint in ("login", "passport", "sso", "验证码", "扫码", "登录")):
+            return False
+        return "mp.toutiao.com" in url and ("profile_v4" in url or "头条号" in title)
+
+
+def install_fake_driver(monkeypatch) -> None:
+    monkeypatch.setattr("server.app.api.routes.accounts.all_driver_codes", lambda: ["toutiao"])
+    monkeypatch.setattr("server.app.services.accounts._get_driver", lambda platform_code: FakeDriver())
+
+
 def write_storage_state(data_dir, account_key: str = "demo") -> None:
     state_dir = data_dir / "browser_states" / "toutiao" / account_key
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -16,6 +34,7 @@ def write_storage_state(data_dir, account_key: str = "demo") -> None:
 def test_toutiao_login_registers_existing_storage_and_lists_account(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
+    install_fake_driver(monkeypatch)
 
     try:
         write_storage_state(test_app.data_dir, "demo")
@@ -47,6 +66,7 @@ def test_toutiao_login_registers_existing_storage_and_lists_account(monkeypatch)
 def test_account_check_relogin_and_delete(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
+    install_fake_driver(monkeypatch)
 
     try:
         write_storage_state(test_app.data_dir, "demo")
@@ -84,6 +104,7 @@ def test_account_check_relogin_and_delete(monkeypatch):
 def test_toutiao_login_requires_storage_when_browser_disabled(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
+    install_fake_driver(monkeypatch)
 
     try:
         response = client.post(
@@ -100,12 +121,13 @@ def test_toutiao_login_requires_storage_when_browser_disabled(monkeypatch):
 def test_toutiao_remote_login_session_creates_unknown_account(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
+    install_fake_driver(monkeypatch)
 
     class FakeSession:
         id = "login-session-1"
         novnc_url = "http://127.0.0.1:6080/vnc.html"
 
-    monkeypatch.setattr("server.app.services.accounts._start_remote_account_browser", lambda *_args: FakeSession())
+    monkeypatch.setattr("server.app.services.accounts._start_login_browser", lambda *_args: FakeSession())
 
     try:
         response = client.post(
@@ -116,6 +138,7 @@ def test_toutiao_remote_login_session_creates_unknown_account(monkeypatch):
         assert response.status_code == 200
         payload = response.json()
         assert payload["account_key"] == "remote-demo"
+        assert payload["platform_code"] == "toutiao"
         assert payload["session_id"] == "login-session-1"
         assert payload["novnc_url"] == "http://127.0.0.1:6080/vnc.html"
         assert payload["account"]["display_name"] == "remote-demo"
@@ -128,6 +151,7 @@ def test_toutiao_remote_login_session_creates_unknown_account(monkeypatch):
 def test_finish_remote_login_session_saves_state_and_stops_session(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
+    install_fake_driver(monkeypatch)
 
     class FakeLocator:
         def inner_text(self, timeout=None):
@@ -211,6 +235,7 @@ def test_finish_remote_login_session_saves_state_and_stops_session(monkeypatch):
 def test_export_accounts_auth_package_contains_manifest_and_state(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
+    install_fake_driver(monkeypatch)
 
     try:
         write_storage_state(test_app.data_dir, "demo")
@@ -238,5 +263,23 @@ def test_export_accounts_auth_package_contains_manifest_and_state(monkeypatch):
             account_payload = json.loads(archive.read(f"{account_dir}/account.json"))
             assert account_payload["display_name"] == "export-demo"
             assert archive.read(f"{account_dir}/storage_state.json") == b'{"cookies":[],"origins":[]}'
+    finally:
+        test_app.cleanup()
+
+
+def test_unknown_platform_returns_404(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    monkeypatch.setattr("server.app.api.routes.accounts.all_driver_codes", lambda: ["toutiao"])
+
+    try:
+        response = client.post(
+            "/api/accounts/sohu/login-session",
+            json={"display_name": "sohu", "account_key": "sohu"},
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Unknown platform"
     finally:
         test_app.cleanup()

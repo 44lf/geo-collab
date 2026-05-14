@@ -1,5 +1,5 @@
 from server.app.models import Account
-from server.app.services.toutiao_publisher import PublishFillResult, ToutiaoPublishError
+from server.app.services.drivers.toutiao import PublishFillResult, ToutiaoPublishError
 from server.tests.utils import build_test_app
 
 
@@ -28,7 +28,7 @@ class FakePublisher:
         )
         self.error = error
 
-    def publish_article(self, article, account, stop_before_publish=False):
+    def _runner(self, article, account, *, stop_before_publish=False):
         if self.error is not None:
             raise self.error
         return self.result
@@ -298,8 +298,8 @@ def test_execute_single_task_auto_succeeds(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
-            lambda record: FakePublisher(),
+            "server.app.services.tasks.build_publish_runner_for_record",
+            lambda record: FakePublisher()._runner,
         )
         cover_id = _upload_cover_image(client)
         article_id = create_article(client, "Article A", plain_text="Article body text", cover_asset_id=cover_id)
@@ -338,8 +338,8 @@ def test_execute_group_task_auto_completes_all_records(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
-            lambda record: FakePublisher(),
+            "server.app.services.tasks.build_publish_runner_for_record",
+            lambda record: FakePublisher()._runner,
         )
         cover_id = _upload_cover_image(client)
         article_1 = create_article(client, "Article A", plain_text="Body A", cover_asset_id=cover_id)
@@ -415,8 +415,8 @@ def test_execute_task_records_publisher_failure_with_screenshot(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
-            lambda record: FakePublisher(error=ToutiaoPublishError("Toutiao title field not found", screenshot=b"png")),
+            "server.app.services.tasks.build_publish_runner_for_record",
+            lambda record: FakePublisher(error=ToutiaoPublishError("Toutiao title field not found", screenshot=b"png"))._runner,
         )
         cover_id = _upload_cover_image(client)
         article_id = create_article(client, "Article A", plain_text="Article body", cover_asset_id=cover_id)
@@ -457,10 +457,10 @@ def test_publisher_failure_in_group_task_auto_advances_to_next_record(monkeypatc
         def make_publisher(record):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                return FakePublisher(error=ToutiaoPublishError("Fill failed"))
-            return FakePublisher()
+                return FakePublisher(error=ToutiaoPublishError("Fill failed"))._runner
+            return FakePublisher()._runner
 
-        monkeypatch.setattr("server.app.services.tasks.build_publisher_for_record", make_publisher)
+        monkeypatch.setattr("server.app.services.tasks.build_publish_runner_for_record", make_publisher)
 
         cover_id = _upload_cover_image(client)
         article_1 = create_article(client, "Article A", plain_text="Body A", cover_asset_id=cover_id)
@@ -500,8 +500,8 @@ def test_retry_failed_record_creates_pending_record_and_resets_task(monkeypatch)
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
-            lambda record: FakePublisher(error=ToutiaoPublishError("Fill failed")),
+            "server.app.services.tasks.build_publish_runner_for_record",
+            lambda record: FakePublisher(error=ToutiaoPublishError("Fill failed"))._runner,
         )
         article_id = create_article(client, "Article A")
         account_id = create_account(client, test_app.data_dir, "account-a", "Account A")
@@ -552,8 +552,8 @@ def test_retry_record_cannot_create_duplicate_retry_chain(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
-            lambda record: FakePublisher(error=ToutiaoPublishError("Fill failed")),
+            "server.app.services.tasks.build_publish_runner_for_record",
+            lambda record: FakePublisher(error=ToutiaoPublishError("Fill failed"))._runner,
         )
         article_id = create_article(client, "Article A")
         account_id = create_account(client, test_app.data_dir, "account-a", "Account A")

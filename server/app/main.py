@@ -3,13 +3,13 @@ Geo Collab API 应用工厂与全局配置。
 
 入口点：
   - 开发: uvicorn server.app.main:app --reload
-  - 打包: PyInstaller geo.spec → launcher.py → create_app()
+  - 生产: docker-compose up（Dockerfile CMD 先跑 alembic upgrade head）
 
 阅读顺序建议：
   1. create_app() → 了解路由注册、全局异常处理、启动行为
   2. models/publish.py → PublishTask / PublishRecord 状态机
   3. services/tasks.py → 任务执行引擎
-  4. services/toutiao_publisher.py → 头条浏览器自动化
+  4. services/drivers/toutiao.py → 头条浏览器自动化
 """
 import os
 import sys
@@ -71,6 +71,9 @@ WEB_DIST_DIR = str(_BASE_DIR / "web" / "dist")
 def create_app() -> FastAPI:
     # 确保数据目录存在（assets/ browser_states/ logs/ exports/）
     ensure_data_dirs()
+
+    # 注册所有平台驱动（import 触发 register() 副作用）
+    import server.app.services.drivers.toutiao  # noqa: F401
 
     from server.app.services.browser_sessions import _start_idle_cleanup
     _start_idle_cleanup()

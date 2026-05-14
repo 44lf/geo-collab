@@ -1,5 +1,5 @@
 from server.app.models import PublishRecord, PublishTask
-from server.app.services.accounts import get_or_create_toutiao_platform
+from server.app.services.accounts import get_or_create_platform
 from server.tests.utils import build_test_app
 
 ACTIVE_STATUSES = ["pending", "running", "waiting_manual_publish", "waiting_user_input"]
@@ -31,7 +31,7 @@ def _create_task_and_record(test_app, article_id: int, account_id: int, record_s
     """Create PublishTask + PublishRecord with given status via session. Returns record_id."""
     db = test_app.session_factory()
     try:
-        platform = get_or_create_toutiao_platform(db)
+        platform = get_or_create_platform(db, "toutiao", "头条号", "https://mp.toutiao.com")
         task = PublishTask(
             user_id=1,
             name="test-task",

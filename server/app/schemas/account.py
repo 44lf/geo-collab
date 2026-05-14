@@ -21,6 +21,7 @@ class AccountRead(BaseModel):
 
 class AccountBrowserSessionRead(BaseModel):
     account: AccountRead
+    platform_code: str
     account_key: str
     session_id: str
     novnc_url: str
@@ -33,8 +34,8 @@ class AccountBrowserSessionFinishRead(BaseModel):
     title: str
 
 
-# 头条号登录/添加请求
-class ToutiaoLoginRequest(BaseModel):
+# 平台账号登录/添加请求
+class PlatformLoginRequest(BaseModel):
     display_name: str = Field(default="头条号账号", min_length=1, max_length=200)
     account_key: str | None = Field(default=None, max_length=120)  # 本地存储目录标识
     channel: str = "chromium"
@@ -48,7 +49,6 @@ class ToutiaoLoginRequest(BaseModel):
 class AccountCheckRequest(BaseModel):
     channel: str = "chromium"
     executable_path: str | None = None
-    wait_seconds: int = Field(default=30, ge=3, le=180)
     use_browser: bool = True
 
 

@@ -12,7 +12,7 @@ from server.app.schemas.account import (
     AccountExportRequest,
     AccountRead,
     AccountRenameRequest,
-    ToutiaoLoginRequest,
+    PlatformLoginRequest,
 )
 from server.app.services.accounts import (
     check_account,
@@ -22,13 +22,14 @@ from server.app.services.accounts import (
     get_account,
     import_accounts_auth_package,
     list_accounts,
-    login_toutiao,
     rename_account,
+    register_account_from_storage_state,
     relogin_account,
     start_account_login_session,
-    start_toutiao_login_session,
+    start_login_session,
     stop_account_login_session,
 )
+from server.app.services.drivers import all_driver_codes
 from server.app.services.serializers import to_account_read
 
 router = APIRouter()
@@ -45,10 +46,17 @@ def _verify_account_ownership(account: AccountModel | None, current_user: User) 
 def _to_browser_session_read(result) -> AccountBrowserSessionRead:
     return AccountBrowserSessionRead(
         account=to_account_read(result.account),
+        platform_code=result.platform_code,
         account_key=result.account_key,
         session_id=result.session_id,
         novnc_url=result.novnc_url,
     )
+
+
+def _verify_platform_code(platform_code: str) -> str:
+    if platform_code not in all_driver_codes():
+        raise HTTPException(status_code=404, detail="Unknown platform")
+    return platform_code
 
 
 # 获取所有账号列表
@@ -63,23 +71,71 @@ def read_accounts(
     return [to_account_read(account) for account in accounts]
 
 
-# 添加头条号账号（可选择打开浏览器交互登录或复用已保存状态）
-@router.post("/toutiao/login", response_model=AccountRead)
-def login_toutiao_account(
-    payload: ToutiaoLoginRequest,
+# 添加平台账号（复用已保存状态，use_browser 必须为 False）
+@router.post("/{platform_code}/login", response_model=AccountRead)
+def login_platform_account(
+    platform_code: str,
+    payload: PlatformLoginRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountRead:
-    return to_account_read(login_toutiao(db, current_user.id, payload))
+    platform_code = _verify_platform_code(platform_code)
+    return to_account_read(register_account_from_storage_state(db, current_user.id, platform_code, payload))
 
 
-@router.post("/toutiao/login-session", response_model=AccountBrowserSessionRead)
-def start_toutiao_login_session_endpoint(
-    payload: ToutiaoLoginRequest,
+# NOTE: /{account_id:int}/login-session routes MUST appear before /{platform_code}/login-session
+# because both path patterns match the same shape; the :int converter narrows the regex to [0-9]+
+# so numeric IDs route correctly when this route is first.
+
+@router.post("/{account_id:int}/login-session", response_model=AccountBrowserSessionRead)
+def start_existing_account_login_session_endpoint(
+    account_id: int,
+    payload: AccountCheckRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountBrowserSessionRead:
-    return _to_browser_session_read(start_toutiao_login_session(db, current_user.id, payload))
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
+    return _to_browser_session_read(start_account_login_session(db, account, payload or AccountCheckRequest()))
+
+
+@router.post("/{account_id:int}/login-session/{session_id}/finish", response_model=AccountBrowserSessionFinishRead)
+def finish_existing_account_login_session_endpoint(
+    account_id: int,
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AccountBrowserSessionFinishRead:
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
+    updated, result = finish_account_login_session(db, account, session_id)
+    return AccountBrowserSessionFinishRead(
+        account=to_account_read(updated),
+        logged_in=result.logged_in,
+        url=result.url,
+        title=result.title,
+    )
+
+
+@router.delete("/{account_id:int}/login-session/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def stop_existing_account_login_session_endpoint(
+    account_id: int,
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    account = _verify_account_ownership(get_account(db, account_id), current_user)
+    stop_account_login_session(account, session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{platform_code}/login-session", response_model=AccountBrowserSessionRead)
+def start_platform_login_session_endpoint(
+    platform_code: str,
+    payload: PlatformLoginRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AccountBrowserSessionRead:
+    platform_code = _verify_platform_code(platform_code)
+    return _to_browser_session_read(start_login_session(db, current_user.id, platform_code, payload))
 
 
 # 导出账号授权包（含 Playwright storage_state 的 ZIP）
@@ -156,47 +212,7 @@ def check_existing_account(
     return to_account_read(check_account(db, account, payload or AccountCheckRequest()))
 
 
-@router.post("/{account_id}/login-session", response_model=AccountBrowserSessionRead)
-def start_existing_account_login_session_endpoint(
-    account_id: int,
-    payload: AccountCheckRequest | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> AccountBrowserSessionRead:
-    account = _verify_account_ownership(get_account(db, account_id), current_user)
-    return _to_browser_session_read(start_account_login_session(db, account, payload or AccountCheckRequest()))
-
-
-@router.post("/{account_id}/login-session/{session_id}/finish", response_model=AccountBrowserSessionFinishRead)
-def finish_existing_account_login_session_endpoint(
-    account_id: int,
-    session_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> AccountBrowserSessionFinishRead:
-    account = _verify_account_ownership(get_account(db, account_id), current_user)
-    updated, result = finish_account_login_session(db, account, session_id)
-    return AccountBrowserSessionFinishRead(
-        account=to_account_read(updated),
-        logged_in=result.logged_in,
-        url=result.url,
-        title=result.title,
-    )
-
-
-@router.delete("/{account_id}/login-session/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-def stop_existing_account_login_session_endpoint(
-    account_id: int,
-    session_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Response:
-    account = _verify_account_ownership(get_account(db, account_id), current_user)
-    stop_account_login_session(account, session_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# 重新登录指定账号（重新打开浏览器）
+# 重新从已保存 storage_state 注册账号
 @router.post("/{account_id}/relogin", response_model=AccountRead)
 def relogin_existing_account(
     account_id: int,

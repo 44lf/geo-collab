@@ -1,23 +1,17 @@
-import os
 from pathlib import Path
 
-from server.app.core.config import get_settings
+from server.app.core.config import Settings, get_settings
 
 # 数据目录下的子目录列表
 DATA_SUBDIRS = ("assets", "browser_states", "logs", "exports")
 
 
-# 获取数据目录：优先 GEO_DATA_DIR 环境变量，其次 %LOCALAPPDATA%/GeoCollab
+# Resolve the configured data directory.
 def get_data_dir() -> Path:
-    settings = get_settings()
-    if settings.data_dir:
-        return settings.data_dir
-
-    local_app_data = os.getenv("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / "GeoCollab"
-
-    return Path.home() / ".geocollab"
+    data_dir = Settings().data_dir
+    if data_dir is None:
+        raise RuntimeError("GEO_DATA_DIR not set")
+    return data_dir
 
 
 # 获取 SQLite 数据库文件路径
@@ -45,4 +39,3 @@ def ensure_data_dirs() -> Path:
     for subdir in DATA_SUBDIRS:
         (data_dir / subdir).mkdir(parents=True, exist_ok=True)
     return data_dir
-

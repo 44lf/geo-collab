@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from server.app.models import PublishRecord
-from server.app.services.toutiao_publisher import PublishFillResult, ToutiaoPublishError, ToutiaoUserInputRequired
+from server.app.services.drivers.toutiao import PublishFillResult, ToutiaoPublishError, ToutiaoUserInputRequired
 from server.tests.utils import build_test_app
 
 
@@ -32,7 +32,7 @@ class FakePublisher:
         )
         self.error = error
 
-    def publish_article(self, article, account, stop_before_publish=False):
+    def __call__(self, article, account, *, stop_before_publish=False):
         if self.error is not None:
             raise self.error
         return self.result
@@ -90,7 +90,7 @@ def test_stop_before_publish_enters_waiting_state(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -136,14 +136,14 @@ def test_user_input_required_pauses_record(monkeypatch):
         def __init__(self):
             self.ready = threading.Event()
 
-        def publish_article(self, article, account, stop_before_publish=False):
+        def __call__(self, article, account, *, stop_before_publish=False):
             self.ready.set()
             raise ToutiaoUserInputRequired("login verification required")
 
     try:
         publisher = NeedsUserInputPublisher()
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: publisher,
         )
         cover_id = _upload_cover_image(client)
@@ -188,7 +188,7 @@ def test_resolve_user_input_requeues_and_continues(monkeypatch):
     attempts = 0
 
     class LoginThenSuccessPublisher:
-        def publish_article(self, article, account, stop_before_publish=False):
+        def __call__(self, article, account, *, stop_before_publish=False):
             nonlocal attempts
             attempts += 1
             if attempts == 1:
@@ -201,7 +201,7 @@ def test_resolve_user_input_requeues_and_continues(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: LoginThenSuccessPublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -261,7 +261,7 @@ def test_manual_confirm_succeeded(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -315,7 +315,7 @@ def test_manual_confirm_failed(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -369,7 +369,7 @@ def test_manual_confirm_does_not_block_with_next_record(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -441,7 +441,7 @@ def test_unexpected_exception_marks_record_failed(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(error=ValueError("Something unexpected broke")),
         )
         cover_id = _upload_cover_image(client)
@@ -485,7 +485,7 @@ def test_execute_terminal_task_returns_409(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -524,7 +524,7 @@ def test_execute_terminal_task_returns_409(monkeypatch):
             },
         ).json()
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(error=ToutiaoPublishError("fail")),
         )
         _execute_and_wait(client, task2["id"])
@@ -596,7 +596,7 @@ def test_concurrent_execute_only_one_succeeds(monkeypatch):
         # Release the lock and execute again — should succeed
         fake_lock.release()
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
 
@@ -642,7 +642,7 @@ def test_group_task_runs_different_accounts_concurrently_with_cap(monkeypatch):
     lock = threading.Lock()
 
     class SlowPublisher:
-        def publish_article(self, article, account, stop_before_publish=False):
+        def __call__(self, article, account, *, stop_before_publish=False):
             nonlocal active, max_active
             with lock:
                 active += 1
@@ -657,7 +657,7 @@ def test_group_task_runs_different_accounts_concurrently_with_cap(monkeypatch):
             )
 
     try:
-        monkeypatch.setattr("server.app.services.tasks.build_publisher_for_record", lambda record: SlowPublisher())
+        monkeypatch.setattr("server.app.services.tasks.build_publish_runner_for_record", lambda record: SlowPublisher())
         cover_id = _upload_cover_image(client)
         article_ids = [
             _create_article(client, f"Article {index}", plain_text=f"Body {index}", cover_asset_id=cover_id)
@@ -686,7 +686,7 @@ def test_group_task_serializes_records_for_same_account(monkeypatch):
     lock = threading.Lock()
 
     class SlowPublisher:
-        def publish_article(self, article, account, stop_before_publish=False):
+        def __call__(self, article, account, *, stop_before_publish=False):
             with lock:
                 active_by_account[account.id] = active_by_account.get(account.id, 0) + 1
                 max_for_account[account.id] = max(max_for_account.get(account.id, 0), active_by_account[account.id])
@@ -700,7 +700,7 @@ def test_group_task_serializes_records_for_same_account(monkeypatch):
             )
 
     try:
-        monkeypatch.setattr("server.app.services.tasks.build_publisher_for_record", lambda record: SlowPublisher())
+        monkeypatch.setattr("server.app.services.tasks.build_publish_runner_for_record", lambda record: SlowPublisher())
         cover_id = _upload_cover_image(client)
         article_ids = [
             _create_article(client, f"Serial Article {index}", plain_text=f"Body {index}", cover_asset_id=cover_id)
@@ -722,7 +722,7 @@ def test_failed_record_does_not_block_next_record(monkeypatch):
     client = test_app.client
 
     class MixedPublisher:
-        def publish_article(self, article, account, stop_before_publish=False):
+        def __call__(self, article, account, *, stop_before_publish=False):
             if article.title == "fail first":
                 raise ToutiaoPublishError("boom")
             return PublishFillResult(
@@ -732,7 +732,7 @@ def test_failed_record_does_not_block_next_record(monkeypatch):
             )
 
     try:
-        monkeypatch.setattr("server.app.services.tasks.build_publisher_for_record", lambda record: MixedPublisher())
+        monkeypatch.setattr("server.app.services.tasks.build_publish_runner_for_record", lambda record: MixedPublisher())
         cover_id = _upload_cover_image(client)
         first = _create_article(client, "fail first", plain_text="Body 1", cover_asset_id=cover_id)
         second = _create_article(client, "publish second", plain_text="Body 2", cover_asset_id=cover_id)
@@ -753,7 +753,7 @@ def test_failed_record_does_not_block_next_record(monkeypatch):
 # Test: Concurrent execute + cancel race does not leave corrupt state
 # ---------------------------------------------------------------------------
 class SlowFakePublisher:
-    def publish_article(self, article, account, stop_before_publish=False):
+    def __call__(self, article, account, *, stop_before_publish=False):
         _time.sleep(2)
         return PublishFillResult(
             url="https://mp.toutiao.com/article/race",
@@ -768,7 +768,7 @@ def test_execute_and_cancel_race_does_not_leave_corrupt_state(monkeypatch):
     client = test_app.client
     try:
         monkeypatch.setattr(
-            "server.app.services.tasks.build_publisher_for_record",
+            "server.app.services.tasks.build_publish_runner_for_record",
             lambda record: SlowFakePublisher(),
         )
         cover_id = _upload_cover_image(client)
