@@ -197,7 +197,7 @@ function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
     <NodeViewWrapper style={{ display: "block", position: "relative", width: attrs.width ?? "100%" }}>
       <img
         ref={imgRef}
-        src={attrs.src}
+        src={`${attrs.src}?width=600`}
         alt={attrs.alt ?? ""}
         title={attrs.title ?? ""}
         data-asset-id={attrs.assetId ?? undefined}
@@ -881,7 +881,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
 
           <section className="coverRow">
             <div className="coverPreview">
-              {assetSrc(draft.cover_asset_id) ? <img alt="封面" src={assetSrc(draft.cover_asset_id) ?? ""} /> : <span>封面</span>}
+              {assetSrc(draft.cover_asset_id) ? <img alt="封面" src={`${assetSrc(draft.cover_asset_id)}?width=300`} /> : <span>封面</span>}
             </div>
             <label className="fileButton">
               <Upload size={16} />

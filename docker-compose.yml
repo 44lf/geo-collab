@@ -40,10 +40,8 @@ services:
     build: .
     restart: unless-stopped
     command: sh -c "alembic upgrade head && python -m server.worker.executor"
-    ports:
-      # noVNC exposes logged-in platform sessions. Keep it bound to localhost;
-      # use an SSH/VPN tunnel for remote access instead of publishing it.
-      - "127.0.0.1:6080-6090:6080-6090"
+    # ports:  # noVNC now proxied through nginx, no direct port exposure needed
+    #   - "127.0.0.1:6080-6090:6080-6090"
     depends_on:
       mysql:
         condition: service_healthy

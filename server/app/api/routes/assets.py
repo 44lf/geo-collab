@@ -2,8 +2,10 @@ import os
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
+from PIL import Image
 from sqlalchemy.orm import Session
 
+from server.app.core.paths import get_data_dir
 from server.app.core.security import get_current_user
 from server.app.db.session import get_db
 from server.app.models import Asset, User
@@ -13,7 +15,6 @@ from server.app.services.assets import asset_url, resolve_asset_path, store_uplo
 router = APIRouter()
 
 
-# 将 ORM Asset 转为响应体
 def to_asset_read(asset: Asset) -> AssetRead:
     return AssetRead(
         id=asset.id,
@@ -30,7 +31,6 @@ def to_asset_read(asset: Asset) -> AssetRead:
     )
 
 
-# 上传资源文件（图片等）
 @router.post("", response_model=AssetRead)
 async def upload_asset(
     file: UploadFile = File(...),
@@ -45,7 +45,6 @@ async def upload_asset(
     )
 
 
-# 获取资源元数据
 @router.get("/{asset_id}/meta", response_model=AssetRead)
 def read_asset_meta(asset_id: str, db: Session = Depends(get_db)) -> AssetRead:
     asset = db.get(Asset, asset_id)
@@ -54,10 +53,8 @@ def read_asset_meta(asset_id: str, db: Session = Depends(get_db)) -> AssetRead:
     return to_asset_read(asset)
 
 
-# 获取资源文件内容（返回图片二进制数据）
-# GEO_NGINX_ACCEL=1 时通过 X-Accel-Redirect 让 Nginx 直接 sendfile，Python 只做鉴权
 @router.get("/{asset_id}")
-def read_asset_file(asset_id: str, db: Session = Depends(get_db)) -> Response:
+def read_asset_file(asset_id: str, width: int | None = None, db: Session = Depends(get_db)) -> Response:
     asset = db.get(Asset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -70,8 +67,26 @@ def read_asset_file(asset_id: str, db: Session = Depends(get_db)) -> Response:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Asset file not found")
 
+    if width is not None and asset.mime_type.startswith("image/"):
+        cache_dir = get_data_dir() / "thumbnail_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"{asset_id}_w{width}.jpg"
+
+        if not cache_file.exists():
+            with Image.open(path) as img:
+                ratio = width / img.width
+                new_height = int(img.height * ratio)
+                img = img.resize((width, new_height), Image.LANCZOS)
+                img = img.convert("RGB")
+                img.save(cache_file, "JPEG", quality=85)
+
+        return FileResponse(
+            cache_file,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
+
     if os.environ.get("GEO_NGINX_ACCEL"):
-        from server.app.core.paths import get_data_dir
         rel = path.relative_to(get_data_dir())
         return Response(
             status_code=200,

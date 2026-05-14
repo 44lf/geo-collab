@@ -9,6 +9,11 @@ RUN pnpm install --frozen-lockfile
 COPY web ./web
 RUN pnpm --filter @geo/web build
 
+FROM python:3.12-slim AS novnc-files
+RUN apt-get update && apt-get install -y --no-install-recommends novnc && \
+    rm -rf /var/lib/apt/lists/*
+
 FROM nginx:stable-alpine
 COPY --from=web-build /app/web/dist /usr/share/nginx/html
+COPY --from=novnc-files /usr/share/novnc /usr/share/novnc
 COPY nginx.conf /etc/nginx/conf.d/default.conf

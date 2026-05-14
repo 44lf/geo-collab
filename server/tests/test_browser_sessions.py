@@ -50,7 +50,7 @@ def test_remote_browser_session_starts_processes_and_cleans_up(monkeypatch, tmp_
             assert session.display == ":99"
             assert session.vnc_port == 5900
             assert session.novnc_port == 6080
-            assert session.novnc_url.startswith("http://127.0.0.1:6080/vnc.html")
+            assert session.novnc_url.startswith("http://127.0.0.1/novnc/vnc.html")
             assert len(browser_sessions.active_remote_browser_sessions()) == 1
 
         assert len(started) == 3
