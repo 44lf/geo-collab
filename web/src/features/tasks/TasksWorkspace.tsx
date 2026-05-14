@@ -56,12 +56,50 @@ export function TasksWorkspace() {
 
   useEffect(() => {
     if (!selectedTaskId || !shouldPollSelectedTask) return;
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void refreshDetail(selectedTaskId);
+    const taskId = selectedTaskId;
+    const es = new EventSource(`/api/tasks/${taskId}/stream?after_log_id=${lastLogIdRef.current}`);
+    let errorCount = 0;
+
+    es.addEventListener("task", (e) => {
+      const updated = JSON.parse(e.data) as Task;
+      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      errorCount = 0;
+    });
+
+    es.addEventListener("log", (e) => {
+      const log = JSON.parse(e.data) as TaskLog;
+      setLogs((prev) => {
+        if (prev.some((l) => l.id === log.id)) return prev;
+        return [...prev, log];
+      });
+      lastLogIdRef.current = Math.max(lastLogIdRef.current, log.id);
+      errorCount = 0;
+    });
+
+    es.addEventListener("records", (e) => {
+      const rs = JSON.parse(e.data) as PublishRecord[];
+      setRecords(rs);
+      errorCount = 0;
+    });
+
+    es.addEventListener("done", () => {
+      es.close();
+      setAutoRefreshTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+    });
+
+    es.onerror = () => {
+      errorCount++;
+      if (errorCount > 5) {
+        es.close();
+        void refreshDetail(taskId);
       }
-    }, 5000);
-    return () => clearInterval(interval);
+    };
+
+    return () => { es.close(); };
   }, [selectedTaskId, shouldPollSelectedTask]);
 
   useEffect(() => {

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import types
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -35,12 +34,13 @@ def _make_stub_session() -> types.SimpleNamespace:
         id="sess1",
         display=":99",
         novnc_url="http://localhost:6080",
+        browser_context=None,  # None → triggers first-launch path in run_publish
     )
 
 
 def _make_stub_pw_context_page():
     """Return (pw, context, page) stubs."""
-    page = types.SimpleNamespace()
+    page = types.SimpleNamespace(on=lambda *args, **kwargs: None)
     context = types.SimpleNamespace(
         set_default_navigation_timeout=lambda ms: None,
         new_page=lambda: page,
@@ -88,14 +88,16 @@ def _patch_common(monkeypatch, tmp_path: Path, stub_session, pw_cm, context, pag
         lambda platform_code, account_key: tmp_path / "profile",
     )
 
-    # managed_remote_browser_session → yields stub_session
-    @contextmanager
-    def _fake_managed(account_key):
-        yield stub_session
-
+    # get_or_create_account_session → returns stub_session directly
     monkeypatch.setattr(
-        "server.app.services.publish_runner.managed_remote_browser_session",
-        _fake_managed,
+        "server.app.services.publish_runner.get_or_create_account_session",
+        lambda account_key: stub_session,
+    )
+
+    # stop_remote_browser_session → no-op (called on launch failure path)
+    monkeypatch.setattr(
+        "server.app.services.publish_runner.stop_remote_browser_session",
+        lambda session_id: None,
     )
 
     # sync_playwright → pw_cm

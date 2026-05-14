@@ -63,6 +63,9 @@ _record_to_session: dict[int, str] = {}
 # session_ids that survive context manager exit（不随 finally 清理）
 _session_keep_alive: set[str] = set()
 
+# account_key → session_id：持久化账号会话，跨 record 复用 Xvfb + Chromium
+_account_sessions: dict[str, str] = {}
+
 _idle_cleanup_thread: threading.Thread | None = None
 _idle_cleanup_stop = threading.Event()
 
@@ -102,6 +105,39 @@ def disassociate_record(record_id: int) -> None:
     """取消 record 与 session 的关联（record 完成/取消时调用）。"""
     with _sessions_lock:
         _record_to_session.pop(record_id, None)
+
+
+def _context_alive(context: object) -> bool:
+    try:
+        _ = context.pages  # type: ignore[attr-defined]
+        return True
+    except Exception:
+        return False
+
+
+def get_or_create_account_session(account_key: str) -> "RemoteBrowserSession":
+    """返回账号对应的持久化 session，不存在或已失效时新建。
+
+    复用条件：session 存在于 _active_sessions、不在 keep_alive 等待状态、Chromium context 仍然存活。
+    """
+    with _sessions_lock:
+        session_id = _account_sessions.get(account_key)
+        if session_id is not None:
+            session = _active_sessions.get(session_id)
+            if (
+                session is not None
+                and session_id not in _session_keep_alive
+                and (session.browser_context is None or _context_alive(session.browser_context))
+            ):
+                session.started_at = time.monotonic()
+                return session
+            # 旧 session 不可用，清掉映射，下面重新创建
+            _account_sessions.pop(account_key, None)
+
+    session = start_remote_browser_session(account_key)
+    with _sessions_lock:
+        _account_sessions[account_key] = session.id
+    return session
 
 
 def keep_session_alive(session_id: str) -> None:
@@ -259,6 +295,9 @@ def stop_remote_browser_session(session_id: str) -> None:
         stale_records = [rid for rid, sid in _record_to_session.items() if sid == session_id]
         for rid in stale_records:
             _record_to_session.pop(rid, None)
+        stale_account_keys = [k for k, v in _account_sessions.items() if v == session_id]
+        for k in stale_account_keys:
+            _account_sessions.pop(k, None)
     if session is not None:
         _close_browser_handles(session)
         _stop_session_processes(session)
@@ -505,3 +544,4 @@ def _reset_globals() -> None:
         _reserved_displays.clear()
         _reserved_vnc_ports.clear()
         _reserved_novnc_ports.clear()
+        _account_sessions.clear()

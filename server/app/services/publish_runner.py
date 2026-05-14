@@ -11,8 +11,9 @@ from server.app.models import Account, Article
 from server.app.services.accounts import account_key_from_state_path, launch_options, profile_dir_for_key
 from server.app.services.browser_sessions import (
     attach_browser_handles,
+    get_or_create_account_session,
     keep_session_alive,
-    managed_remote_browser_session,
+    stop_remote_browser_session,
 )
 from server.app.services.drivers import get_driver
 from server.app.services.drivers.toutiao import (
@@ -74,7 +75,7 @@ def run_publish(
     executable_path: str | None = None,
     stop_before_publish: bool = False,
 ) -> PublishFillResult:
-    """Generic publish entry point. Looks up driver by account platform, starts remote session, runs driver.publish."""
+    """Generic publish entry point. Looks up driver by account platform, reuses or starts remote session, runs driver.publish."""
     if not article.title or not article.title.strip():
         raise ToutiaoPublishError("标题不能为空")
     if article.cover_asset is None:
@@ -88,12 +89,11 @@ def run_publish(
     driver = get_driver(platform_code)
 
     with publish_step("remote browser session"):
-        session_cm = managed_remote_browser_session(account_key)
-        session = session_cm.__enter__()
-    try:
+        session = get_or_create_account_session(account_key)
+
+    # 第一次发布该账号：启动 Playwright + Chromium，挂到 session 上供后续复用
+    if session.browser_context is None:
         pw = None
-        context = None
-        _keep_browser = False
         try:
             with publish_step("start Playwright"):
                 pw = sync_playwright().start()
@@ -104,37 +104,42 @@ def run_publish(
                     user_data_dir=str(profile_dir_for_key(platform_code, account_key)),
                     **options,
                 )
-            context.set_default_navigation_timeout(30000)
-            page = context.new_page()
-            _attach_page_network_diagnostics(page)
-            attach_browser_handles(session.id, pw, context, page)
-            with publish_step("driver publish flow", page=page):
-                return driver.publish(
-                    page=page,
-                    context=context,
-                    article=article,
-                    account=account,
-                    state_path=state_path,
-                    stop_before_publish=stop_before_publish,
-                )
-        except ToutiaoUserInputRequired as exc:
-            _keep_browser = True
-            keep_session_alive(session.id)
-            exc.session_id = session.id
-            exc.novnc_url = session.novnc_url
+                context.set_default_navigation_timeout(30000)
+                attach_browser_handles(session.id, pw, context, None)
+        except Exception:
+            if pw is not None:
+                try:
+                    pw.stop()
+                except Exception:
+                    pass
+            stop_remote_browser_session(session.id)
             raise
-        finally:
-            if not _keep_browser:
-                if context is not None:
-                    try:
-                        context.close()
-                    except Exception:
-                        pass
-                if pw is not None:
-                    try:
-                        pw.stop()
-                    except Exception:
-                        pass
-                attach_browser_handles(session.id, None, None, None)
+    else:
+        context = session.browser_context
+
+    page = None
+    _keep_browser = False
+    try:
+        page = context.new_page()
+        _attach_page_network_diagnostics(page)
+        with publish_step("driver publish flow", page=page):
+            return driver.publish(
+                page=page,
+                context=context,
+                article=article,
+                account=account,
+                state_path=state_path,
+                stop_before_publish=stop_before_publish,
+            )
+    except ToutiaoUserInputRequired as exc:
+        _keep_browser = True
+        keep_session_alive(session.id)
+        exc.session_id = session.id
+        exc.novnc_url = session.novnc_url
+        raise
     finally:
-        session_cm.__exit__(None, None, None)
+        if page is not None and not _keep_browser:
+            try:
+                page.close()
+            except Exception:
+                pass

@@ -13,9 +13,11 @@
 """
 import logging
 import threading
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -183,3 +185,72 @@ def read_task_records(
 ) -> list[PublishRecordRead]:
     _verify_task_ownership(get_task(db, task_id), current_user)
     return [to_record_read(record) for record in list_task_records(db, task_id)]
+
+
+# 任务事件流（SSE）：替代前端轮询，推送日志/记录/任务状态变更
+# 每 1 秒检查一次 DB，有变化时发送对应事件类型；任务进入终态后发 done 并关闭流
+@router.get("/{task_id}/stream")
+def stream_task_events(
+    task_id: int,
+    after_log_id: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    from server.app.db.session import SessionLocal as _SL
+
+    check_db = _SL()
+    try:
+        _verify_task_ownership(get_task(check_db, task_id), current_user)
+    finally:
+        check_db.close()
+
+    def _generate():
+        from server.app.db.session import SessionLocal as _SL2
+
+        last_id = after_log_id
+        prev_records = ""
+        prev_task = ""
+
+        while True:
+            sess = _SL2()
+            try:
+                task = get_task(sess, task_id)
+                if task is None:
+                    yield "event: done\ndata: {}\n\n"
+                    break
+
+                task_json = to_task_read(task).model_dump_json()
+                if task_json != prev_task:
+                    yield f"event: task\ndata: {task_json}\n\n"
+                    prev_task = task_json
+
+                new_logs = list_task_logs(sess, task_id, after_id=last_id, limit=100)
+                for log in new_logs:
+                    yield f"event: log\ndata: {to_log_read(log).model_dump_json()}\n\n"
+                if new_logs:
+                    last_id = max(log.id for log in new_logs)
+
+                records = list_task_records(sess, task_id)
+                records_json = "[" + ",".join(to_record_read(r).model_dump_json() for r in records) + "]"
+                if records_json != prev_records:
+                    yield f"event: records\ndata: {records_json}\n\n"
+                    prev_records = records_json
+
+                if task.status in TERMINAL_TASK_STATUSES:
+                    yield "event: done\ndata: {}\n\n"
+                    break
+
+            except GeneratorExit:
+                break
+            except Exception:
+                logging.getLogger(__name__).exception("SSE error for task %s", task_id)
+                break
+            finally:
+                sess.close()
+
+            time.sleep(1)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
