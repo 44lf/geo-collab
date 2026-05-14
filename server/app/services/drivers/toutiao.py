@@ -61,9 +61,10 @@ class ToutiaoUserInputRequired(ToutiaoPublishError):
 def _close_ai_drawer(page: Any) -> None:
     """关闭头条号 AI 创作助手抽屉，避免遮挡正文编辑区。"""
     try:
-        btn = page.locator(".close-btn").first
-        if btn.count() and btn.is_visible(timeout=2000):
-            btn.click()
+        # 必须先用父 locator 的 count() 判断元素是否存在，.first 后再 count() 不可靠
+        close_btns = page.locator(".close-btn")
+        if close_btns.count() > 0 and close_btns.first.is_visible():
+            close_btns.first.click()
             page.wait_for_timeout(500)
     except Exception:
         logger.warning("Failed to close AI drawer", exc_info=True)
@@ -445,7 +446,7 @@ def _wait_body_image_ready(page: Any, before_count: int, timeout_ms: int = 30000
     page.wait_for_timeout(4000)
 
 
-def _wait_publish_images_ready(page: Any, timeout_ms: int = 120000) -> None:
+def _wait_publish_images_ready(page: Any, timeout_ms: int = 60000) -> None:
     deadline = time.monotonic() + timeout_ms / 1000
     stable_rounds = 0
     last_state: dict[str, Any] | None = None
@@ -464,6 +465,7 @@ def _wait_publish_images_ready(page: Any, timeout_ms: int = 120000) -> None:
                 return
         else:
             stable_rounds = 0
+            # 上传仍在进行时，状态抖动属正常；每轮间隔 2s，最多等 60s
         page.wait_for_timeout(2000)
 
     screenshot = _screenshot(page)
@@ -471,7 +473,8 @@ def _wait_publish_images_ready(page: Any, timeout_ms: int = 120000) -> None:
 
 
 def _publish_image_state(page: Any) -> dict[str, Any]:
-    return page.evaluate(
+    try:
+        return page.evaluate(
         """
         () => {
           const editables = Array.from(document.querySelectorAll("[contenteditable='true']"));
@@ -530,7 +533,18 @@ def _publish_image_state(page: Any) -> dict[str, Any]:
           };
         }
         """
-    )
+        )
+    except Exception:
+        logger.warning("Failed to evaluate publish image state", exc_info=True)
+        return {
+            "image_count": 0,
+            "invalid_count": 0,
+            "pending_count": 0,
+            "invalid_sources": [],
+            "pending_sources": [],
+            "has_progress": False,
+            "has_uploading_text": False,
+        }
 
 
 def _handle_cover(page: Any, article: Article) -> None:
