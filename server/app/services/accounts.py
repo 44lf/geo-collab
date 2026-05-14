@@ -5,13 +5,15 @@ import json
 import logging
 import os
 import re
+import sys
 import tempfile
+import threading
 import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session, selectinload
@@ -39,6 +41,28 @@ class AccountBrowserSessionResult:
     account_key: str
     session_id: str
     novnc_url: str
+
+
+def _run_in_plain_thread(fn: Callable[[], Any]) -> Any:
+    """Run Playwright sync API work outside FastAPI/AnyIO worker threads."""
+    result: list[Any] = []
+    error: list[tuple[type[BaseException], BaseException, Any]] = []
+
+    def _target() -> None:
+        try:
+            result.append(fn())
+        except BaseException:
+            exc_type, exc, tb = sys.exc_info()
+            if exc_type is not None and exc is not None:
+                error.append((exc_type, exc, tb))
+
+    worker = threading.Thread(target=_target, name="geo-playwright-sync", daemon=False)
+    worker.start()
+    worker.join()
+    if error:
+        _, exc, tb = error[0]
+        raise exc.with_traceback(tb)
+    return result[0] if result else None
 
 
 def normalize_account_key(account_key: str | None) -> str:
@@ -237,10 +261,15 @@ def finish_account_login_session(db: Session, account: Account, session_id: str)
         raise ValueError("Remote browser session has no browser context")
 
     try:
-        result = _read_login_state_from_remote_session(session, platform_code)
-        session.browser_context.storage_state(path=str(state_path_for_key(platform_code, account_key)))
+        result = _run_in_plain_thread(
+            lambda: _read_and_save_login_state_from_remote_session(
+                session,
+                platform_code,
+                state_path_for_key(platform_code, account_key),
+            )
+        )
     finally:
-        stop_remote_browser_session(session_id)
+        _run_in_plain_thread(lambda: stop_remote_browser_session(session_id))
 
     now = utcnow()
     account.status = "valid" if result.logged_in else "expired"
@@ -261,10 +290,14 @@ def stop_account_login_session(account: Account, session_id: str) -> None:
         return
     if session.account_key != account_key:
         raise ValueError("Remote browser session does not belong to this account")
-    stop_remote_browser_session(session_id)
+    _run_in_plain_thread(lambda: stop_remote_browser_session(session_id))
 
 
 def _start_login_browser(platform_code: str, account_key: str, channel: str, executable_path: str | None):
+    return _run_in_plain_thread(lambda: _start_login_browser_impl(platform_code, account_key, channel, executable_path))
+
+
+def _start_login_browser_impl(platform_code: str, account_key: str, channel: str, executable_path: str | None):
     from playwright.sync_api import sync_playwright
 
     from server.app.services.browser_sessions import (
@@ -314,6 +347,12 @@ def _start_login_browser(platform_code: str, account_key: str, channel: str, exe
         raise
 
 
+def _read_and_save_login_state_from_remote_session(session, platform_code: str, state_path: Path) -> BrowserCheckResult:
+    result = _read_login_state_from_remote_session(session, platform_code)
+    session.browser_context.storage_state(path=str(state_path))
+    return result
+
+
 def _read_login_state_from_remote_session(session, platform_code: str) -> BrowserCheckResult:
     driver = _get_driver(platform_code)
     context = session.browser_context
@@ -351,32 +390,7 @@ def check_account(db: Session, account: Account, payload: AccountCheckRequest) -
 
     logged_in = False
     if payload.use_browser and abs_state_path.exists():
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as pw:
-            browser_options = launch_options(payload.channel, payload.executable_path)
-            viewport = browser_options.pop("viewport", None)
-            browser_options["headless"] = True
-            browser = pw.chromium.launch(**browser_options)
-            context = browser.new_context(storage_state=str(abs_state_path), viewport=viewport)
-            page = context.new_page()
-            try:
-                page.goto(driver.home_url, wait_until="domcontentloaded", timeout=30000)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=8000)
-                except Exception:
-                    pass
-                url = page.url
-                title = page.title()
-                try:
-                    body = page.locator("body").inner_text(timeout=3000)
-                except Exception:
-                    body = ""
-                logged_in = driver.detect_logged_in(url=url, title=title, body=body)
-                context.storage_state(path=str(abs_state_path))
-            finally:
-                context.close()
-                browser.close()
+        logged_in = _run_in_plain_thread(lambda: _check_account_in_browser(driver, abs_state_path, payload))
     else:
         logged_in = abs_state_path.exists()
 
@@ -386,6 +400,36 @@ def check_account(db: Session, account: Account, payload: AccountCheckRequest) -
     account.updated_at = now
     db.flush()
     return get_account(db, account.id) or account
+
+
+def _check_account_in_browser(driver, abs_state_path: Path, payload: AccountCheckRequest) -> bool:
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser_options = launch_options(payload.channel, payload.executable_path)
+        viewport = browser_options.pop("viewport", None)
+        browser_options["headless"] = True
+        browser = pw.chromium.launch(**browser_options)
+        context = browser.new_context(storage_state=str(abs_state_path), viewport=viewport)
+        page = context.new_page()
+        try:
+            page.goto(driver.home_url, wait_until="domcontentloaded", timeout=30000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+            url = page.url
+            title = page.title()
+            try:
+                body = page.locator("body").inner_text(timeout=3000)
+            except Exception:
+                body = ""
+            logged_in = driver.detect_logged_in(url=url, title=title, body=body)
+            context.storage_state(path=str(abs_state_path))
+            return logged_in
+        finally:
+            context.close()
+            browser.close()
 
 
 def relogin_account(db: Session, account: Account, payload: AccountCheckRequest) -> Account:

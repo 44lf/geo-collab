@@ -1,4 +1,5 @@
 import json
+import threading
 import zipfile
 from io import BytesIO
 
@@ -29,6 +30,28 @@ def write_storage_state(data_dir, account_key: str = "demo") -> None:
     state_dir = data_dir / "browser_states" / "toutiao" / account_key
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "storage_state.json").write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
+
+
+def test_start_login_browser_runs_impl_in_plain_thread(monkeypatch):
+    from server.app.services import accounts
+
+    caller_thread = threading.get_ident()
+    seen: dict[str, int] = {}
+
+    class FakeSession:
+        id = "thread-session"
+        novnc_url = "http://127.0.0.1:6080/vnc.html"
+
+    def fake_impl(*_args):
+        seen["thread"] = threading.get_ident()
+        return FakeSession()
+
+    monkeypatch.setattr(accounts, "_start_login_browser_impl", fake_impl)
+
+    session = accounts._start_login_browser("toutiao", "thread-test", "chromium", None)
+
+    assert session.id == "thread-session"
+    assert seen["thread"] != caller_thread
 
 
 def test_toutiao_login_registers_existing_storage_and_lists_account(monkeypatch):
