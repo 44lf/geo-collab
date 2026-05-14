@@ -1,0 +1,163 @@
+"""
+Worker executor: polls the DB for pending tasks and executes them.
+
+Run as: python -m server.worker.executor
+
+Each worker registers itself with a unique WORKER_ID (hostname + PID).
+Tasks are claimed atomically via optimistic locking on the worker_id column.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import signal
+import socket
+import time
+from datetime import timedelta
+
+from sqlalchemy import select, update as sa_update
+
+from server.app.core.time import utcnow
+from server.app.db.session import SessionLocal
+from server.app.models import PublishTask
+from server.app.services.tasks import (
+    TERMINAL_TASK_STATUSES,
+    execute_task,
+    get_task,
+    recover_stuck_records,
+    recover_stuck_task_claims,
+)
+
+_logger = logging.getLogger(__name__)
+
+# Unique identity for this worker process
+WORKER_ID = f"{socket.gethostname()}-{os.getpid()}"
+CLAIM_LEASE_MINUTES = 10
+
+# Graceful shutdown flag
+_shutdown = False
+
+
+def _handle_signal(signum, frame) -> None:
+    global _shutdown
+    _logger.info("Worker %s: shutdown signal received (%s)", WORKER_ID, signum)
+    _shutdown = True
+
+
+def _claim_next_task(db) -> PublishTask | None:
+    """Claim a pending task with pending records via optimistic locking. Returns the task or None."""
+    from sqlalchemy import exists
+    from server.app.models.publish import PublishRecord
+
+    # Find a task with at least one pending record and no active worker claim
+    candidate_id = db.execute(
+        select(PublishTask.id)
+        .where(
+            PublishTask.status.in_(["pending", "running"]),
+            PublishTask.worker_id.is_(None),
+            exists(
+                select(1).where(
+                    PublishRecord.task_id == PublishTask.id,
+                    PublishRecord.status == "pending",
+                )
+            ),
+        )
+        .order_by(PublishTask.created_at.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if candidate_id is None:
+        return None
+
+    lease_until = utcnow() + timedelta(minutes=CLAIM_LEASE_MINUTES)
+    rows = db.execute(
+        sa_update(PublishTask)
+        .where(PublishTask.id == candidate_id, PublishTask.worker_id.is_(None))
+        .values(worker_id=WORKER_ID, worker_lease_until=lease_until)
+    ).rowcount
+
+    if rows == 0:
+        return None  # Race: another worker claimed it first
+
+    db.commit()
+    return get_task(db, candidate_id)
+
+
+def _release_task_claim(db, task_id: int) -> None:
+    db.execute(
+        sa_update(PublishTask)
+        .where(PublishTask.id == task_id, PublishTask.worker_id == WORKER_ID)
+        .values(worker_id=None, worker_lease_until=None)
+    )
+    db.commit()
+
+
+def _startup(db) -> None:
+    """Run recovery routines on worker startup."""
+    recover_stuck_records(db)
+    recover_stuck_task_claims(db)
+    _logger.info("Worker %s started", WORKER_ID)
+
+
+def main() -> None:
+    # Register as GEO_WORKER_ID so browser_sessions.py can tag DB rows
+    os.environ["GEO_WORKER_ID"] = WORKER_ID
+
+    # Import all drivers to trigger registration
+    import server.app.services.drivers.toutiao  # noqa: F401
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    db = SessionLocal()
+    try:
+        _startup(db)
+    finally:
+        db.close()
+
+    _logger.info("Worker %s entering main loop", WORKER_ID)
+
+    while not _shutdown:
+        db = SessionLocal()
+        task_id: int | None = None
+        try:
+            task = _claim_next_task(db)
+            if task is None:
+                db.close()
+                time.sleep(1)
+                continue
+
+            task_id = task.id
+            _logger.info("Worker %s claimed task %d", WORKER_ID, task_id)
+            execute_task(db, task)
+            db.commit()
+            _logger.info("Worker %s finished task %d", WORKER_ID, task_id)
+
+        except Exception:
+            _logger.exception("Worker %s: error executing task %s", WORKER_ID, task_id)
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            time.sleep(5)
+        finally:
+            if task_id is not None:
+                try:
+                    _release_task_claim(db, task_id)
+                except Exception:
+                    pass
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    _logger.info("Worker %s exited", WORKER_ID)
+
+
+if __name__ == "__main__":
+    main()

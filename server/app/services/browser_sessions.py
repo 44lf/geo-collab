@@ -4,6 +4,10 @@ Remote browser session management for the Linux server deployment.
 The runtime pipeline is Xvfb -> x11vnc -> websockify -> noVNC, with
 Playwright Chromium attached to the X display. The system is deployed on Linux
 servers, so this module does not need platform-specific branching.
+
+Session state is mirrored to the DB (browser_sessions table) so the API server
+can read novnc_url and request session shutdown across process boundaries.
+In-process dicts (_active_sessions etc.) are worker-local and hold live handles.
 """
 from __future__ import annotations
 
@@ -48,7 +52,7 @@ class RemoteBrowserSession:
     browser_context: Any | None = field(default=None, repr=False)
     page: Any | None = field(default=None, repr=False)
     operation_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
-    started_at: float = field(default_factory=time.monotonic)  # 用于空闲超时判断
+    started_at: float = field(default_factory=time.monotonic)
 
 
 _sessions_lock = threading.Lock()
@@ -57,41 +61,197 @@ _reserved_displays: set[int] = set()
 _reserved_vnc_ports: set[int] = set()
 _reserved_novnc_ports: set[int] = set()
 
-# 人工介入（waiting_user_input）时的关联记录：
-# record_id → session_id — 知道哪个 record 关联到哪个远程浏览器
 _record_to_session: dict[int, str] = {}
-# session_ids that survive context manager exit（不随 finally 清理）
 _session_keep_alive: set[str] = set()
-
-# account_key → session_id：持久化账号会话，跨 record 复用 Xvfb + Chromium
 _account_sessions: dict[str, str] = {}
 
 _idle_cleanup_thread: threading.Thread | None = None
 _idle_cleanup_stop = threading.Event()
 
 
+# ── DB helpers ──────────────────────────────────────────────────────────────
+
+def _get_db():
+    from server.app.db.session import SessionLocal
+    return SessionLocal()
+
+
+def _write_session_to_db(session: RemoteBrowserSession, worker_id: str | None) -> None:
+    try:
+        from server.app.models.browser_session import BrowserSession
+        from server.app.core.time import utcnow
+        db = _get_db()
+        try:
+            now = utcnow()
+            db.merge(BrowserSession(
+                id=session.id,
+                account_key=session.account_key,
+                display=session.display,
+                novnc_url=session.novnc_url,
+                started_at=now,
+                last_activity_at=now,
+                worker_id=worker_id,
+                keep_alive=False,
+                stop_requested=False,
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        _logger.debug("Could not write session %s to DB", session.id, exc_info=True)
+
+
+def _delete_session_from_db(session_id: str) -> None:
+    try:
+        from server.app.models.browser_session import BrowserSession, RecordBrowserSession
+        from sqlalchemy import delete as sa_delete
+        db = _get_db()
+        try:
+            db.execute(sa_delete(RecordBrowserSession).where(RecordBrowserSession.session_id == session_id))
+            db.execute(sa_delete(BrowserSession).where(BrowserSession.id == session_id))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        _logger.debug("Could not delete session %s from DB", session_id, exc_info=True)
+
+
+def _set_stop_requested_db(session_id: str) -> None:
+    try:
+        from server.app.models.browser_session import BrowserSession
+        from sqlalchemy import update as sa_update
+        db = _get_db()
+        try:
+            db.execute(
+                sa_update(BrowserSession)
+                .where(BrowserSession.id == session_id)
+                .values(stop_requested=True)
+            )
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        _logger.debug("Could not set stop_requested for session %s", session_id, exc_info=True)
+
+
+def _update_keep_alive_db(session_id: str, keep_alive: bool) -> None:
+    try:
+        from server.app.models.browser_session import BrowserSession
+        from server.app.core.time import utcnow
+        from sqlalchemy import update as sa_update
+        db = _get_db()
+        try:
+            db.execute(
+                sa_update(BrowserSession)
+                .where(BrowserSession.id == session_id)
+                .values(keep_alive=keep_alive, last_activity_at=utcnow())
+            )
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        _logger.debug("Could not update keep_alive for session %s", session_id, exc_info=True)
+
+
+def _write_record_session_to_db(record_id: int, session_id: str) -> None:
+    try:
+        from server.app.models.browser_session import RecordBrowserSession
+        db = _get_db()
+        try:
+            db.merge(RecordBrowserSession(record_id=record_id, session_id=session_id))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        _logger.debug("Could not write record→session mapping %d→%s to DB", record_id, session_id, exc_info=True)
+
+
+def _delete_record_session_from_db(record_id: int) -> None:
+    try:
+        from server.app.models.browser_session import RecordBrowserSession
+        from sqlalchemy import delete as sa_delete
+        db = _get_db()
+        try:
+            db.execute(sa_delete(RecordBrowserSession).where(RecordBrowserSession.record_id == record_id))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        _logger.debug("Could not delete record session mapping for record %d", record_id, exc_info=True)
+
+
+def _query_stop_requested_session_ids() -> list[str]:
+    try:
+        from server.app.models.browser_session import BrowserSession
+        from sqlalchemy import select
+        db = _get_db()
+        try:
+            rows = db.execute(
+                select(BrowserSession.id).where(BrowserSession.stop_requested == True)
+            ).scalars().all()
+            return list(rows)
+        finally:
+            db.close()
+    except Exception:
+        _logger.debug("Could not query stop_requested sessions", exc_info=True)
+        return []
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
 def associate_record_with_session(record_id: int, session_id: str) -> None:
-    """将发布记录关联到远程浏览器 session（用于 waiting_user_input 场景）。"""
+    """Associate a publish record with a remote browser session."""
     with _sessions_lock:
         _record_to_session[record_id] = session_id
+    _write_record_session_to_db(record_id, session_id)
 
 
-def get_session_for_record(record_id: int) -> RemoteBrowserSession | None:
-    """根据 record_id 查找关联的远程浏览器 session。"""
-    session_id = _record_to_session.get(record_id)
-    if session_id is None:
+def get_session_for_record(record_id: int) -> Any | None:
+    """Return a browser session object for the given record, or None.
+
+    Queries the DB so it works across processes. Returns the BrowserSession
+    ORM row (has .id and .novnc_url), or a local RemoteBrowserSession if
+    available in this process.
+    """
+    # Fast path: check local in-process dict first
+    with _sessions_lock:
+        session_id = _record_to_session.get(record_id)
+        if session_id is not None:
+            local = _active_sessions.get(session_id)
+            if local is not None:
+                return local
+
+    # Cross-process path: query DB
+    try:
+        from server.app.models.browser_session import BrowserSession, RecordBrowserSession
+        from sqlalchemy import select
+        db = _get_db()
+        try:
+            rbs = db.execute(
+                select(RecordBrowserSession).where(RecordBrowserSession.record_id == record_id)
+            ).scalar_one_or_none()
+            if rbs is None:
+                return None
+            bs = db.get(BrowserSession, rbs.session_id)
+            if bs is None:
+                return None
+            from sqlalchemy.orm import make_transient
+            db.expunge(bs)
+            make_transient(bs)
+            return bs
+        finally:
+            db.close()
+    except Exception:
+        _logger.debug("Could not query session for record %d from DB", record_id, exc_info=True)
         return None
-    return get_session(session_id)
 
 
 def get_session(session_id: str) -> RemoteBrowserSession | None:
-    """通过 session_id 查找活跃的远程浏览器 session。"""
     with _sessions_lock:
         return _active_sessions.get(session_id)
 
 
 def attach_browser_handles(session_id: str, playwright: Any | None, context: Any | None, page: Any | None = None) -> None:
-    """Attach Playwright handles so session shutdown can close Chromium too."""
     with _sessions_lock:
         session = _active_sessions.get(session_id)
         if session is None:
@@ -102,9 +262,9 @@ def attach_browser_handles(session_id: str, playwright: Any | None, context: Any
 
 
 def disassociate_record(record_id: int) -> None:
-    """取消 record 与 session 的关联（record 完成/取消时调用）。"""
     with _sessions_lock:
         _record_to_session.pop(record_id, None)
+    _delete_record_session_from_db(record_id)
 
 
 def _context_alive(context: object) -> bool:
@@ -115,10 +275,11 @@ def _context_alive(context: object) -> bool:
         return False
 
 
-def get_or_create_account_session(account_key: str) -> "RemoteBrowserSession":
-    """返回账号对应的持久化 session，不存在或已失效时新建。
+def get_or_create_account_session(account_key: str) -> RemoteBrowserSession:
+    """Return the persistent session for an account, creating one if needed.
 
-    复用条件：session 存在于 _active_sessions、不在 keep_alive 等待状态、Chromium context 仍然存活。
+    Reuse condition: session exists locally, not in keep_alive state, Chromium
+    context still alive.
     """
     with _sessions_lock:
         session_id = _account_sessions.get(account_key)
@@ -131,19 +292,19 @@ def get_or_create_account_session(account_key: str) -> "RemoteBrowserSession":
             ):
                 session.started_at = time.monotonic()
                 return session
-            # 旧 session 不可用，清掉映射，下面重新创建
             _account_sessions.pop(account_key, None)
 
     session = start_remote_browser_session(account_key)
     with _sessions_lock:
+        _account_sessions[session.id] = session.id
         _account_sessions[account_key] = session.id
     return session
 
 
 def keep_session_alive(session_id: str) -> None:
-    """标记 session 为"保持存活"，context manager exit 时不自动 stop。"""
     with _sessions_lock:
         _session_keep_alive.add(session_id)
+    _update_keep_alive_db(session_id, keep_alive=True)
 
 
 def active_remote_browser_sessions() -> list[RemoteBrowserSession]:
@@ -173,13 +334,8 @@ def remote_browser_runtime_status() -> dict[str, object]:
 
 @contextmanager
 def managed_remote_browser_session(account_key: str) -> Iterator[RemoteBrowserSession | None]:
-    """
-    上下文管理器：进入时启动远程浏览器 session（Xvfb + x11vnc + websockify），
-    正常情况下退出时自动停机清理。
-
-    特殊情况：如果 session 被 keep_session_alive() 标记（waiting_user_input 场景），
-    则 exit 时不 stop，由调用方（cancel_task / resolve_user_input_record）显式清理。
-    """
+    """Context manager: starts a remote browser session on enter, stops it on exit
+    (unless keep_session_alive() was called, e.g. for waiting_user_input)."""
     session = start_remote_browser_session(account_key)
     try:
         yield session
@@ -191,6 +347,9 @@ def managed_remote_browser_session(account_key: str) -> Iterator[RemoteBrowserSe
 
 
 def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
+    import os as _os
+    worker_id = _os.environ.get("GEO_WORKER_ID")
+
     settings = get_settings()
 
     xvfb = _require_command(settings.publish_xvfb_path, "Xvfb")
@@ -227,14 +386,8 @@ def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
                 [
                     xvfb,
                     session.display,
-                    "-screen",
-                    "0",
-                    "1440x900x24",
-                    "-ac",
-                    "+extension",
-                    "GLX",
-                    "+render",
-                    "-noreset",
+                    "-screen", "0", "1440x900x24",
+                    "-ac", "+extension", "GLX", "+render", "-noreset",
                 ],
                 log_dir,
             )
@@ -246,14 +399,9 @@ def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
                 "x11vnc",
                 [
                     x11vnc,
-                    "-display",
-                    session.display,
-                    "-localhost",
-                    "-forever",
-                    "-shared",
-                    "-nopw",
-                    "-rfbport",
-                    str(session.vnc_port),
+                    "-display", session.display,
+                    "-localhost", "-forever", "-shared", "-nopw",
+                    "-rfbport", str(session.vnc_port),
                 ],
                 log_dir,
             )
@@ -263,12 +411,10 @@ def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
         websockify_command = [websockify]
         if settings.publish_novnc_web_dir:
             websockify_command.append(f"--web={settings.publish_novnc_web_dir}")
-        websockify_command.extend(
-            [
-                f"{settings.publish_remote_browser_host}:{session.novnc_port}",
-                f"127.0.0.1:{session.vnc_port}",
-            ]
-        )
+        websockify_command.extend([
+            f"{settings.publish_remote_browser_host}:{session.novnc_port}",
+            f"127.0.0.1:{session.vnc_port}",
+        ])
         session.processes.append(_spawn("websockify", websockify_command, log_dir))
         _wait_for_port(
             settings.publish_remote_browser_host,
@@ -281,6 +427,9 @@ def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
             _reserved_displays.discard(session.display_number)
             _reserved_vnc_ports.discard(session.vnc_port)
             _reserved_novnc_ports.discard(session.novnc_port)
+
+        _write_session_to_db(session, worker_id)
+        _start_idle_cleanup()
         return session
     except Exception:
         _stop_session_processes(session)
@@ -289,8 +438,10 @@ def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
 
 
 def stop_remote_browser_session(session_id: str) -> None:
+    """Stop a browser session. If it belongs to this process, kill immediately.
+    Otherwise set stop_requested=True in the DB; the owning worker will clean up."""
     with _sessions_lock:
-        session = _active_sessions.pop(session_id, None)
+        local_session = _active_sessions.pop(session_id, None)
         _session_keep_alive.discard(session_id)
         stale_records = [rid for rid, sid in _record_to_session.items() if sid == session_id]
         for rid in stale_records:
@@ -298,24 +449,27 @@ def stop_remote_browser_session(session_id: str) -> None:
         stale_account_keys = [k for k, v in _account_sessions.items() if v == session_id]
         for k in stale_account_keys:
             _account_sessions.pop(k, None)
-    if session is not None:
-        _close_browser_handles(session)
-        _stop_session_processes(session)
 
+    if local_session is not None:
+        _close_browser_handles(local_session)
+        _stop_session_processes(local_session)
+        _delete_session_from_db(session_id)
+    else:
+        # Cross-process: signal via DB flag; worker cleanup thread will handle it
+        _set_stop_requested_db(session_id)
+
+
+# ── Port / display allocation ────────────────────────────────────────────────
 
 def _reserve_numbers() -> tuple[int, int, int]:
     settings = get_settings()
     with _sessions_lock:
-        used_displays = {session.display_number for session in _active_sessions.values()} | _reserved_displays
-        used_vnc_ports = {session.vnc_port for session in _active_sessions.values()} | _reserved_vnc_ports
-        used_novnc_ports = {session.novnc_port for session in _active_sessions.values()} | _reserved_novnc_ports
+        used_displays = {s.display_number for s in _active_sessions.values()} | _reserved_displays
+        used_vnc_ports = {s.vnc_port for s in _active_sessions.values()} | _reserved_vnc_ports
+        used_novnc_ports = {s.novnc_port for s in _active_sessions.values()} | _reserved_novnc_ports
 
         display_number = _find_display_number(settings.publish_remote_browser_display_base, used_displays)
-        vnc_port = _find_free_port(
-            "127.0.0.1",
-            settings.publish_remote_browser_vnc_base_port,
-            used_vnc_ports,
-        )
+        vnc_port = _find_free_port("127.0.0.1", settings.publish_remote_browser_vnc_base_port, used_vnc_ports)
         novnc_port = _find_free_port(
             settings.publish_remote_browser_host,
             settings.publish_remote_browser_novnc_base_port,
@@ -364,6 +518,8 @@ def _port_available(host: str, port: int) -> bool:
     return True
 
 
+# ── Process management ───────────────────────────────────────────────────────
+
 def _spawn(name: str, command: list[str], log_dir: Path) -> ManagedProcess:
     log_handle = (log_dir / f"{name}.log").open("ab")
     try:
@@ -409,6 +565,8 @@ def _close_browser_handles(session: RemoteBrowserSession) -> None:
         session.page = None
 
 
+# ── X11 / TCP readiness checks ───────────────────────────────────────────────
+
 def _wait_for_x_display(display_number: int, timeout_seconds: float) -> None:
     socket_path = Path(f"/tmp/.X11-unix/X{display_number}")
     deadline = time.monotonic() + timeout_seconds
@@ -448,33 +606,55 @@ def _resolve_command(command: str | None) -> str | None:
     return shutil.which(command)
 
 
+# ── Idle / stop-requested cleanup thread ────────────────────────────────────
+
 def _start_idle_cleanup() -> None:
-    """启动后台线程，定期清理超时的 keep-alive session。"""
     global _idle_cleanup_thread
     if _idle_cleanup_thread is not None and _idle_cleanup_thread.is_alive():
         return
 
     def _cleanup_loop():
-        timeout = lambda: get_settings().publish_remote_browser_idle_timeout_seconds
+        idle_timeout = lambda: get_settings().publish_remote_browser_idle_timeout_seconds
+        idle_tick = 0
         while not _idle_cleanup_stop.is_set():
-            _idle_cleanup_stop.wait(30)  # 每 30 秒检查一次
+            _idle_cleanup_stop.wait(2)
             if _idle_cleanup_stop.is_set():
                 break
             try:
-                _cleanup_stale_sessions(timeout())
+                _cleanup_stop_requested_sessions()
             except Exception:
                 pass
-            try:
-                _cleanup_zombie_sessions()
-            except Exception:
-                pass
+            idle_tick += 1
+            if idle_tick >= 15:  # every 30s
+                idle_tick = 0
+                try:
+                    _cleanup_stale_sessions(idle_timeout())
+                except Exception:
+                    pass
+                try:
+                    _cleanup_zombie_sessions()
+                except Exception:
+                    pass
 
     _idle_cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True, name="session-idle-cleanup")
     _idle_cleanup_thread.start()
 
 
+def _cleanup_stop_requested_sessions() -> None:
+    """Kill any sessions that have been flagged stop_requested in the DB."""
+    stop_ids = _query_stop_requested_session_ids()
+    for session_id in stop_ids:
+        with _sessions_lock:
+            session = _active_sessions.get(session_id)
+        if session is not None:
+            _logger.info("Stopping session %s (stop_requested via DB)", session_id)
+            stop_remote_browser_session(session_id)
+        else:
+            # Not our session — remove the DB row so other workers don't re-process
+            _delete_session_from_db(session_id)
+
+
 def _cleanup_stale_sessions(idle_timeout: int) -> None:
-    """清理超过 idle_timeout 秒未操作的 keep-alive session。"""
     now = time.monotonic()
     stale_ids: list[str] = []
     with _sessions_lock:
@@ -492,7 +672,6 @@ def _cleanup_stale_sessions(idle_timeout: int) -> None:
             stop_remote_browser_session(session_id)
         except Exception:
             _logger.warning("Failed to stop stale session %s", session_id, exc_info=True)
-        # 解除所有关联 record 的绑定
         with _sessions_lock:
             stale_records = [rid for rid, sid in _record_to_session.items() if sid == session_id]
             for rid in stale_records:
@@ -500,7 +679,6 @@ def _cleanup_stale_sessions(idle_timeout: int) -> None:
 
 
 def _cleanup_zombie_sessions() -> None:
-    """检测并清理进程已意外退出的僵尸 session。"""
     zombie_ids: list[str] = []
     with _sessions_lock:
         for session_id, session in list(_active_sessions.items()):
@@ -522,7 +700,6 @@ def _cleanup_zombie_sessions() -> None:
 
 
 def _stop_idle_cleanup() -> None:
-    """停止后台清理线程（测试用）。"""
     global _idle_cleanup_thread
     _idle_cleanup_stop.set()
     if _idle_cleanup_thread is not None:
@@ -532,6 +709,7 @@ def _stop_idle_cleanup() -> None:
 
 def _novnc_url(host: str, port: int) -> str:
     return f"http://{host}:{port}/vnc.html?host={host}&port={port}"
+
 
 def _reset_globals() -> None:
     """Reset all module-level state (for test cleanup)."""

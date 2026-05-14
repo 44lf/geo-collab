@@ -107,37 +107,52 @@ def preview_task_assignment_endpoint(
     return preview_task_assignment(db, payload, user_id=current_user.id, role=current_user.role)
 
 
-# 执行任务（启动后台线程立即执行，非队列模式）
-# 返回 202 表示后台线程已启动，用 GET /api/tasks/{id} 轮询状态
-# 若任务已处于 terminal 状态则返回 400
+# 执行任务。
+# 生产环境：worker 容器轮询 DB 认领并执行，API 只清理过期 worker 认领并返回 202。
+# 测试环境：bg_session_factory 被 monkeypatch 为 TestingSessionLocal 时，在后台线程本地执行。
 @router.post("/{task_id}/execute", status_code=202)
 def start_task_execution(
     task_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    from server.app.core.time import utcnow as _utcnow
     task = _verify_task_ownership(get_task(db, task_id), current_user)
     if task.status in TERMINAL_TASK_STATUSES:
         raise HTTPException(status_code=409, detail=f"Task is already terminal: {task.status}")
 
-    def _run() -> None:
-        from server.app.db.session import SessionLocal as _SL
+    if bg_session_factory is not None:
+        # Test/dev mode: execute immediately in a background thread
+        def _run() -> None:
+            bg_db = bg_session_factory()
+            try:
+                bg_task = get_task(bg_db, task_id)
+                if bg_task:
+                    execute_task(bg_db, bg_task)
+                bg_db.commit()
+            except Exception:
+                bg_db.rollback()
+                logging.getLogger(__name__).exception("Background task %s failed", task_id)
+            finally:
+                bg_db.close()
 
-        factory = bg_session_factory or _SL
-        bg_db = factory()
-        try:
-            bg_task = get_task(bg_db, task_id)
-            if bg_task:
-                execute_task(bg_db, bg_task)
-            bg_db.commit()
-        except Exception:
-            bg_db.rollback()
-            logging.getLogger(__name__).exception("Background task %s failed", task_id)
-        finally:
-            bg_db.close()
+        threading.Thread(target=_run, daemon=True).start()
+    else:
+        # Production mode: release any stale worker claim; worker will pick it up
+        db.execute(
+            select(PublishTask).where(PublishTask.id == task_id)  # re-lock for update
+        )
+        from sqlalchemy import update as _upd
+        db.execute(
+            _upd(PublishTask)
+            .where(
+                PublishTask.id == task_id,
+                (PublishTask.worker_lease_until < _utcnow()) | PublishTask.worker_id.is_(None),
+            )
+            .values(worker_id=None, worker_lease_until=None)
+        )
+        db.commit()
 
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
     return {"queued": True}
 
 

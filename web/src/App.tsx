@@ -17,12 +17,14 @@ import "./styles.css";
 function AppShell() {
   const { user, loading, logout } = useAuth();
   const [activeNav, setActiveNav] = useState<NavKey>("content");
+  const [visitedTabs, setVisitedTabs] = useState<Set<NavKey>>(new Set(["content"]));
   const contentDirtyRef = useRef<() => boolean>(() => false);
 
   function handleNavClick(key: NavKey) {
     if (activeNav === "content" && key !== "content" && contentDirtyRef.current()) {
       if (!window.confirm("当前文章有未保存内容，确定要切换页面吗？未保存的修改将丢失。")) return;
     }
+    setVisitedTabs((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
     setActiveNav(key);
   }
 
@@ -97,22 +99,28 @@ function AppShell() {
                 <ContentWorkspace dirtyCheckRef={contentDirtyRef} />
               </ErrorBoundary>
             </div>
-            <div style={{ display: activeNav === "media" ? undefined : "none" }}>
-              <ErrorBoundary fallback={<p role="alert">媒体矩阵出错，请刷新重试</p>}>
-                <AccountsWorkspace />
-              </ErrorBoundary>
-            </div>
-            <div style={{ display: activeNav === "tasks" ? undefined : "none" }}>
-              <ErrorBoundary fallback={<p role="alert">分发引擎出错，请刷新重试</p>}>
-                <TasksWorkspace />
-              </ErrorBoundary>
-            </div>
-            <div style={{ display: activeNav === "system" ? undefined : "none" }}>
-              <ErrorBoundary fallback={<p role="alert">系统状态出错，请刷新重试</p>}>
-                <SystemWorkspace />
-              </ErrorBoundary>
-            </div>
-            {user.role === "admin" && (
+            {visitedTabs.has("media") && (
+              <div style={{ display: activeNav === "media" ? undefined : "none" }}>
+                <ErrorBoundary fallback={<p role="alert">媒体矩阵出错，请刷新重试</p>}>
+                  <AccountsWorkspace />
+                </ErrorBoundary>
+              </div>
+            )}
+            {visitedTabs.has("tasks") && (
+              <div style={{ display: activeNav === "tasks" ? undefined : "none" }}>
+                <ErrorBoundary fallback={<p role="alert">分发引擎出错，请刷新重试</p>}>
+                  <TasksWorkspace />
+                </ErrorBoundary>
+              </div>
+            )}
+            {visitedTabs.has("system") && (
+              <div style={{ display: activeNav === "system" ? undefined : "none" }}>
+                <ErrorBoundary fallback={<p role="alert">系统状态出错，请刷新重试</p>}>
+                  <SystemWorkspace />
+                </ErrorBoundary>
+              </div>
+            )}
+            {user.role === "admin" && visitedTabs.has("admin") && (
               <div style={{ display: activeNav === "admin" ? undefined : "none" }}>
                 <ErrorBoundary fallback={<p role="alert">用户管理出错，请刷新重试</p>}>
                   <UsersWorkspace />

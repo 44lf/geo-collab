@@ -52,6 +52,8 @@ class PublishTask(Base):
     group_id: Mapped[int | None] = mapped_column(ForeignKey("article_groups.id"), nullable=True)
     stop_before_publish: Mapped[bool] = mapped_column(Boolean, default=False)  # 是否等待手动确认发布
     client_request_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    worker_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    worker_lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

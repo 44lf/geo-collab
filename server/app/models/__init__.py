@@ -3,6 +3,7 @@ from server.app.models.account import Account
 from server.app.models.article import Article, ArticleBodyAsset
 from server.app.models.article_group import ArticleGroup, ArticleGroupItem
 from server.app.models.asset import Asset
+from server.app.models.browser_session import BrowserSession, RecordBrowserSession
 from server.app.models.platform import Platform
 from server.app.models.publish import PublishRecord, PublishTask, PublishTaskAccount, TaskLog
 from server.app.models.user import User
@@ -14,6 +15,8 @@ __all__ = [
     "ArticleGroup",
     "ArticleGroupItem",
     "Asset",
+    "BrowserSession",
+    "RecordBrowserSession",
     "Platform",
     "PublishRecord",
     "PublishTask",

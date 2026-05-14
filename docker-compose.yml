@@ -20,8 +20,27 @@ services:
   app:
     build: .
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      GEO_DB_HOST: mysql
+      GEO_DB_PORT: 3306
+      GEO_DB_USER: ${MYSQL_USER:-geo_user}
+      GEO_DB_PASS: ${MYSQL_PASSWORD}
+      GEO_DB_NAME: ${MYSQL_DATABASE:-geo_collab}
+      GEO_DATA_DIR: /app/data
+      GEO_NGINX_ACCEL: "1"
+    volumes:
+      - app_data:/app/data
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: python -m server.worker.executor
     ports:
-      - "8000:8000"
       - "6080-6090:6080-6090"
     depends_on:
       mysql:
@@ -42,6 +61,18 @@ services:
       GEO_PUBLISH_WEBSOCKIFY_PATH: websockify
     volumes:
       - app_data:/app/data
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+    volumes:
+      - app_data:/app_data:ro
 
 volumes:
   mysql_data:

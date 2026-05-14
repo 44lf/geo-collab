@@ -1024,3 +1024,19 @@ def recover_stuck_records(db: Session) -> None:
     if records:
         _logger.warning("Recovered %d stuck records: %s", len(records), [r.id for r in records])
         db.commit()
+
+
+def recover_stuck_task_claims(db: Session) -> None:
+    """Worker 启动时释放过期的 worker 认领（worker 崩溃导致 lease 过期）。"""
+    now = utcnow()
+    rows = db.execute(
+        sa_update(PublishTask)
+        .where(
+            PublishTask.worker_id.is_not(None),
+            PublishTask.worker_lease_until < now,
+        )
+        .values(worker_id=None, worker_lease_until=None)
+    ).rowcount
+    if rows:
+        _logger.warning("Released %d expired worker task claims", rows)
+        db.commit()

@@ -34,12 +34,13 @@ def _verify_record_ownership(record: PublishRecord | None, current_user: User, d
 
 
 def _start_background_execute(task_id: int) -> None:
-    def _run() -> None:
-        from server.app.api.routes.tasks import bg_session_factory as _bf
-        from server.app.db.session import SessionLocal as _SL
+    from server.app.api.routes.tasks import bg_session_factory as _bf
+    if _bf is None:
+        # Production mode: worker picks up the task when it finds pending records.
+        return
 
-        factory = _bf or _SL
-        bg_db = factory()
+    def _run() -> None:
+        bg_db = _bf()
         try:
             bg_task = get_task(bg_db, task_id)
             if bg_task:

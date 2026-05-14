@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -53,8 +55,9 @@ def read_asset_meta(asset_id: str, db: Session = Depends(get_db)) -> AssetRead:
 
 
 # 获取资源文件内容（返回图片二进制数据）
+# GEO_NGINX_ACCEL=1 时通过 X-Accel-Redirect 让 Nginx 直接 sendfile，Python 只做鉴权
 @router.get("/{asset_id}")
-def read_asset_file(asset_id: str, db: Session = Depends(get_db)) -> FileResponse:
+def read_asset_file(asset_id: str, db: Session = Depends(get_db)) -> Response:
     asset = db.get(Asset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -66,5 +69,17 @@ def read_asset_file(asset_id: str, db: Session = Depends(get_db)) -> FileRespons
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Asset file not found")
+
+    if os.environ.get("GEO_NGINX_ACCEL"):
+        from server.app.core.paths import get_data_dir
+        rel = path.relative_to(get_data_dir())
+        return Response(
+            status_code=200,
+            headers={
+                "X-Accel-Redirect": f"/internal_data/{rel}",
+                "Content-Type": asset.mime_type,
+                "Content-Disposition": f'inline; filename="{asset.filename}"',
+            },
+        )
 
     return FileResponse(path, media_type=asset.mime_type, filename=asset.filename)

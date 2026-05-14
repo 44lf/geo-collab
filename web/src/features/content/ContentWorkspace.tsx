@@ -470,7 +470,11 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
           });
       if (!saved) return null;
       applySavedArticle(saved, contentJson);
-      await refreshArticles();
+      setArticles((prev) =>
+        prev.some((a) => a.id === saved.id)
+          ? prev.map((a) => (a.id === saved.id ? { ...a, ...saved, published_count: a.published_count } : a))
+          : [saved, ...prev],
+      );
       if (!quiet) toast("文章已保存", "success");
       return saved;
     } catch (error) {
@@ -497,7 +501,9 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         if (savedStateRef.current) {
           savedStateRef.current = { ...savedStateRef.current, cover_asset_id: saved.cover_asset_id };
         }
-        await refreshArticles();
+        setArticles((prev) =>
+          prev.map((a) => (a.id === saved.id ? { ...a, cover_asset_id: saved.cover_asset_id, version: saved.version } : a)),
+        );
         toast("封面已上传并保存", "success");
       } else {
         toast("封面已上传，保存文章后生效", "success");
@@ -553,9 +559,10 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     if (!draft.id) return;
     setLoading(true);
     try {
-      await api<void>(`/api/articles/${draft.id}`, { method: "DELETE" });
+      const deletedId = draft.id;
+      await api<void>(`/api/articles/${deletedId}`, { method: "DELETE" });
       resetDraft();
-      await refreshArticles();
+      setArticles((prev) => prev.filter((a) => a.id !== deletedId));
       toast("文章已删除", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "删除失败", "error");
@@ -572,7 +579,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     }
     setLoading(true);
     try {
-      const group = editingGroupId
+      let group = editingGroupId
         ? await api<ArticleGroup>(`/api/article-groups/${editingGroupId}`, {
             method: "PUT",
             body: JSON.stringify({ name, version: groups.find((item) => item.id === editingGroupId)?.version }),
@@ -585,16 +592,17 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         const payload: ArticleGroupUpdateItemsPayload = {
           items: selectedArticleIds.map((articleId, index) => ({ article_id: articleId, sort_order: index })),
         };
-        await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
+        group = await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
           method: "PUT",
           body: JSON.stringify({ ...payload, version: group.version }),
         });
       }
+      const isEditing = Boolean(editingGroupId);
       setGroupName("");
       setEditingGroupId(null);
       setSelectedArticleIds([]);
-      await refreshGroups();
-      toast(editingGroupId ? "分组已更新" : "分组已创建", "success");
+      setGroups((prev) => (isEditing ? prev.map((g) => (g.id === group.id ? group : g)) : [group, ...prev]));
+      toast(isEditing ? "分组已更新" : "分组已创建", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "保存分组失败", "error");
     } finally {
@@ -606,11 +614,12 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     if (!editingGroupId) return;
     setLoading(true);
     try {
-      await api<void>(`/api/article-groups/${editingGroupId}`, { method: "DELETE" });
+      const deletedGroupId = editingGroupId;
+      await api<void>(`/api/article-groups/${deletedGroupId}`, { method: "DELETE" });
       setEditingGroupId(null);
       setGroupName("");
       setSelectedArticleIds([]);
-      await refreshGroups();
+      setGroups((prev) => prev.filter((g) => g.id !== deletedGroupId));
       toast("分组已删除", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "删除分组失败", "error");
@@ -648,13 +657,13 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
           { article_id: groupPickerArticle.id, sort_order: group.items.length },
         ],
       };
-      await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
+      const updated = await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
         method: "PUT",
         body: JSON.stringify({ ...payload, version: group.version }),
       });
       setGroupPickerArticle(null);
       setGroupPickerSelectedId(null);
-      await refreshGroups();
+      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
       toast("文章已加入分组", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "加入分组失败", "error");
@@ -671,11 +680,11 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
           .filter((item) => item.article_id !== articleId)
           .map((item, index) => ({ article_id: item.article_id, sort_order: index })),
       };
-      await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
+      const updated = await api<ArticleGroup>(`/api/article-groups/${group.id}/items`, {
         method: "PUT",
         body: JSON.stringify({ ...payload, version: group.version }),
       });
-      await refreshGroups();
+      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
       toast("文章已移出分组", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "移出分组失败", "error");
