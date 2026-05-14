@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import type { Account, AccountBrowserSession, AccountBrowserSessionFinish, PlatformLoginPayload } from "../../types";
+import type { Account, AccountBrowserSession, AccountBrowserSessionFinish, PlatformLoginPayload, PlatformOption } from "../../types";
 import { CheckCircle2, Download, ExternalLink, Plus, RefreshCw, Trash2, Upload, UserPlus, X } from "lucide-react";
 import { useToast } from "../../components/Toast";
 
@@ -14,6 +14,7 @@ type ActiveLoginSession = {
 export function AccountsWorkspace() {
   const { toast } = useToast();
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [platforms, setPlatforms] = useState<PlatformOption[]>([]);
   const [displayName, setDisplayName] = useState("头条号账号");
   const [accountKey, setAccountKey] = useState("");
   const [loading, setLoading] = useState(false);
@@ -21,6 +22,8 @@ export function AccountsWorkspace() {
   const [renameValue, setRenameValue] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState<Account | null>(null);
   const [activeLoginSessions, setActiveLoginSessions] = useState<Record<number, ActiveLoginSession>>({});
+  const selectedPlatformCode = platforms[0]?.code ?? DEFAULT_PLATFORM_CODE;
+  const selectedPlatformName = platforms[0]?.name ?? "头条号";
 
   async function refreshAccounts() {
     const data = await api<Account[]>("/api/accounts");
@@ -28,7 +31,14 @@ export function AccountsWorkspace() {
   }
 
   useEffect(() => {
-    void refreshAccounts();
+    void (async () => {
+      const [platformData, accountData] = await Promise.all([
+        api<PlatformOption[]>("/api/accounts/platforms"),
+        api<Account[]>("/api/accounts"),
+      ]);
+      setPlatforms(platformData);
+      setAccounts(accountData);
+    })();
   }, []);
 
   async function login(useBrowser: boolean) {
@@ -44,7 +54,7 @@ export function AccountsWorkspace() {
         account_key: accountKey,
         use_browser: useBrowser,
       };
-      await api<Account>(`/api/accounts/${DEFAULT_PLATFORM_CODE}/login`, {
+      await api<Account>(`/api/accounts/${selectedPlatformCode}/login`, {
         method: "POST",
         body: JSON.stringify({ ...payload, channel: "chromium", wait_seconds: 180 }),
       });
@@ -75,7 +85,7 @@ export function AccountsWorkspace() {
         account_key: accountKey,
         use_browser: true,
       };
-      const result = await api<AccountBrowserSession>(`/api/accounts/${DEFAULT_PLATFORM_CODE}/login-session`, {
+      const result = await api<AccountBrowserSession>(`/api/accounts/${selectedPlatformCode}/login-session`, {
         method: "POST",
         body: JSON.stringify({ ...payload, channel: "chromium", wait_seconds: 180 }),
       });
@@ -291,6 +301,10 @@ export function AccountsWorkspace() {
       <section className="mediaGrid">
         <section className="accountForm">
           <h2>添加平台账号</h2>
+          <label>
+            平台
+            <input value={selectedPlatformName} readOnly />
+          </label>
           <label>
             显示名称
             <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />

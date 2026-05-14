@@ -263,7 +263,7 @@ export function TasksWorkspace() {
         return next;
       });
       await refreshDetail(selectedTaskId);
-      toast("已取消", "success");
+      toast("已请求取消，将停止后续未开始的发布", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "取消失败", "error");
     } finally {
@@ -361,7 +361,7 @@ export function TasksWorkspace() {
 
   const validAccounts = accounts.filter((a) => a.status === "valid");
   const canExecute = selectedTask && selectedTask.status === "pending";
-  const canCancel = selectedTask && (selectedTask.status === "running" || selectedTask.status === "pending");
+  const canCancel = selectedTask && !selectedTask.cancel_requested && (selectedTask.status === "running" || selectedTask.status === "pending");
 
   return (
     <>
@@ -509,8 +509,9 @@ export function TasksWorkspace() {
               <div>
                 <h2 style={{ margin: "0 0 4px" }}>{selectedTask.name}</h2>
                 <small style={{ color: "#64748b", fontSize: 13 }}>
-                  {selectedTask.task_type === "single" ? "单篇发布" : "分组轮询"} · 头条号
+                  {selectedTask.task_type === "single" ? "单篇发布" : "分组轮询"} · {selectedTask.platform_code}
                   {selectedTask.started_at ? ` · 开始于 ${new Date(selectedTask.started_at).toLocaleString()}` : ""}
+                  {selectedTask.cancel_requested ? " · 已请求取消" : ""}
                 </small>
               </div>
               <span className={`badge ${selectedTask.status}`}>{statusLabel(selectedTask.status)}</span>
@@ -525,7 +526,7 @@ export function TasksWorkspace() {
               ) : null}
               {canCancel ? (
                 <button className="dangerButton" type="button" disabled={loading} onClick={() => void cancelTask()}>
-                  取消任务
+                  停止后续发布
                 </button>
               ) : null}
             </div>

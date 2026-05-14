@@ -310,7 +310,7 @@ def _start_login_browser_impl(platform_code: str, account_key: str, channel: str
     driver = _get_driver(platform_code)
     ensure_data_dirs()
     state_dir_for_key(platform_code, account_key).mkdir(parents=True, exist_ok=True)
-    session = start_remote_browser_session(account_key)
+    session = start_remote_browser_session(account_key, platform_code=platform_code)
     pw = None
     context = None
     try:

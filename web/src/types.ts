@@ -101,8 +101,11 @@ export type Task = {
   article_id: number | null;
   group_id: number | null;
   stop_before_publish: boolean;
+  cancel_requested: boolean;
   accounts: TaskAccountRead[];
   record_count: number;
+  worker_id: string | null;
+  worker_heartbeat_at: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -149,6 +152,15 @@ export type SystemStatus = {
   account_count: number;
   task_count: number;
   browser_ready: boolean;
+  pending_task_count: number;
+  active_browser_sessions: number;
+  worker_online: boolean;
+  novnc_runtime_ready: boolean;
+};
+
+export type PlatformOption = {
+  code: string;
+  name: string;
 };
 
 // API Request Bodies

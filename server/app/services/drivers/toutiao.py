@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +11,7 @@ logger = logging.getLogger(__name__)
 from server.app.models import Account, Article, Asset
 from server.app.services.articles import article_has_publishable_body, loads_content_json
 from server.app.services.assets import resolve_asset_path
+from server.app.services.drivers.base import PublishError, PublishResult, UserInputRequired
 from server.app.services.publish_diagnostics import publish_step, record_publish_diagnostic
 
 TOUTIAO_PUBLISH_URL = "https://mp.toutiao.com/profile_v4/graphic/publish"
@@ -22,12 +22,10 @@ LOGIN_HINTS = (*QR_HINTS, *CAPTCHA_HINTS, *LOGIN_REDIRECT_HINTS)
 PUBLISH_HINTS = ("发布", "标题", "正文", "图文", "文章")
 
 
-# 发布填充结果
-@dataclass(frozen=True)
-class PublishFillResult:
-    url: str
-    title: str
-    message: str
+PublishFillResult = PublishResult
+
+
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -38,13 +36,11 @@ class BodySegment:
 
 
 # 头条号发布异常，可附带失败截图
-class ToutiaoPublishError(Exception):
-    def __init__(self, message: str, screenshot: bytes | None = None):
-        super().__init__(message)
-        self.screenshot = screenshot
+class ToutiaoPublishError(PublishError):
+    pass
 
 
-class ToutiaoUserInputRequired(ToutiaoPublishError):
+class ToutiaoUserInputRequired(UserInputRequired, ToutiaoPublishError):
     def __init__(
         self,
         message: str,
@@ -53,10 +49,7 @@ class ToutiaoUserInputRequired(ToutiaoPublishError):
         novnc_url: str | None = None,
         error_type: str = "login_required",
     ):
-        super().__init__(message, screenshot)
-        self.session_id = session_id
-        self.novnc_url = novnc_url
-        self.error_type = error_type  # login_required | captcha_required | qr_scan_required
+        UserInputRequired.__init__(self, message, screenshot, session_id, novnc_url, error_type)
 
 
 def _close_ai_drawer(page: Any) -> None:

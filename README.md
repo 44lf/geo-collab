@@ -5,14 +5,16 @@ Geo 协作平台云端发布管理系统。**仅支持 Linux 服务器部署（D
 ## Docker Compose 快速启动
 
 ```bash
-cp .env .env.local
+cp .env.example .env
 # 编辑 .env，设置 MYSQL_ROOT_PASSWORD、GEO_JWT_SECRET、GEO_SEED_USERS
 docker-compose up -d
 docker-compose exec app python -m server.scripts.seed_users
-# 打开浏览器访问 http://服务器IP:8000
+# 打开浏览器访问 http://服务器IP/
 ```
 
 Docker 启动时自动执行 `alembic upgrade head`，无需手动迁移。
+
+发布 worker 按单实例设计，请不要使用 `docker compose up --scale worker=N`。noVNC 端口默认只绑定宿主机 `127.0.0.1`，远程处理登录/验证码请通过 VPN 或 SSH 隧道访问。
 
 ## 代码阅读顺序
 

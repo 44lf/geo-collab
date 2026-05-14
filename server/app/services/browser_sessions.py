@@ -47,6 +47,7 @@ class RemoteBrowserSession:
     novnc_port: int
     novnc_url: str
     log_dir: Path
+    platform_code: str = ""
     processes: list[ManagedProcess] = field(default_factory=list, repr=False)
     playwright: Any | None = field(default=None, repr=False)
     browser_context: Any | None = field(default=None, repr=False)
@@ -85,6 +86,7 @@ def _write_session_to_db(session: RemoteBrowserSession, worker_id: str | None) -
             now = utcnow()
             db.merge(BrowserSession(
                 id=session.id,
+                platform_code=session.platform_code,
                 account_key=session.account_key,
                 display=session.display,
                 novnc_url=session.novnc_url,
@@ -275,14 +277,19 @@ def _context_alive(context: object) -> bool:
         return False
 
 
-def get_or_create_account_session(account_key: str) -> RemoteBrowserSession:
+def _account_session_key(platform_code: str, account_key: str) -> str:
+    return f"{platform_code}:{account_key}"
+
+
+def get_or_create_account_session(platform_code: str, account_key: str) -> RemoteBrowserSession:
     """Return the persistent session for an account, creating one if needed.
 
     Reuse condition: session exists locally, not in keep_alive state, Chromium
     context still alive.
     """
+    cache_key = _account_session_key(platform_code, account_key)
     with _sessions_lock:
-        session_id = _account_sessions.get(account_key)
+        session_id = _account_sessions.get(cache_key)
         if session_id is not None:
             session = _active_sessions.get(session_id)
             if (
@@ -292,12 +299,11 @@ def get_or_create_account_session(account_key: str) -> RemoteBrowserSession:
             ):
                 session.started_at = time.monotonic()
                 return session
-            _account_sessions.pop(account_key, None)
+            _account_sessions.pop(cache_key, None)
 
-    session = start_remote_browser_session(account_key)
+    session = start_remote_browser_session(account_key, platform_code=platform_code)
     with _sessions_lock:
-        _account_sessions[session.id] = session.id
-        _account_sessions[account_key] = session.id
+        _account_sessions[cache_key] = session.id
     return session
 
 
@@ -346,7 +352,7 @@ def managed_remote_browser_session(account_key: str) -> Iterator[RemoteBrowserSe
             stop_remote_browser_session(session.id)
 
 
-def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
+def start_remote_browser_session(account_key: str, platform_code: str = "") -> RemoteBrowserSession:
     import os as _os
     worker_id = _os.environ.get("GEO_WORKER_ID")
 
@@ -370,6 +376,7 @@ def start_remote_browser_session(account_key: str) -> RemoteBrowserSession:
 
     session = RemoteBrowserSession(
         id=session_id,
+        platform_code=platform_code,
         account_key=account_key,
         display_number=display_number,
         display=f":{display_number}",

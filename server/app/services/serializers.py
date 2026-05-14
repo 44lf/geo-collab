@@ -61,6 +61,7 @@ def to_task_read(task: PublishTask) -> TaskRead:
         article_id=task.article_id,
         group_id=task.group_id,
         stop_before_publish=task.stop_before_publish,
+        cancel_requested=bool(task.cancel_requested),
         accounts=[
             TaskAccountRead(
                 account_id=item.account_id,
@@ -71,6 +72,8 @@ def to_task_read(task: PublishTask) -> TaskRead:
             for item in accounts
         ],
         record_count=len(task.records),
+        worker_id=task.worker_id,
+        worker_heartbeat_at=task.worker_heartbeat_at,
         created_at=task.created_at,
         started_at=task.started_at,
         finished_at=task.finished_at,

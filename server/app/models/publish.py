@@ -54,6 +54,8 @@ class PublishTask(Base):
     client_request_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     worker_lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    worker_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

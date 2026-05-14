@@ -16,11 +16,7 @@ from server.app.services.browser_sessions import (
     stop_remote_browser_session,
 )
 from server.app.services.drivers import get_driver
-from server.app.services.drivers.toutiao import (
-    PublishFillResult,
-    ToutiaoPublishError,
-    ToutiaoUserInputRequired,
-)
+from server.app.services.drivers.base import PublishError, PublishResult, UserInputRequired
 from server.app.services.publish_diagnostics import publish_step, record_publish_diagnostic
 
 
@@ -74,22 +70,22 @@ def run_publish(
     channel: str = "chromium",
     executable_path: str | None = None,
     stop_before_publish: bool = False,
-) -> PublishFillResult:
+) -> PublishResult:
     """Generic publish entry point. Looks up driver by account platform, reuses or starts remote session, runs driver.publish."""
     if not article.title or not article.title.strip():
-        raise ToutiaoPublishError("标题不能为空")
+        raise PublishError("标题不能为空")
     if article.cover_asset is None:
-        raise ToutiaoPublishError("封面图片是必填项")
+        raise PublishError("封面图片是必填项")
 
     platform_code, account_key = account_key_from_state_path(account.state_path)
     state_path = (get_data_dir() / account.state_path).resolve()
     if not state_path.exists():
-        raise ToutiaoPublishError(f"Account storage state not found: {account.state_path}")
+        raise PublishError(f"Account storage state not found: {account.state_path}")
 
     driver = get_driver(platform_code)
 
     with publish_step("remote browser session"):
-        session = get_or_create_account_session(account_key)
+        session = get_or_create_account_session(platform_code, account_key)
 
     # 第一次发布该账号：启动 Playwright + Chromium，挂到 session 上供后续复用
     if session.browser_context is None:
@@ -131,7 +127,7 @@ def run_publish(
                 state_path=state_path,
                 stop_before_publish=stop_before_publish,
             )
-    except ToutiaoUserInputRequired as exc:
+    except UserInputRequired as exc:
         _keep_browser = True
         keep_session_alive(session.id)
         exc.session_id = session.id

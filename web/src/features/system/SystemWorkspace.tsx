@@ -57,6 +57,18 @@ export function SystemWorkspace() {
                   {status.browser_ready ? "已检测到" : "未找到"}
                 </span>
               </dd>
+              <dt>发布 Worker</dt>
+              <dd>
+                <span className={`badge ${status.worker_online ? "succeeded" : "failed"}`}>
+                  {status.worker_online ? "在线" : "未检测到"}
+                </span>
+              </dd>
+              <dt>noVNC 运行时</dt>
+              <dd>
+                <span className={`badge ${status.novnc_runtime_ready ? "succeeded" : "failed"}`}>
+                  {status.novnc_runtime_ready ? "就绪" : "未就绪"}
+                </span>
+              </dd>
             </dl>
           </div>
 
@@ -69,6 +81,10 @@ export function SystemWorkspace() {
               <dd>{status.account_count} 个</dd>
               <dt>任务</dt>
               <dd>{status.task_count} 个</dd>
+              <dt>待执行任务</dt>
+              <dd>{status.pending_task_count} 个</dd>
+              <dt>远程浏览器会话</dt>
+              <dd>{status.active_browser_sessions} 个</dd>
               <dt>目录就绪</dt>
               <dd>
                 <span className={`badge ${status.directories_ready ? "succeeded" : "failed"}`}>

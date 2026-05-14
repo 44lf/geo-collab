@@ -6,6 +6,7 @@ from typing import Protocol, runtime_checkable
 from playwright.sync_api import BrowserContext, Page
 
 from server.app.models import Account, Article
+from server.app.services.drivers.base import PublishResult
 
 
 @runtime_checkable
@@ -27,10 +28,10 @@ class PlatformDriver(Protocol):
         account: Account,
         state_path: Path,
         stop_before_publish: bool,
-    ) -> "PublishFillResult":
+    ) -> PublishResult:
         """Fill form, upload assets, click publish. Does not manage browser lifecycle.
 
-        Raises ToutiaoUserInputRequired (or platform equivalent) when login/captcha is needed.
+        Raises UserInputRequired when login/captcha is needed.
         """
 
 

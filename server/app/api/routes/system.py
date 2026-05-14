@@ -1,14 +1,17 @@
 import shutil
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from server.app.core.time import utcnow
 from server.app.core.security import require_admin
 from server.app.db.session import get_db
-from server.app.models import Account, Article, PublishTask, User
+from server.app.models import Account, Article, BrowserSession, PublishRecord, PublishTask, User, WorkerHeartbeat
 from server.app.schemas.system import SystemStatus
+from server.app.services.browser_sessions import remote_browser_runtime_status
 from server.app.services.system_status import get_system_status
 
 router = APIRouter()
@@ -51,8 +54,27 @@ def read_system_status(
         data["article_count"] = db.scalar(select(func.count()).select_from(Article)) or 0
         data["account_count"] = db.scalar(select(func.count()).select_from(Account)) or 0
         data["task_count"] = db.scalar(select(func.count()).select_from(PublishTask)) or 0
+        data["pending_task_count"] = db.scalar(
+            select(func.count())
+            .select_from(PublishTask)
+            .where(
+                PublishTask.status.in_(["pending", "running"]),
+                exists().where(PublishRecord.task_id == PublishTask.id, PublishRecord.status == "pending"),
+            )
+        ) or 0
+        data["active_browser_sessions"] = db.scalar(select(func.count()).select_from(BrowserSession)) or 0
+        data["worker_online"] = bool(
+            db.scalar(
+                select(func.count())
+                .select_from(WorkerHeartbeat)
+                .where(WorkerHeartbeat.heartbeat_at >= utcnow() - timedelta(seconds=30))
+            )
+        )
     except Exception:
         # 数据库查询失败时返回 -1
         data["article_count"] = data["account_count"] = data["task_count"] = -1
+        data["pending_task_count"] = data["active_browser_sessions"] = -1
+        data["worker_online"] = False
     data["browser_ready"] = _browser_ready()
+    data["novnc_runtime_ready"] = bool(remote_browser_runtime_status().get("ready"))
     return SystemStatus(**data)

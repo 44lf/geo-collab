@@ -7,6 +7,7 @@ from server.app.models.browser_session import BrowserSession, RecordBrowserSessi
 from server.app.models.platform import Platform
 from server.app.models.publish import PublishRecord, PublishTask, PublishTaskAccount, TaskLog
 from server.app.models.user import User
+from server.app.models.worker import WorkerHeartbeat
 
 __all__ = [
     "Account",
@@ -23,4 +24,5 @@ __all__ = [
     "PublishTaskAccount",
     "TaskLog",
     "User",
+    "WorkerHeartbeat",
 ]

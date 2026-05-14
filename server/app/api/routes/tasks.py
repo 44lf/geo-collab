@@ -149,7 +149,7 @@ def start_task_execution(
                 PublishTask.id == task_id,
                 (PublishTask.worker_lease_until < _utcnow()) | PublishTask.worker_id.is_(None),
             )
-            .values(worker_id=None, worker_lease_until=None)
+            .values(worker_id=None, worker_lease_until=None, worker_heartbeat_at=None)
         )
         db.commit()
 

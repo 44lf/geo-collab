@@ -172,6 +172,59 @@ def _wait_task_terminal(client, task_id: int, timeout: float = 15.0) -> dict:
     return client.get(f"/api/tasks/{task_id}").json()
 
 
+def test_same_account_across_tasks_is_serialized(monkeypatch):
+    """Two tasks targeting the same account never run their publish runner concurrently."""
+    from server.app.services import tasks as tasks_mod
+
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+    release_event = threading.Event()
+
+    def counting_publisher(_record):
+        def _runner(article, account, *, stop_before_publish=False):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            release_event.wait(timeout=2)
+            with lock:
+                active -= 1
+
+            class R:
+                url = None
+                message = "ok"
+            return R()
+        return _runner
+
+    monkeypatch.setattr(tasks_mod, "build_publish_runner_for_record", counting_publisher)
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        article1_id = _create_article(test_app.client, "Same Account One")
+        article2_id = _create_article(test_app.client, "Same Account Two")
+        account_id = _create_account(test_app, "same-account-cross-task")
+        task1 = _create_single_task(test_app.client, article1_id, account_id, "same-account-1")
+        task2 = _create_single_task(test_app.client, article2_id, account_id, "same-account-2")
+
+        threading.Timer(0.3, release_event.set).start()
+        threads = [
+            threading.Thread(target=lambda tid=tid: test_app.client.post(f"/api/tasks/{tid}/execute"))
+            for tid in (task1["id"], task2["id"])
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        _wait_task_terminal(test_app.client, task1["id"])
+        _wait_task_terminal(test_app.client, task2["id"])
+
+        assert max_active == 1
+    finally:
+        test_app.cleanup()
+
+
 class TestConcurrentTaskIsolation:
     """验证多任务并发执行时数据隔离"""
 

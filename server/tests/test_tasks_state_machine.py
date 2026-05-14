@@ -781,19 +781,29 @@ def test_execute_and_cancel_race_does_not_leave_corrupt_state(monkeypatch):
 
         execute_resp = client.post(f"/api/tasks/{task['id']}/execute")
         assert execute_resp.status_code == 202
+        deadline = _time.time() + 2.0
+        while _time.time() < deadline:
+            running_records = client.get(f"/api/tasks/{task['id']}/records").json()
+            if running_records[0]["status"] == "running":
+                break
+            _time.sleep(0.05)
+        assert client.get(f"/api/tasks/{task['id']}/records").json()[0]["status"] == "running"
 
         cancel_resp = client.post(f"/api/tasks/{task['id']}/cancel")
         assert cancel_resp.status_code == 200
-        assert cancel_resp.json()["status"] == "cancelled"
+        assert cancel_resp.json()["cancel_requested"] is True
 
-        _time.sleep(0.5)
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline:
+            task_final = client.get(f"/api/tasks/{task['id']}").json()
+            if task_final["status"] in ("cancelled", "failed", "partial_failed", "succeeded"):
+                break
+            _time.sleep(0.05)
 
         task_final = client.get(f"/api/tasks/{task['id']}").json()
-        assert task_final["status"] in ("cancelled", "failed")
+        assert task_final["status"] == "cancelled"
 
         records = client.get(f"/api/tasks/{task['id']}/records").json()
-        for record in records:
-            assert record["status"] != "running"
-            assert record["status"] != "pending"
+        assert records[0]["status"] == "succeeded"
     finally:
         test_app.cleanup()

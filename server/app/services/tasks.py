@@ -25,7 +25,7 @@
       → _aggregate_task_status() 聚合为任务级状态
 
   人工介入（waiting_user_input）：
-    ToutiaoUserInputRequired → 浏览器不关闭 → session 关联到 record
+    UserInputRequired → 浏览器不关闭 → session 关联到 record
     → 用户处理完后 POST /api/publish-records/{id}/resolve-user-input
       → resolve_user_input_record() → stop 浏览器 → record 回到 pending
       → 后台自动继续执行
@@ -35,6 +35,7 @@
     → 将 lease_until < now 的 running 记录重置为 pending
 """
 import logging
+import os
 import threading
 import time
 import traceback
@@ -69,7 +70,7 @@ from server.app.services.browser_sessions import (
 )
 from server.app.services.errors import AccountError, ConflictError, ValidationError
 from server.app.services.feishu import notify_task_finished
-from server.app.services.drivers.toutiao import ToutiaoPublishError, ToutiaoUserInputRequired
+from server.app.services.drivers.base import PublishError, UserInputRequired
 from server.app.services.publish_diagnostics import PublishDiagnosticEvent, capture_publish_diagnostics
 from server.app.schemas.task import (
     TaskAccountInput,
@@ -85,6 +86,7 @@ PAUSED_RECORD_STATUSES = {"waiting_manual_publish", "waiting_user_input"}
 ACTIVE_RECORD_STATUSES = {"running", *PAUSED_RECORD_STATUSES}
 CAN_RETRY_TASK_STATUSES = {"failed", "partial_failed", "succeeded", "cancelled"}
 MAX_CONCURRENT_RECORDS = 5
+WORKER_LEASE_EXTENSION_SECONDS = 600
 
 # 任务级互斥锁，防止同一任务被并发执行
 _task_locks: dict[int, threading.Lock] = {}
@@ -212,6 +214,7 @@ def create_task(db: Session, user_id: int, payload: TaskCreate, role: str = "ope
         group_id=payload.group_id if payload.task_type == "group_round_robin" else None,
         stop_before_publish=payload.stop_before_publish,
         client_request_id=payload.client_request_id,
+        cancel_requested=False,
     )
     db.add(task)
     db.flush()
@@ -289,7 +292,12 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
             stmt = (
                 sa_update(PublishTask)
                 .where(PublishTask.id == task.id, PublishTask.status == "pending")
-                .values(status="running", started_at=now)
+                .values(
+                    status="running",
+                    started_at=now,
+                    cancel_requested=False,
+                    worker_heartbeat_at=now,
+                )
             )
             if db.execute(stmt).rowcount == 0:
                 db.flush()
@@ -300,8 +308,12 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
             else:
                 task.status = "running"
                 task.started_at = now
+                task.cancel_requested = False
+                task.worker_heartbeat_at = now
             _add_log(db, task.id, None, "info", "Task started")
             _logger.info("Task %d started", task.id)
+        else:
+            _heartbeat_task_worker(db, task.id)
 
         _run_pending_records(db, task)
         db.flush()
@@ -315,6 +327,42 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
             lock.release()
 
 
+def _heartbeat_task_worker(db: Session, task_id: int) -> None:
+    now = utcnow()
+    values: dict[str, object] = {"worker_heartbeat_at": now}
+    if os.environ.get("GEO_WORKER_ID"):
+        values["worker_lease_until"] = now + timedelta(seconds=WORKER_LEASE_EXTENSION_SECONDS)
+    db.execute(sa_update(PublishTask).where(PublishTask.id == task_id).values(**values))
+
+
+def _task_cancel_requested(db: Session, task_id: int) -> bool:
+    value = db.execute(select(PublishTask.cancel_requested).where(PublishTask.id == task_id)).scalar_one_or_none()
+    return bool(value)
+
+
+def _request_task_cancel(db: Session, task_id: int) -> None:
+    db.execute(sa_update(PublishTask).where(PublishTask.id == task_id).values(cancel_requested=True))
+
+
+def _cancel_not_running_records(db: Session, task: PublishTask, records: list[PublishRecord]) -> None:
+    now = utcnow()
+    changed = False
+    for record in records:
+        if record.status not in {"pending", "waiting_manual_publish", "waiting_user_input"}:
+            continue
+        if record.status == "waiting_user_input":
+            session = get_session_for_record(record.id)
+            if session:
+                stop_remote_browser_session(session.id)
+            disassociate_record(record.id)
+        record.status = "cancelled"
+        record.finished_at = now
+        record.lease_until = None
+        changed = True
+    if changed:
+        _add_log(db, task.id, None, "warn", "Cancellation requested; pending records were stopped")
+
+
 # 内部方法：循环执行待处理的发布记录
 def _run_pending_records(db: Session, task: PublishTask) -> None:
     cancel_evt = _task_cancel.get(task.id)
@@ -323,22 +371,35 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
 
     try:
         while True:
+            _heartbeat_task_worker(db, task.id)
+            cancel_requested = _task_cancel_requested(db, task.id)
             if cancel_evt and cancel_evt.is_set():
-                _add_log(db, task.id, None, "warn", "Task cancelled during execution")
-                break
+                if not cancel_requested:
+                    _request_task_cancel(db, task.id)
+                    cancel_requested = True
+            if cancel_requested:
+                task.cancel_requested = True
 
             records = list_task_records(db, task.id)
 
-            if task.stop_before_publish:
-                if any(record.status == "waiting_manual_publish" for record in records):
+            if cancel_requested:
+                _cancel_not_running_records(db, task, records)
+                records = list_task_records(db, task.id)
+                if not running and not any(record.status == "running" for record in records):
+                    _aggregate_task_status(db, task, records)
+                    db.commit()
+                    return
+            else:
+                if task.stop_before_publish:
+                    if any(record.status == "waiting_manual_publish" for record in records):
+                        db.commit()
+                        return
+
+                if any(record.status == "waiting_user_input" for record in records):
                     db.commit()
                     return
 
-            if any(record.status == "waiting_user_input" for record in records):
-                db.commit()
-                return
-
-            _start_runnable_records(db, task, executor, running, records)
+                _start_runnable_records(db, task, executor, running, records)
 
             if not running:
                 if not any(record.status == "pending" for record in records):
@@ -550,7 +611,7 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
 
     ThreadPoolExecutor 的 future 完成后调用此方法：
       - 正常结束 → 标记 succeeded / waiting_manual_publish
-      - ToutiaoUserInputRequired → 标记 waiting_user_input + 关联 remote session
+      - UserInputRequired → 标记 waiting_user_input + 关联 remote session
       - 其他异常 → 标记 failed（附失败截图 asset_id）
     """
     try:
@@ -563,7 +624,7 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
     except FutureTimeoutError:
         _mark_record_failed(db, task.id, record_id, "Timeout: record execution exceeded 300s")
         _logger.warning("Record %d timed out", record_id)
-    except ToutiaoUserInputRequired as exc:
+    except UserInputRequired as exc:
         _add_publish_diagnostics(db, task.id, record_id, _diagnostics_from_exception(exc), task.user_id)
         # 人工介入：保持浏览器打开，将 session 关联到 record
         # 前端会读取 record.novnc_url 展示"打开远程浏览器"按钮
@@ -574,7 +635,7 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
         if exc.session_id:
             associate_record_with_session(record_id, exc.session_id)
         _logger.info("Record %d waiting user input (type=%s)", record_id, error_type)
-    except ToutiaoPublishError as exc:
+    except PublishError as exc:
         _add_publish_diagnostics(db, task.id, record_id, _diagnostics_from_exception(exc), task.user_id)
         screenshot_asset_id = _store_failure_screenshot(db, task.id, record_id, exc.screenshot, task.user_id)
         _mark_record_failed(db, task.id, record_id, f"{exc}\n{traceback.format_exc()}", screenshot_asset_id=screenshot_asset_id)
@@ -634,11 +695,11 @@ def _mark_record_failed(
 ) -> None:
     stmt = (
         sa_update(PublishRecord)
-        .where(PublishRecord.id == record_id)
+        .where(PublishRecord.id == record_id, PublishRecord.status == "running")
         .values(status="failed", error_message=error_message, finished_at=utcnow(), lease_until=None)
     )
-    db.execute(stmt)
-    _add_log(db, task_id, record_id, "error", error_message, screenshot_asset_id=screenshot_asset_id)
+    if db.execute(stmt).rowcount > 0:
+        _add_log(db, task_id, record_id, "error", error_message, screenshot_asset_id=screenshot_asset_id)
 
 
 def _mark_record_waiting_user_input(
@@ -653,8 +714,8 @@ def _mark_record_waiting_user_input(
         .where(PublishRecord.id == record_id, PublishRecord.status == "running")
         .values(status="waiting_user_input", error_message=message, finished_at=None, lease_until=None)
     )
-    db.execute(stmt)
-    _add_log(db, task_id, record_id, "warn", message, screenshot_asset_id=screenshot_asset_id)
+    if db.execute(stmt).rowcount > 0:
+        _add_log(db, task_id, record_id, "warn", message, screenshot_asset_id=screenshot_asset_id)
 
 
 # 手动确认发布结果（仅对 waiting_manual_publish 状态的记录有效）
@@ -709,6 +770,7 @@ def resolve_user_input_record(db: Session, record: PublishRecord) -> PublishReco
     if task is not None and task.status not in TERMINAL_TASK_STATUSES:
         task.status = "running"
         task.finished_at = None
+        task.cancel_requested = False
 
     db.flush()
     return record
@@ -756,6 +818,7 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
     if task is not None and task.status in CAN_RETRY_TASK_STATUSES:
         task.status = "running"
         task.finished_at = None
+        task.cancel_requested = False
         _add_log(db, task.id, None, "info", f"Task reopened for retry of record {record.id}")
 
     db.flush()
@@ -803,44 +866,34 @@ def _store_failure_screenshot(
 # 取消任务
 def cancel_task(db: Session, task: PublishTask) -> PublishTask:
     """
-    取消任务。
+    Request task cancellation.
 
-    对于 waiting_user_input 状态的 record：
-      1. stop 关联的远程浏览器 session（关闭 Xvfb + noVNC）
-      2. 解除 record↔session 关联
-    然后再标记 cancelled。
+    Cancellation is cooperative: pending and waiting records are stopped
+    immediately, while a running browser publish is allowed to reach its next
+    safe completion point and then the worker will stop scheduling more work.
     """
     if task.status in TERMINAL_TASK_STATUSES:
         return task
 
-    # 信号硬取消（正在执行的 record 会收到中断）
+    # Same-process fast path for tests/dev; production workers observe the DB flag.
     evt = _task_cancel.get(task.id)
     if evt:
         evt.set()
 
     now = utcnow()
     records = list_task_records(db, task.id)
-    task.status = "cancelled"
-    task.finished_at = now
-    for record in records:
-        was_waiting_user_input = record.status == "waiting_user_input"
-        if record.status in {"pending", "running", "waiting_user_input"}:
-            record.status = "cancelled"
-            record.finished_at = now
-        if was_waiting_user_input:
-            session = get_session_for_record(record.id)
-            if session:
-                stop_remote_browser_session(session.id)
-            disassociate_record(record.id)
-    _add_log(db, task.id, None, "warn", "Task cancelled")
-    db.flush()
+    task.cancel_requested = True
+    _cancel_not_running_records(db, task, records)
 
-    deadline = time.time() + 5.0
-    while time.time() < deadline:
-        refreshed = get_task(db, task.id)
-        if refreshed is None or refreshed.status in TERMINAL_TASK_STATUSES:
-            break
-        time.sleep(0.1)
+    refreshed_records = list_task_records(db, task.id)
+    if not any(record.status == "running" for record in refreshed_records):
+        task.status = "cancelled"
+        task.finished_at = now
+        _add_log(db, task.id, None, "warn", "Task cancelled")
+    else:
+        task.status = "running"
+        _add_log(db, task.id, None, "warn", "Cancellation requested; running record will finish at its next safe point")
+    db.flush()
 
     return get_task(db, task.id) or task
 
@@ -855,7 +908,10 @@ def _aggregate_task_status(db: Session, task: PublishTask, records: list[Publish
         return
     if any(r.status in {"pending", "running", "waiting_manual_publish", "waiting_user_input"} for r in records):
         return  # 任务尚未结束，保持当前状态
-    if all(r.status == "succeeded" for r in records):
+    if task.cancel_requested or any(r.status == "cancelled" for r in records):
+        task.status = "cancelled"
+        task.finished_at = now
+    elif all(r.status == "succeeded" for r in records):
         task.status = "succeeded"
         task.finished_at = now
     elif any(r.status == "failed" for r in records):
@@ -1035,7 +1091,7 @@ def recover_stuck_task_claims(db: Session) -> None:
             PublishTask.worker_id.is_not(None),
             PublishTask.worker_lease_until < now,
         )
-        .values(worker_id=None, worker_lease_until=None)
+        .values(worker_id=None, worker_lease_until=None, worker_heartbeat_at=None)
     ).rowcount
     if rows:
         _logger.warning("Released %d expired worker task claims", rows)

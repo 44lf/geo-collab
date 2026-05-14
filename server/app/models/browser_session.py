@@ -12,6 +12,7 @@ class BrowserSession(Base):
     __tablename__ = "browser_sessions"
 
     id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    platform_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     account_key: Mapped[str] = mapped_column(String(200), nullable=False)
     display: Mapped[str | None] = mapped_column(String(20), nullable=True)
     novnc_url: Mapped[str | None] = mapped_column(String(500), nullable=True)

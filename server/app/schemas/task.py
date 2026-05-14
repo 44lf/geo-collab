@@ -93,8 +93,11 @@ class TaskRead(BaseModel):
     article_id: int | None
     group_id: int | None
     stop_before_publish: bool
+    cancel_requested: bool = False
     accounts: list[TaskAccountRead]
     record_count: int
+    worker_id: str | None = None
+    worker_heartbeat_at: datetime | None = None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None

@@ -91,7 +91,7 @@ def _patch_common(monkeypatch, tmp_path: Path, stub_session, pw_cm, context, pag
     # get_or_create_account_session → returns stub_session directly
     monkeypatch.setattr(
         "server.app.services.publish_runner.get_or_create_account_session",
-        lambda account_key: stub_session,
+        lambda platform_code, account_key: stub_session,
     )
 
     # stop_remote_browser_session → no-op (called on launch failure path)

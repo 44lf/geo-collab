@@ -19,7 +19,7 @@ from sqlalchemy import select, update as sa_update
 
 from server.app.core.time import utcnow
 from server.app.db.session import SessionLocal
-from server.app.models import PublishTask
+from server.app.models import PublishTask, WorkerHeartbeat
 from server.app.services.tasks import (
     TERMINAL_TASK_STATUSES,
     execute_task,
@@ -69,11 +69,12 @@ def _claim_next_task(db) -> PublishTask | None:
     if candidate_id is None:
         return None
 
-    lease_until = utcnow() + timedelta(minutes=CLAIM_LEASE_MINUTES)
+    now = utcnow()
+    lease_until = now + timedelta(minutes=CLAIM_LEASE_MINUTES)
     rows = db.execute(
         sa_update(PublishTask)
         .where(PublishTask.id == candidate_id, PublishTask.worker_id.is_(None))
-        .values(worker_id=WORKER_ID, worker_lease_until=lease_until)
+        .values(worker_id=WORKER_ID, worker_lease_until=lease_until, worker_heartbeat_at=now)
     ).rowcount
 
     if rows == 0:
@@ -87,7 +88,19 @@ def _release_task_claim(db, task_id: int) -> None:
     db.execute(
         sa_update(PublishTask)
         .where(PublishTask.id == task_id, PublishTask.worker_id == WORKER_ID)
-        .values(worker_id=None, worker_lease_until=None)
+        .values(worker_id=None, worker_lease_until=None, worker_heartbeat_at=None)
+    )
+    db.commit()
+
+
+def _write_worker_heartbeat(db) -> None:
+    db.merge(
+        WorkerHeartbeat(
+            worker_id=WORKER_ID,
+            hostname=socket.gethostname(),
+            pid=os.getpid(),
+            heartbeat_at=utcnow(),
+        )
     )
     db.commit()
 
@@ -96,6 +109,7 @@ def _startup(db) -> None:
     """Run recovery routines on worker startup."""
     recover_stuck_records(db)
     recover_stuck_task_claims(db)
+    _write_worker_heartbeat(db)
     _logger.info("Worker %s started", WORKER_ID)
 
 
@@ -126,6 +140,7 @@ def main() -> None:
         db = SessionLocal()
         task_id: int | None = None
         try:
+            _write_worker_heartbeat(db)
             task = _claim_next_task(db)
             if task is None:
                 db.close()

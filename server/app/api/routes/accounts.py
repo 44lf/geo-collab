@@ -29,7 +29,7 @@ from server.app.services.accounts import (
     start_login_session,
     stop_account_login_session,
 )
-from server.app.services.drivers import all_driver_codes
+from server.app.services.drivers import all_driver_codes, get_driver
 from server.app.services.serializers import to_account_read
 
 router = APIRouter()
@@ -57,6 +57,15 @@ def _verify_platform_code(platform_code: str) -> str:
     if platform_code not in all_driver_codes():
         raise HTTPException(status_code=404, detail="Unknown platform")
     return platform_code
+
+
+@router.get("/platforms")
+def read_account_platforms() -> list[dict[str, str]]:
+    platforms = []
+    for code in all_driver_codes():
+        driver = get_driver(code)
+        platforms.append({"code": driver.code, "name": driver.name})
+    return platforms
 
 
 # 获取所有账号列表
