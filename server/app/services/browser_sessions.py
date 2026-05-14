@@ -302,7 +302,7 @@ def _find_display_number(base: int, used: set[int]) -> int:
         if socket_path.exists():
             continue
         return display_number
-    raise RuntimeError("No free X display number available")
+    raise ValueError("No free X display number available")
 
 
 def _find_free_port(host: str, base: int, used: set[int]) -> int:
@@ -311,7 +311,7 @@ def _find_free_port(host: str, base: int, used: set[int]) -> int:
             continue
         if _port_available(host, port):
             return port
-    raise RuntimeError(f"No free TCP port available from {base}")
+    raise ValueError(f"No free TCP port available from {base}")
 
 
 def _port_available(host: str, port: int) -> bool:
@@ -375,7 +375,7 @@ def _wait_for_x_display(display_number: int, timeout_seconds: float) -> None:
         if socket_path.exists():
             return
         time.sleep(0.1)
-    raise RuntimeError(f"Xvfb display did not become ready: :{display_number}")
+    raise ValueError(f"Xvfb display did not become ready: :{display_number}")
 
 
 def _wait_for_port(host: str, port: int, timeout_seconds: float) -> None:
@@ -388,13 +388,13 @@ def _wait_for_port(host: str, port: int, timeout_seconds: float) -> None:
                 return
             except OSError:
                 time.sleep(0.1)
-    raise RuntimeError(f"Port did not become ready: {host}:{port}")
+    raise ValueError(f"Port did not become ready: {host}:{port}")
 
 
 def _require_command(command: str, label: str) -> str:
     resolved = _resolve_command(command)
     if not resolved:
-        raise RuntimeError(f"{label} command not found: {command}")
+        raise ValueError(f"{label} command not found: {command}")
     return resolved
 
 
