@@ -268,24 +268,24 @@ def all_driver_codes() -> list[str]:
 
 | ID | Lane | 标题 | 依赖 | 修改文件主集 | 估算 | 状态 |
 |----|------|------|------|--------------|------|------|
-| A1 | Driver | PlatformDriver Protocol + 注册表 | — | `services/drivers/__init__.py`(新) | S | ✅ |
-| A2 | Driver | ToutiaoDriver 实现 | A1 | `services/drivers/toutiao.py`(新) | L | ✅ |
-| B1 | Runner | publish_runner.py 通用发布编排 | A2 | `services/publish_runner.py`(新) | M | ✅ |
-| B2 | Runner | tasks.py 接入新 runner | B1 | `services/tasks.py` | S | ✅ |
-| C1 | Accounts | accounts service 通用化 + headless check | A2 | `services/accounts.py` | L | ✅ |
-| C2 | Accounts | accounts routes 路径含 platform_code | C1 | `api/routes/accounts.py` `schemas/account.py` | M | ✅ |
-| D1 | Cleanup | browser_sessions.py 删平台守卫 | — | `services/browser_sessions.py` | S | ✅ |
-| D2 | Cleanup | core/config.py 删冗余配置 | — | `core/config.py` | S | ✅ |
-| D3 | Cleanup | core/paths.py 删 Windows 默认 | — | `core/paths.py` | S | ✅ |
-| D4 | Cleanup | 删 launcher.py / geo.spec / browser.py / toutiao_publisher.py | B1,C1,E2,F2 | （删四个文件） | S | ✅ |
-| E1 | Frontend | web/src/types.ts 类型更新 | C2 | `web/src/types.ts` | S | ✅ |
-| E2 | Frontend | AccountsWorkspace 路径含 platform_code | C2,E1 | `web/src/features/accounts/AccountsWorkspace.tsx` | M | ✅ |
-| F1 | Tests | test_accounts_api.py 更新 | C2 | `server/tests/test_accounts_api.py` | M | ✅ |
-| F2 | Tests | test_browser_sessions.py 删守卫 mock | D1 | `server/tests/test_browser_sessions.py` | S | ✅ |
-| F3 | Tests | 新增 test_drivers.py | A2 | `server/tests/test_drivers.py`(新) | S | ✅ |
-| F4 | Tests | 新增 test_publish_runner.py | B1 | `server/tests/test_publish_runner.py`(新) | M | ✅ |
-| G1 | Docs | 重写 CLAUDE.md | 全部 | `CLAUDE.md` | M | ✅ |
-| G2 | Docs | 清理 .env 模板 | — | `.env` | S | ✅ |
+| A1 | Driver | PlatformDriver Protocol + 注册表 | — | `services/drivers/__init__.py`(新) | S | 🔲 |
+| A2 | Driver | ToutiaoDriver 实现 | A1 | `services/drivers/toutiao.py`(新) | L | 🔲 |
+| B1 | Runner | publish_runner.py 通用发布编排 | A2 | `services/publish_runner.py`(新) | M | 🔲 |
+| B2 | Runner | tasks.py 接入新 runner | B1 | `services/tasks.py` | S | 🔲 |
+| C1 | Accounts | accounts service 通用化 + headless check | A2 | `services/accounts.py` | L | 🔲 |
+| C2 | Accounts | accounts routes 路径含 platform_code | C1 | `api/routes/accounts.py` `schemas/account.py` | M | 🔲 |
+| D1 | Cleanup | browser_sessions.py 删平台守卫 | — | `services/browser_sessions.py` | S | 🔲 |
+| D2 | Cleanup | core/config.py 删冗余配置 | — | `core/config.py` | S | 🔲 |
+| D3 | Cleanup | core/paths.py 删 Windows 默认 | — | `core/paths.py` | S | 🔲 |
+| D4 | Cleanup | 删 launcher.py / geo.spec / browser.py / toutiao_publisher.py | B1,C1,E2,F2 | （删四个文件） | S | 🔲 |
+| E1 | Frontend | web/src/types.ts 类型更新 | C2 | `web/src/types.ts` | S | 🔲 |
+| E2 | Frontend | AccountsWorkspace 路径含 platform_code | C2,E1 | `web/src/features/accounts/AccountsWorkspace.tsx` | M | 🔲 |
+| F1 | Tests | test_accounts_api.py 更新 | C2 | `server/tests/test_accounts_api.py` | M | 🔲 |
+| F2 | Tests | test_browser_sessions.py 删守卫 mock | D1 | `server/tests/test_browser_sessions.py` | S | 🔲 |
+| F3 | Tests | 新增 test_drivers.py | A2 | `server/tests/test_drivers.py`(新) | S | 🔲 |
+| F4 | Tests | 新增 test_publish_runner.py | B1 | `server/tests/test_publish_runner.py`(新) | M | 🔲 |
+| G1 | Docs | 重写 CLAUDE.md | 全部 | `CLAUDE.md` | M | 🔲 |
+| G2 | Docs | 清理 .env 模板 | — | `.env` | S | 🔲 |
 
 估算：S ≈ 30 分钟，M ≈ 1 小时，L ≈ 2 小时。
 
@@ -898,8 +898,7 @@ def test_run_publish_keep_session_on_user_input_required(monkeypatch):
 
 > 任务执行中如发现影响其他任务的事项，在此追加一条（日期 / agent / 内容）。
 
-- 2026-05-14 / Claude+Codex / **全部 18 个任务完成**。test suite：157 passed，1 pre-existing failure（test_feishu::test_notify_not_called_when_url_not_set，与本次重构无关）。全局代码体检无残留引用。CLAUDE.md 已重写为 Linux 服务器 + PlatformDriver 架构叙述。
-- 2026-05-14 / Claude / 额外删除 test_toutiao_publisher_flow.py、test_launcher_startup.py、test_toutiao_publisher_clipboard.py、scripts/toutiao_publish_spike.py（均测试已删除的遗留代码）；修复 test_delete_guards.py 的 get_or_create_toutiao_platform → get_or_create_platform（C1 重命名的连带影响）。
+- *（暂无）*
 
 ---
 
@@ -922,3 +921,4 @@ def test_run_publish_keep_session_on_user_input_required(monkeypatch):
 - [ ] 前端「添加授权」加平台选择器（当前固定 toutiao）
 - [ ] 把 `ToutiaoUserInputRequired` / `ToutiaoPublishError` 抽到 `services/drivers/base.py` 改名为 `UserInputRequired` / `PublishError`，driver 共享
 - [ ] 重构期老 PLAN.md 内容（项目历史快照）若仍有引用价值，搬到 `docs/HISTORY.md`
+
