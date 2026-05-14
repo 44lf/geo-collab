@@ -9,9 +9,9 @@ build/
 node_modules/
 web/dist/
 web/tsconfig.tsbuildinfo
-.env
 .env.*
 !.env.example
+!.env
 GeoAppData/
 .test-data/
 .test-debug*/
