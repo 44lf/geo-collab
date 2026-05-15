@@ -137,7 +137,7 @@ class AssignmentItem:
 
 
 # 获取所有任务列表
-def list_tasks(db: Session, skip: int = 0, limit: int = 100) -> list[PublishTask]:
+def list_tasks(db: Session, skip: int = 0, limit: int = 100, user_id: int | None = None) -> list[PublishTask]:
     stmt = (
         select(PublishTask)
         .options(
@@ -149,6 +149,8 @@ def list_tasks(db: Session, skip: int = 0, limit: int = 100) -> list[PublishTask
         .offset(skip)
         .limit(limit)
     )
+    if user_id is not None:
+        stmt = stmt.where(PublishTask.user_id == user_id)
     return list(db.execute(stmt).scalars().all())
 
 

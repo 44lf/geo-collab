@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from server.app.core.config import get_settings
+from server.app.core.time import utcnow
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -58,6 +59,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
 
+    user.last_login_at = utcnow()
     token = create_access_token(user.id, user.role)
     max_age = int(os.environ.get("GEO_JWT_EXPIRE_HOURS", "8")) * 3600
     response.set_cookie(

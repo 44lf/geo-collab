@@ -67,9 +67,8 @@ def read_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[TaskRead]:
-    tasks = list_tasks(db, skip=skip, limit=limit)
-    if current_user.role != "admin":
-        tasks = [t for t in tasks if t.user_id == current_user.id]
+    user_id_filter = None if current_user.role == "admin" else current_user.id
+    tasks = list_tasks(db, skip=skip, limit=limit, user_id=user_id_filter)
     return [to_task_read(task) for task in tasks]
 
 

@@ -82,9 +82,6 @@ def create_app() -> FastAPI:
     # 注册所有平台驱动（import 触发 register() 副作用）
     import server.app.services.drivers.toutiao  # noqa: F401
 
-    from server.app.services.browser_sessions import _start_idle_cleanup
-    _start_idle_cleanup()
-
     app = FastAPI(
         title="Geo Collab API",
         version="0.1.0",

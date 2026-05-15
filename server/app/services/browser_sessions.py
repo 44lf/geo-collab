@@ -660,8 +660,10 @@ def _cleanup_stop_requested_sessions() -> None:
             _logger.info("Stopping session %s (stop_requested via DB)", session_id)
             stop_remote_browser_session(session_id)
         else:
-            # Not our session — remove the DB row so other workers don't re-process
-            _delete_session_from_db(session_id)
+            # Not our session — leave the DB row for the owning worker to process.
+            # Deleting here would race with the owning worker and cause it to miss
+            # the stop signal (e.g. API process cleanup vs. worker cleanup).
+            pass
 
 
 def _cleanup_stale_sessions(idle_timeout: int) -> None:
