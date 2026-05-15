@@ -662,10 +662,10 @@ def _start_login_browser_impl(platform_code: str, account_key: str, channel: str
             **options,
         )
         context.set_default_navigation_timeout(30000)
-        page = context.new_page()
+        page = _primary_page_for_context(context)
         attach_browser_handles(session.id, pw, context, page)
         keep_session_alive(session.id)
-        _start_login_page_loader(session.id, platform_code, account_key, driver.home_url)
+        _load_login_page(page, platform_code, account_key, driver.home_url)
         return session
     except Exception:
         try:
@@ -676,6 +676,40 @@ def _start_login_browser_impl(platform_code: str, account_key: str, channel: str
                 pw.stop()
         stop_remote_browser_session(session.id)
         raise
+
+
+def _primary_page_for_context(context):
+    pages = list(getattr(context, "pages", []) or [])
+    if pages:
+        page = pages[0]
+        for extra_page in pages[1:]:
+            try:
+                extra_page.close()
+            except Exception:
+                pass
+        return page
+    return context.new_page()
+
+
+def _load_login_page(page, platform_code: str, account_key: str, home_url: str) -> None:
+    try:
+        page.goto(home_url, wait_until="domcontentloaded", timeout=60000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            _logger.warning(
+                "Remote login page did not reach networkidle for %s account %s",
+                platform_code,
+                account_key,
+                exc_info=True,
+            )
+    except Exception:
+        _logger.warning(
+            "Remote login page load failed for %s account %s",
+            platform_code,
+            account_key,
+            exc_info=True,
+        )
 
 
 def _start_login_page_loader(session_id: str, platform_code: str, account_key: str, home_url: str) -> None:
@@ -689,24 +723,7 @@ def _start_login_page_loader(session_id: str, platform_code: str, account_key: s
             page = session.page
             if page is None:
                 return
-            try:
-                page.goto(home_url, wait_until="domcontentloaded", timeout=60000)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=10000)
-                except Exception:
-                    _logger.warning(
-                        "Remote login page did not reach networkidle for %s account %s",
-                        platform_code,
-                        account_key,
-                        exc_info=True,
-                    )
-            except Exception:
-                _logger.warning(
-                    "Remote login page load failed for %s account %s",
-                    platform_code,
-                    account_key,
-                    exc_info=True,
-                )
+            _load_login_page(page, platform_code, account_key, home_url)
 
     worker = threading.Thread(
         target=_load,
