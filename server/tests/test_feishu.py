@@ -356,7 +356,9 @@ class TestNotifyTriggeredOnTaskCompletion:
     def test_notify_not_called_when_url_not_set(self, monkeypatch):
         """当 webhook URL 未配置时，即使任务完成，也不应触发网络请求。"""
         test_app = build_test_app(monkeypatch)
-        monkeypatch.delenv("GEO_FEISHU_WEBHOOK_URL", raising=False)
+        # setenv 覆盖 .env 文件中的同名配置；delenv 只删除进程环境变量，
+        # 无法屏蔽 pydantic-settings 从 .env 文件读到的值
+        monkeypatch.setenv("GEO_FEISHU_WEBHOOK_URL", "")
         get_settings.cache_clear()
 
         urlopen_calls = []

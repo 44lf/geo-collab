@@ -28,11 +28,14 @@ class CreateUserRequest(BaseModel):
     username: str
     password: str
     role: str = "operator"
+    display_name: str | None = None
 
 
 class UpdateUserRequest(BaseModel):
     is_active: bool | None = None
     role: str | None = None
+    display_name: str | None = None
+    feishu_open_id: str | None = None
 
 
 class ResetPasswordRequest(BaseModel):
@@ -46,6 +49,8 @@ def _user_dict(u: User) -> dict:
         "role": u.role,
         "is_active": u.is_active,
         "must_change_password": u.must_change_password,
+        "display_name": u.display_name,
+        "feishu_open_id": u.feishu_open_id,
         "created_at": u.created_at,
         "last_login_at": u.last_login_at,
     }
@@ -175,6 +180,7 @@ def create_user(payload: CreateUserRequest, request: Request) -> dict:
             role=payload.role,
             is_active=True,
             must_change_password=True,
+            display_name=payload.display_name or None,
         )
         user.set_password(payload.password)
         db.add(user)
@@ -216,6 +222,10 @@ def update_user(
         user.is_active = payload.is_active
     if payload.role is not None:
         user.role = payload.role
+    if payload.display_name is not None:
+        user.display_name = payload.display_name or None
+    if payload.feishu_open_id is not None:
+        user.feishu_open_id = payload.feishu_open_id or None
     db.flush()
     invalidate_user_cache(user_id)
     return _user_dict(user)

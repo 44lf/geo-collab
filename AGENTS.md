@@ -18,7 +18,7 @@ pnpm --filter @geo/web typecheck
 # tests (SQLite, 不依赖 Docker)
 pytest server/tests/ -v
 pytest server/tests/test_tasks_api.py -v --tb=short
-pytest server/tests/ -m "not mysql" -q          # 跳过 MySQL 集成测试
+pytest server/tests/ -m "not mysql" -q          # skip MySQL integration tests
 
 # migrations
 alembic upgrade head
@@ -48,24 +48,33 @@ pnpm install
   - `GEO_SEED_USERS` 环境变量（JSON 数组格式）在 Docker 启动时通过 `seed_users.py` 预建用户。
   - `require_local_token()` 函数仍在 `security.py` 中但**未被任何路由使用**，是遗留死代码。
 - **Entry point**: Docker CMD 执行 `alembic upgrade head && uvicorn server.app.main:app --host 0.0.0.0 --port 8000`，开发时用 `uvicorn server.app.main:app --reload`。
-- **Backend**: FastAPI, SQLAlchemy, Alembic, 8 route modules under `/api/`（auth、accounts、articles、article-groups、assets、publish-records、system、tasks）。Global handlers: `ValueError` → 400, `ConflictError(ValueError)` → 409。
+- **Backend**: FastAPI, SQLAlchemy, Alembic, 8 route modules under `/api/`（auth、accounts、articles、article-groups、assets、publish-records、system、tasks）。
 - **Database**: 开发/测试用 **SQLite** (`check_same_thread=False`, WAL mode)，Docker 用 **MySQL** (`mysql+pymysql`)。`alembic.ini` 的 `sqlalchemy.url` 是占位符，运行时由 `get_database_url()` 通过环境变量覆盖。
 - **Frontend**: React 19 + Vite + TypeScript (`web/`), feature-split (`features/content/`, `features/accounts/`, `features/tasks/`, `features/system/`), Tiptap rich-text editor, Lucide icons.
-- **Models** (12 ORM): Platform, Account, Article, ArticleGroup+ArticleGroupItem, Asset, ArticleBodyAsset, PublishTask, PublishTaskAccount, PublishRecord, TaskLog, User.
+- **Models** (16 ORM): Platform, Account, AccountLoginSession, Article, ArticleGroup+ArticleGroupItem, Asset, ArticleBodyAsset, PublishTask, PublishTaskAccount, PublishRecord, TaskLog, User, BrowserSession, RecordBrowserSession, WorkerHeartbeat.
 - **Services**:
   - `drivers/__init__.py` — PlatformDriver Protocol + 注册表（`register` / `get_driver` / `all_driver_codes`）
   - `drivers/toutiao.py` — ToutiaoDriver：头条号全部 Playwright 发布逻辑，import 时自动注册
+  - `drivers/base.py` — `PublishResult`, `PublishError`, `UserInputRequired`
   - `publish_runner.py` — `run_publish()`：通用发布编排，按 platform_code 取 driver，启 Xvfb 会话
   - `browser_sessions.py` — Xvfb + x11vnc + websockify → noVNC 流水线（Linux only）
   - `tasks.py` — 任务执行引擎，`build_publish_runner_for_record(record)` → `run_publish()`
   - `accounts.py` — 账号登录/检测/导入导出，路径按 `platform_code` 区分
   - `assets.py` — 文件存储（`store_bytes` / `resolve_asset_path`）
+  - `feishu.py` — 飞书机器人 Webhook 通知（任务完成时 fire-and-forget）
+  - `publish_diagnostics.py` — 发布过程诊断事件采集（`publish_step` context manager）
 - **Publisher**: ByteDance design system selectors, two-step publish ("预览并发布" + "确认发布"), `stop_before_publish` flag, cover is mandatory (raises if `None`).
 - **Data dir**: `GEO_DATA_DIR`（Docker 内默认 `/app/data`）。Subdirs: `assets/`, `browser_states/<platform_code>/<account_key>/`, `logs/`, `exports/`.
 - **Config**: pydantic-settings with `GEO_` prefix, `get_settings()` is `@lru_cache`'d — call `.cache_clear()` after env changes.
-- **Task execution**: `POST /api/tasks/{id}/execute` 返回 202，在 **后台线程** (`threading.Thread(daemon=True)`) 中异步执行。一个 `threading.Lock` 按 task_id 防止同一任务并发执行。内部最多 5 条 PublishRecord 同时执行（`ThreadPoolExecutor`），按 account 再加一把锁串行化同账号操作。Records 有 `lease_until` 字段支持崩溃恢复（`recover_stuck_records` 在 `create_app()` 启动时运行）。
+- **Task execution — two modes**:
+  - **Test/dev**: `POST /api/tasks/{id}/execute` starts a background thread (`threading.Thread(daemon=True)`) via `bg_session_factory` (monkeypatched to `TestingSessionLocal` in tests). Returns 202 immediately.
+  - **Production**: A separate `worker` Docker service (`server/worker/executor.py`) polls the DB, claims tasks via optimistic locking on `worker_id`/`worker_lease_until` columns, and calls `execute_task()` synchronously. The API only releases stale worker claims and returns 202.
+  - Internal execution: `threading.Lock` per task_id prevents concurrent execution. Up to 5 PublishRecord concurrently via `ThreadPoolExecutor`, with per-account locks for serialization. Records have `lease_until` for crash recovery.
+- **Worker executor** (`server/worker/executor.py`): polls for pending tasks, claims with optimistic lock, runs `execute_task()`, also processes account login session requests in a background thread. Writes `WorkerHeartbeat` rows.
 - **Startup order** (`create_app()`): `ensure_data_dirs` → import driver modules (registers drivers) → `recover_stuck_records` → uvicorn serve.
 - **`TaskCreate.platform_code`** 默认值是 `"toutiao"`——前端不传时后端自动填入。
+- **Docker Compose services**: mysql (8.0), app (FastAPI + static files), worker (publish executor + account login processor), nginx (80 → app, noVNC proxy).
+- **Exception hierarchy** (`server/app/services/errors.py`): `ClientError(Exception)` → 400 global handler, `ConflictError(ClientError)` → 409, `AccountError(ClientError)` → 400, `ValidationError(ClientError)` → 400. Service code should raise these classes, NOT raw `ValueError`. `ValueError` used in low-level code (browser_sessions, drivers/__init__) has NO global handler → results in 500.
 
 ## Playwright automation details
 
@@ -94,7 +103,7 @@ pnpm install
 - Alembic `alembic.ini`: `sqlalchemy.url` is a placeholder — runtime override via `get_database_url()`. `alembic upgrade head` runs automatically at Docker startup.
 - `ToutiaoDriver.publish(...)` — `stop_before_publish` stops after "预览并发布", user must call `POST /api/publish-records/{id}/manual-confirm`.
 - Cover image is **mandatory**: `_handle_cover()` raises if `article.cover_asset is None`.
-- Exception hierarchy (`server/app/services/errors.py`): `ValueError` → 400, `ConflictError(ValueError)` → 409, `AccountError(ValueError)` and `ValidationError(ValueError)` → 400.
+- Exception hierarchy (`server/app/services/errors.py`): `ClientError(Exception)` → 400, `ConflictError(ClientError)` → 409, `AccountError(ClientError)` → 400, `ValidationError(ClientError)` → 400. Service code should raise these classes, NOT raw `ValueError`.
 - Retry only on original records (not retry records).
 - `build_publish_runner_for_record(record)` in `tasks.py` routes by `platform_code` extracted from `account.state_path` — multi-platform ready via driver registry.
 - `bg_session_factory` (module-level var in `server/app/api/routes/tasks.py`) is imported lazily inside functions in both `tasks.py` and `publish_records.py` to avoid circular imports. Do **NOT** toplevel-import it.

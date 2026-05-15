@@ -36,7 +36,7 @@ def _send(url, task_name, task_id, status, total, succeeded, failed) -> None:
         "cancelled": "🚫",
     }.get(status, "📋")
     text = (
-        f"{status_emoji} 发布任务完成\n"
+        f"【geo】{status_emoji} 发布任务完成\n"
         f"任务：{task_name}（#{task_id}）\n"
         f"状态：{status}\n"
         f"结果：成功 {succeeded} / 失败 {failed} / 共 {total}"
