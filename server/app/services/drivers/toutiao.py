@@ -59,7 +59,7 @@ def _close_ai_drawer(page: Any) -> None:
         close_btns = page.locator(".close-btn")
         if close_btns.count() > 0 and close_btns.first.is_visible():
             close_btns.first.click()
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(200)
     except Exception:
         logger.warning("Failed to close AI drawer", exc_info=True)
 
@@ -403,7 +403,10 @@ def _confirm_body_image_drawer(page: Any) -> None:
         try:
             candidate.wait_for(state="visible", timeout=10000)
             candidate.click(timeout=5000)
-            page.wait_for_timeout(1000)
+            try:
+                page.locator(".mp-ic-img-drawer").last.wait_for(state="hidden", timeout=5000)
+            except Exception:
+                page.wait_for_timeout(300)
             return
         except Exception as exc:
             last_error = exc
@@ -419,7 +422,7 @@ def _wait_body_image_inserted(page: Any, before_count: int, timeout_ms: int = 30
         arg=before_count,
         timeout=timeout_ms,
     )
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(200)
 
 
 def _wait_body_image_ready(page: Any, before_count: int, timeout_ms: int = 30000) -> None:
@@ -439,7 +442,7 @@ def _wait_body_image_ready(page: Any, before_count: int, timeout_ms: int = 30000
         arg=before_count,
         timeout=timeout_ms,
     )
-    page.wait_for_timeout(4000)
+    page.wait_for_timeout(500)
 
 
 def _wait_publish_images_ready(page: Any, timeout_ms: int = 60000) -> None:
@@ -457,12 +460,12 @@ def _wait_publish_images_ready(page: Any, timeout_ms: int = 60000) -> None:
         ):
             stable_rounds += 1
             if stable_rounds >= 2:
-                page.wait_for_timeout(500)
+                page.wait_for_timeout(200)
                 return
         else:
             stable_rounds = 0
-            # 上传仍在进行时，状态抖动属正常；每轮间隔 2s，最多等 60s
-        page.wait_for_timeout(2000)
+            # 上传仍在进行时，状态抖动属正常；每轮间隔 500ms，最多等 60s
+        page.wait_for_timeout(500)
 
     screenshot = _screenshot(page)
     raise ToutiaoPublishError(f"正文图片上传未完成，仍存在临时图片 URI: {last_state}", screenshot)
@@ -580,7 +583,7 @@ def _handle_cover(page: Any, article: Article) -> None:
 
     try:
         page.get_by_role("button", name="确定").click()
-        page.wait_for_timeout(800)
+        page.wait_for_timeout(300)
     except Exception as exc:
         raise ToutiaoPublishError(f"无法点击封面确认按钮: {exc}") from exc
 
@@ -657,7 +660,7 @@ def _click_publish_and_wait(page: Any, stop_before_publish: bool = False) -> str
     except Exception as exc:
         raise ToutiaoPublishError(f"无法点击「预览并发布」按钮: {exc}") from exc
 
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(300)
     _dismiss_blocking_popups(page)
 
     # stop_before_publish=True 时停在预览状态，等待手动确认
@@ -674,14 +677,14 @@ def _click_publish_and_wait(page: Any, stop_before_publish: bool = False) -> str
         screenshot = _screenshot(page)
         raise ToutiaoPublishError(f"无法点击「确认发布」按钮: {exc}\n页面内容摘要: {body_hint}", screenshot) from exc
 
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(300)
 
     # 第三步：处理可能弹出的"作品同步授权"对话框
     try:
         ok_btn = page.get_by_role("button", name="确定")
         if ok_btn.count() and ok_btn.is_visible(timeout=3000):
             ok_btn.click()
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(300)
     except Exception:
         logger.warning("Failed to dismiss post-publish popup", exc_info=True)
 

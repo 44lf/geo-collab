@@ -43,6 +43,9 @@ def build_test_app(monkeypatch) -> TestApp:
     from server.app.services import browser_sessions as _bs_mod
     _bs_mod._reset_globals()
 
+    from server.app.core import security as _security_mod
+    _security_mod._reset_user_cache()
+
     db_path = data_dir / "test.db"
     engine = create_engine(
         f"sqlite:///{db_path.as_posix()}",

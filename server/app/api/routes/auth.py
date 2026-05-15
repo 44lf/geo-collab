@@ -6,7 +6,7 @@ from server.app.core.config import get_settings
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from server.app.core.security import create_access_token, get_current_user, require_admin, verify_token
+from server.app.core.security import create_access_token, get_current_user, invalidate_user_cache, require_admin, verify_token
 from server.app.db.session import get_db
 from server.app.models.user import User
 
@@ -141,6 +141,7 @@ def change_password(payload: ChangePasswordRequest, request: Request) -> dict:
         user.set_password(payload.new_password)
         user.must_change_password = False
         db.commit()
+        invalidate_user_cache(user.id)
         return {"detail": "Password changed"}
     finally:
         db.close()
@@ -214,6 +215,7 @@ def update_user(
     if payload.role is not None:
         user.role = payload.role
     db.flush()
+    invalidate_user_cache(user_id)
     return _user_dict(user)
 
 
@@ -230,4 +232,5 @@ def reset_password(
     user.set_password(payload.new_password)
     user.must_change_password = True
     db.flush()
+    invalidate_user_cache(user_id)
     return {"detail": "Password reset"}

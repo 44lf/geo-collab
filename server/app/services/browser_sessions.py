@@ -547,7 +547,10 @@ def _stop_session_processes(session: RemoteBrowserSession) -> None:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     process.kill()
+                try:
                     process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
         finally:
             try:
                 managed.log_handle.close()
