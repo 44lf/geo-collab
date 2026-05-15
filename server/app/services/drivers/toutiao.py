@@ -217,9 +217,16 @@ def _fill_body(page: Any, article: Article) -> None:
 def _insert_body_text(page: Any, text: str) -> None:
     if not text:
         return
-    # 通过剪贴板粘贴，绕过键盘事件和 IME，避免中文+特殊字符丢失
+    # 段落换行用键盘 Enter，避免 paste 事件触发编辑器的缩进格式
+    if text == "\n":
+        page.keyboard.press("Enter")
+        return
+    # 通过剪贴板粘贴，绕过键盘事件和 IME，避免中文+特殊字符丢失。
+    # 关键：先保存当前焦点元素，copy 完后恢复，否则 removeChild 会让焦点落到 body，
+    # 导致 Control+v 打到 body 而非编辑区，正文文字全部丢失。
     page.evaluate(
         """(t) => {
+            const prev = document.activeElement;
             const el = document.createElement('textarea');
             el.value = t;
             el.style.position = 'fixed';
@@ -229,6 +236,9 @@ def _insert_body_text(page: Any, text: str) -> None:
             el.select();
             document.execCommand('copy');
             document.body.removeChild(el);
+            if (prev && typeof prev.focus === 'function' && prev !== document.body) {
+                prev.focus();
+            }
         }""",
         text,
     )
