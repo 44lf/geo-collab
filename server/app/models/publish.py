@@ -47,7 +47,7 @@ class PublishTask(Base):
     name: Mapped[str] = mapped_column(String(300))
     task_type: Mapped[str] = mapped_column(String(40), index=True)  # single / group_round_robin
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
-    platform_id: Mapped[int] = mapped_column(ForeignKey("platforms.id"), index=True)
+    platform_id: Mapped[int | None] = mapped_column(ForeignKey("platforms.id"), nullable=True, index=True)
     article_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"), nullable=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("article_groups.id"), nullable=True)
     stop_before_publish: Mapped[bool] = mapped_column(Boolean, default=False)  # 是否等待手动确认发布
@@ -57,6 +57,7 @@ class PublishTask(Base):
     worker_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -100,6 +101,8 @@ class PublishRecord(Base):
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
     publish_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)  # 发布成功后的 URL
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    snapshot_title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    snapshot_content_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_of_record_id: Mapped[int | None] = mapped_column(ForeignKey("publish_records.id"), nullable=True)  # 重试来源
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
