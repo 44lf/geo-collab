@@ -1,6 +1,8 @@
+import asyncio
 import os
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image
 from sqlalchemy.orm import Session
@@ -31,13 +33,42 @@ def to_asset_read(asset: Asset) -> AssetRead:
     )
 
 
+def _generate_thumbnail(asset: Asset, width: int, data_dir: Path) -> None:
+    """Generate and cache a thumbnail for the given asset at the given width. Idempotent."""
+    try:
+        cache_dir = data_dir / "thumbnail_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"{asset.id}_w{width}.jpg"
+
+        if cache_file.exists():
+            return
+
+        asset_path = (data_dir / asset.storage_key).resolve()
+        if not asset_path.exists():
+            return
+
+        with Image.open(asset_path) as img:
+            ratio = width / img.width
+            new_height = int(img.height * ratio)
+            img = img.resize((width, new_height), Image.LANCZOS)
+            img = img.convert("RGB")
+            img.save(cache_file, "JPEG", quality=85)
+    except Exception:
+        pass
+
+
 @router.post("", response_model=AssetRead)
 async def upload_asset(
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     stored = await store_upload(db, current_user.id, file)
+    if stored.asset.mime_type.startswith("image/"):
+        data_dir = get_data_dir()
+        background_tasks.add_task(_generate_thumbnail, stored.asset, 600, data_dir)
+        background_tasks.add_task(_generate_thumbnail, stored.asset, 300, data_dir)
     return Response(
         content=to_asset_read(stored.asset).model_dump_json(),
         media_type="application/json",
@@ -54,7 +85,7 @@ def read_asset_meta(asset_id: str, db: Session = Depends(get_db)) -> AssetRead:
 
 
 @router.get("/{asset_id}")
-def read_asset_file(asset_id: str, width: int | None = None, db: Session = Depends(get_db)) -> Response:
+async def read_asset_file(asset_id: str, width: int | None = None, db: Session = Depends(get_db)) -> Response:
     asset = db.get(Asset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -73,12 +104,7 @@ def read_asset_file(asset_id: str, width: int | None = None, db: Session = Depen
         cache_file = cache_dir / f"{asset_id}_w{width}.jpg"
 
         if not cache_file.exists():
-            with Image.open(path) as img:
-                ratio = width / img.width
-                new_height = int(img.height * ratio)
-                img = img.resize((width, new_height), Image.LANCZOS)
-                img = img.convert("RGB")
-                img.save(cache_file, "JPEG", quality=85)
+            await asyncio.to_thread(_generate_thumbnail, asset, width, get_data_dir())
 
         return FileResponse(
             cache_file,
@@ -97,4 +123,9 @@ def read_asset_file(asset_id: str, width: int | None = None, db: Session = Depen
             },
         )
 
-    return FileResponse(path, media_type=asset.mime_type, filename=asset.filename)
+    return FileResponse(
+        path,
+        media_type=asset.mime_type,
+        filename=asset.filename,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )

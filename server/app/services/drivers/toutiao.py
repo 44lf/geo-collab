@@ -172,29 +172,23 @@ def _fill_title(page: Any, title: str) -> None:
 
 
 def _focus_body_editor(page: Any) -> None:
-    """聚焦正文编辑区。"""
-    try:
-        para = page.get_by_role("paragraph").first
-        para.scroll_into_view_if_needed()
-        para.click()
-        return
-    except Exception:
-        logger.warning("Body fill via paragraph role failed, trying contenteditable fallback", exc_info=True)
-    # 兜底：找最大的 contenteditable div 输入
-    editable = page.locator("[contenteditable='true']")
-    for i in range(editable.count()):
-        field = editable.nth(i)
-        try:
-            box = field.bounding_box()
-            if not box or box["height"] < 80:
-                continue
-            field.scroll_into_view_if_needed()
-            field.click()
-            return
-        except Exception:
-            logger.warning("Failed to fill body via contenteditable fallback", exc_info=True)
-            continue
-    raise ToutiaoPublishError("Toutiao body editor not found")
+    """聚焦正文编辑区，不移动光标。
+
+    用 JS .focus() 而非 Playwright .click()：click() 会把 ProseMirror 的 selection
+    anchor 强制移到被点击元素处（总是 .first 段落 = 文档开头），导致插图后光标跳回
+    第一段，后续文字/图片全部插在已插图片的上方，图片"沉底"。
+    .focus() 只恢复键盘焦点，ProseMirror 会按自己存储的 selection 恢复光标位置。
+    """
+    focused = page.evaluate(
+        """() => {
+            const editor = Array.from(document.querySelectorAll("[contenteditable='true']"))
+                .find(el => el.getBoundingClientRect().height >= 80);
+            if (editor) { editor.focus(); return true; }
+            return false;
+        }"""
+    )
+    if not focused:
+        raise ToutiaoPublishError("Toutiao body editor not found")
 
 
 def _fill_body(page: Any, article: Article) -> None:
