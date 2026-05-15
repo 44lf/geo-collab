@@ -65,6 +65,8 @@ _reserved_novnc_ports: set[int] = set()
 _record_to_session: dict[int, str] = {}
 _session_keep_alive: set[str] = set()
 _account_sessions: dict[str, str] = {}
+_account_creation_locks: dict[str, threading.Lock] = {}
+_account_creation_locks_lock = threading.Lock()
 
 _idle_cleanup_thread: threading.Thread | None = None
 _idle_cleanup_stop = threading.Event()
@@ -100,7 +102,7 @@ def _write_session_to_db(session: RemoteBrowserSession, worker_id: str | None) -
         finally:
             db.close()
     except Exception:
-        _logger.debug("Could not write session %s to DB", session.id, exc_info=True)
+        _logger.error("Could not write session %s to DB — cross-process visibility lost", session.id, exc_info=True)
 
 
 def _delete_session_from_db(session_id: str) -> None:
@@ -286,11 +288,17 @@ def get_or_create_account_session(platform_code: str, account_key: str) -> Remot
 
     Reuse condition: session exists locally, not in keep_alive state, Chromium
     context still alive.
+
+    Per-account creation lock prevents two concurrent callers from both seeing
+    no session and each spawning a separate browser instance for the same account.
     """
     cache_key = _account_session_key(platform_code, account_key)
-    with _sessions_lock:
-        session_id = _account_sessions.get(cache_key)
-        if session_id is not None:
+
+    def _try_reuse() -> RemoteBrowserSession | None:
+        with _sessions_lock:
+            session_id = _account_sessions.get(cache_key)
+            if session_id is None:
+                return None
             session = _active_sessions.get(session_id)
             if (
                 session is not None
@@ -300,11 +308,26 @@ def get_or_create_account_session(platform_code: str, account_key: str) -> Remot
                 session.started_at = time.monotonic()
                 return session
             _account_sessions.pop(cache_key, None)
+            return None
 
-    session = start_remote_browser_session(account_key, platform_code=platform_code)
-    with _sessions_lock:
-        _account_sessions[cache_key] = session.id
-    return session
+    if (existing := _try_reuse()) is not None:
+        return existing
+
+    # Acquire per-account lock to prevent duplicate creation
+    with _account_creation_locks_lock:
+        if cache_key not in _account_creation_locks:
+            _account_creation_locks[cache_key] = threading.Lock()
+        account_lock = _account_creation_locks[cache_key]
+
+    with account_lock:
+        # Double-check: another thread may have created the session while we waited
+        if (existing := _try_reuse()) is not None:
+            return existing
+
+        session = start_remote_browser_session(account_key, platform_code=platform_code)
+        with _sessions_lock:
+            _account_sessions[cache_key] = session.id
+        return session
 
 
 def keep_session_alive(session_id: str) -> None:
@@ -550,7 +573,12 @@ def _stop_session_processes(session: RemoteBrowserSession) -> None:
                 try:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    pass
+                    _logger.error(
+                        "Process %s (PID %d) failed to terminate after SIGKILL — "
+                        "display/port may be leaked",
+                        managed.name,
+                        process.pid,
+                    )
         finally:
             try:
                 managed.log_handle.close()

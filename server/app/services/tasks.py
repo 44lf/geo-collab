@@ -667,6 +667,14 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
             message = result.message
         if db.execute(stmt).rowcount > 0:
             _add_log(db, task.id, record_id, "info", message)
+        else:
+            # rowcount=0 means another actor changed the status before this write
+            # (e.g. cancel, timeout). The platform may have already published.
+            _logger.warning(
+                "Record %d publish succeeded on platform but DB update had rowcount=0 "
+                "(status was changed externally)",
+                record_id,
+            )
         _logger.info("Record %d succeeded", record_id)
 
 
