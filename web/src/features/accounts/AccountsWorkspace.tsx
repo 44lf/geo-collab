@@ -177,10 +177,15 @@ export function AccountsWorkspace() {
   function normalizeRemoteBrowserUrl(rawUrl: string) {
     const url = new URL(rawUrl, window.location.href);
     const localHosts = new Set(["0.0.0.0", "127.0.0.1", "localhost"]);
-    if (localHosts.has(url.hostname) && !localHosts.has(window.location.hostname)) {
+    if (localHosts.has(url.hostname)) {
       url.hostname = window.location.hostname;
+      url.protocol = window.location.protocol;
+      url.port = window.location.port;
       if (url.searchParams.has("host")) {
         url.searchParams.set("host", window.location.hostname);
+      }
+      if (url.searchParams.has("port")) {
+        url.searchParams.set("port", window.location.port || (window.location.protocol === "https:" ? "443" : "80"));
       }
     }
     return url.toString();

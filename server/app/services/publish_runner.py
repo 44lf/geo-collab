@@ -111,7 +111,9 @@ def run_publish(
                     **options,
                 )
                 context.set_default_navigation_timeout(30000)
-                context.grant_permissions(["clipboard-read", "clipboard-write"])
+                grant_permissions = getattr(context, "grant_permissions", None)
+                if callable(grant_permissions):
+                    grant_permissions(["clipboard-read", "clipboard-write"])
                 attach_browser_handles(session.id, pw, context, None)
         except Exception:
             if pw is not None:

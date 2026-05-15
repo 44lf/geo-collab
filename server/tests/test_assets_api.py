@@ -57,3 +57,50 @@ def test_upload_empty_asset_is_rejected(monkeypatch):
         assert response.json()["detail"] == "Uploaded file is empty"
     finally:
         test_app.cleanup()
+
+
+def test_duplicate_upload_recreates_asset_when_original_file_is_missing(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    try:
+        first = client.post(
+            "/api/assets",
+            files={"file": ("cover.png", PNG_1X1, "image/png")},
+        ).json()
+        (test_app.data_dir / first["storage_key"]).unlink()
+
+        response = client.post(
+            "/api/assets",
+            files={"file": ("cover.png", PNG_1X1, "image/png")},
+        )
+
+        assert response.status_code == 200
+        second = response.json()
+        assert second["sha256"] == first["sha256"]
+        assert second["id"] != first["id"]
+        assert (test_app.data_dir / second["storage_key"]).exists()
+        assert client.get(f"/api/assets/{second['id']}").status_code == 200
+    finally:
+        test_app.cleanup()
+
+
+def test_thumbnail_request_falls_back_to_original_when_generation_fails(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    monkeypatch.setattr("server.app.api.routes.assets._generate_thumbnail", lambda *_args, **_kwargs: None)
+
+    try:
+        uploaded = client.post(
+            "/api/assets",
+            files={"file": ("cover.png", PNG_1X1, "image/png")},
+        ).json()
+
+        response = client.get(f"/api/assets/{uploaded['id']}?width=300")
+
+        assert response.status_code == 200
+        assert response.content == PNG_1X1
+        assert response.headers["content-type"].startswith("image/png")
+    finally:
+        test_app.cleanup()

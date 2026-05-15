@@ -68,7 +68,7 @@ LOGIN_TERMINAL_STATUSES = {
     LOGIN_STATUS_FAILED,
 }
 
-LOGIN_SESSION_START_TIMEOUT_SECONDS = 45.0
+LOGIN_SESSION_START_TIMEOUT_SECONDS = 90.0
 LOGIN_SESSION_FINISH_TIMEOUT_SECONDS = 45.0
 LOGIN_SESSION_CANCEL_TIMEOUT_SECONDS = 5.0
 LOGIN_SESSION_POLL_SECONDS = 0.25
@@ -672,7 +672,7 @@ def _start_login_browser_impl(platform_code: str, account_key: str, channel: str
         page = _primary_page_for_context(context)
         attach_browser_handles(session.id, pw, context, page)
         keep_session_alive(session.id)
-        _start_login_page_loader(session.id, platform_code, account_key, driver.home_url)
+        _load_login_page(page, platform_code, account_key, driver.home_url)
         return session
     except Exception:
         try:
@@ -717,6 +717,7 @@ def _load_login_page(page, platform_code: str, account_key: str, home_url: str) 
             account_key,
             exc_info=True,
         )
+        raise ClientError(f"Remote login page load failed: {home_url}") from None
 
 
 def _start_login_page_loader(session_id: str, platform_code: str, account_key: str, home_url: str) -> None:

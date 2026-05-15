@@ -220,10 +220,12 @@ async def store_upload(db: Session, user_id: int, upload: UploadFile) -> StoredA
         digest = sha256.hexdigest()
         existing = db.query(Asset).filter(Asset.sha256 == digest).first()
         if existing:
-            tmp_path.unlink(missing_ok=True)
-            db.flush()
-            db.refresh(existing)
-            return StoredAsset(asset=existing, path=resolve_asset_path(existing))
+            existing_path = resolve_asset_path(existing)
+            if existing_path.exists():
+                tmp_path.unlink(missing_ok=True)
+                db.flush()
+                db.refresh(existing)
+                return StoredAsset(asset=existing, path=existing_path)
 
         stored = _create_asset_from_path(db, user_id, tmp_path, filename, content_type, digest, total)
         db.flush()

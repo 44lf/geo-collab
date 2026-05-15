@@ -381,7 +381,7 @@ def _paste_body_image(page: Any, asset: Asset) -> None:
             _open_body_image_drawer(page)
             _upload_body_image_in_drawer(page, upload_path)
             _confirm_body_image_drawer(page)
-        _wait_body_image_inserted(page, before_count)
+            _wait_body_image_inserted(page, before_count)
         record_publish_diagnostic(f"body image inserted: asset_id={asset.id}; after_count={_body_image_count(page)}")
     except Exception as exc:
         after_count = _body_image_count(page)
@@ -610,21 +610,21 @@ def _handle_cover(page: Any, article: Article) -> None:
             with page.expect_file_chooser(timeout=5000) as fc_info:
                 page.get_by_role("button", name="本地上传").click()
             fc_info.value.set_files(str(upload_path))
+
+            try:
+                page.get_by_text(re.compile(r"已上传\s*1\s*张图片")).wait_for(timeout=60000)
+            except Exception as exc:
+                raise ToutiaoPublishError(f"封面上传超时（60s）: {exc}") from exc
+
+            try:
+                page.get_by_role("button", name="确定").click()
+                page.wait_for_timeout(300)
+            except Exception as exc:
+                raise ToutiaoPublishError(f"无法点击封面确认按钮: {exc}") from exc
     except ToutiaoPublishError:
         raise
     except Exception as exc:
         raise ToutiaoPublishError(f"封面文件选择失败: {exc}") from exc
-
-    try:
-        page.get_by_text(re.compile(r"已上传\s*1\s*张图片")).wait_for(timeout=60000)
-    except Exception as exc:
-        raise ToutiaoPublishError(f"封面上传超时（60s）: {exc}") from exc
-
-    try:
-        page.get_by_role("button", name="确定").click()
-        page.wait_for_timeout(300)
-    except Exception as exc:
-        raise ToutiaoPublishError(f"无法点击封面确认按钮: {exc}") from exc
 
 
 def _cover_already_present(page: Any) -> bool:

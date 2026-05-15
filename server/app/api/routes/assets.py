@@ -13,6 +13,7 @@ from server.app.db.session import get_db
 from server.app.models import Asset, User
 from server.app.schemas.asset import AssetRead
 from server.app.services.assets import asset_url, resolve_asset_path, store_upload
+from server.app.services.errors import ClientError
 
 router = APIRouter()
 
@@ -33,7 +34,7 @@ def to_asset_read(asset: Asset) -> AssetRead:
     )
 
 
-def _generate_thumbnail(asset: Asset, width: int, data_dir: Path) -> None:
+def _generate_thumbnail(asset: Asset, width: int, data_dir: Path) -> Path | None:
     """Generate and cache a thumbnail for the given asset at the given width. Idempotent."""
     try:
         cache_dir = data_dir / "thumbnail_cache"
@@ -41,11 +42,11 @@ def _generate_thumbnail(asset: Asset, width: int, data_dir: Path) -> None:
         cache_file = cache_dir / f"{asset.id}_w{width}.jpg"
 
         if cache_file.exists():
-            return
+            return cache_file
 
         asset_path = (data_dir / asset.storage_key).resolve()
         if not asset_path.exists():
-            return
+            return None
 
         with Image.open(asset_path) as img:
             ratio = width / img.width
@@ -53,8 +54,9 @@ def _generate_thumbnail(asset: Asset, width: int, data_dir: Path) -> None:
             img = img.resize((width, new_height), Image.LANCZOS)
             img = img.convert("RGB")
             img.save(cache_file, "JPEG", quality=85)
+        return cache_file
     except Exception:
-        pass
+        return None
 
 
 @router.post("", response_model=AssetRead)
@@ -92,7 +94,7 @@ async def read_asset_file(asset_id: str, width: int | None = None, db: Session =
 
     try:
         path = resolve_asset_path(asset)
-    except ValueError as exc:
+    except (ClientError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     if not path.exists():
@@ -105,6 +107,14 @@ async def read_asset_file(asset_id: str, width: int | None = None, db: Session =
 
         if not cache_file.exists():
             await asyncio.to_thread(_generate_thumbnail, asset, width, get_data_dir())
+
+        if not cache_file.exists():
+            return FileResponse(
+                path,
+                media_type=asset.mime_type,
+                filename=asset.filename,
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
 
         return FileResponse(
             cache_file,
