@@ -154,10 +154,7 @@ def export_accounts(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> FileResponse:
-    try:
-        export_path = export_accounts_auth_package(db, payload or AccountExportRequest())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    export_path = export_accounts_auth_package(db, payload or AccountExportRequest())
     return FileResponse(
         export_path,
         media_type="application/zip",
@@ -203,10 +200,7 @@ async def import_accounts(
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid ZIP file")
 
-    try:
-        return import_accounts_auth_package(db, current_user.id, zip_bytes)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return import_accounts_auth_package(db, current_user.id, zip_bytes)
 
 
 # 校验指定账号的登录状态
