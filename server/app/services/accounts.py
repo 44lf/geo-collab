@@ -525,7 +525,7 @@ def process_account_login_session_requests(db: Session, worker_id: str) -> bool:
 
 def _worker_start_login_session(db: Session, request: AccountLoginSession) -> None:
     try:
-        session = _start_login_browser(
+        session = _start_login_browser_impl(
             request.platform_code,
             request.account_key,
             request.channel,
@@ -556,7 +556,7 @@ def _worker_finish_login_session(db: Session, request: AccountLoginSession) -> N
     try:
         if not request.browser_session_id:
             raise ClientError("Remote browser session not found")
-        result = _finish_login_browser_local(
+        result = _finish_login_browser_impl(
             request.platform_code,
             request.account_key,
             request.browser_session_id,
@@ -579,7 +579,7 @@ def _worker_finish_login_session(db: Session, request: AccountLoginSession) -> N
 def _worker_cancel_login_session(db: Session, request: AccountLoginSession) -> None:
     try:
         if request.browser_session_id:
-            _stop_login_browser_local(request.account_key, request.browser_session_id)
+            _stop_login_browser_impl(request.account_key, request.browser_session_id)
         request.status = LOGIN_STATUS_CANCELLED
         request.error_message = None
     except Exception as exc:
@@ -601,6 +601,10 @@ def _apply_login_result(account: Account, result: BrowserCheckResult) -> None:
 
 
 def _finish_login_browser_local(platform_code: str, account_key: str, session_id: str) -> BrowserCheckResult:
+    return _run_in_plain_thread(lambda: _finish_login_browser_impl(platform_code, account_key, session_id))
+
+
+def _finish_login_browser_impl(platform_code: str, account_key: str, session_id: str) -> BrowserCheckResult:
     from server.app.services.browser_sessions import get_session, stop_remote_browser_session
 
     session = get_session(session_id)
@@ -612,18 +616,20 @@ def _finish_login_browser_local(platform_code: str, account_key: str, session_id
         raise ClientError("Remote browser session has no browser context")
 
     try:
-        return _run_in_plain_thread(
-            lambda: _read_and_save_login_state_from_remote_session(
-                session,
-                platform_code,
-                state_path_for_key(platform_code, account_key),
-            )
+        return _read_and_save_login_state_from_remote_session(
+            session,
+            platform_code,
+            state_path_for_key(platform_code, account_key),
         )
     finally:
-        _run_in_plain_thread(lambda: stop_remote_browser_session(session_id))
+        stop_remote_browser_session(session_id)
 
 
 def _stop_login_browser_local(account_key: str, session_id: str) -> None:
+    _run_in_plain_thread(lambda: _stop_login_browser_impl(account_key, session_id))
+
+
+def _stop_login_browser_impl(account_key: str, session_id: str) -> None:
     from server.app.services.browser_sessions import get_session, stop_remote_browser_session
 
     session = get_session(session_id)
@@ -631,7 +637,7 @@ def _stop_login_browser_local(account_key: str, session_id: str) -> None:
         return
     if session.account_key != account_key:
         raise ClientError("Remote browser session does not belong to this account")
-    _run_in_plain_thread(lambda: stop_remote_browser_session(session_id))
+    stop_remote_browser_session(session_id)
 
 
 def _start_login_browser(platform_code: str, account_key: str, channel: str, executable_path: str | None):

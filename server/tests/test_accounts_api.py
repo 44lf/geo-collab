@@ -95,6 +95,102 @@ def test_login_page_loader_runs_in_background(monkeypatch):
         test_app.cleanup()
 
 
+def test_worker_finish_login_session_uses_existing_thread(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+    install_fake_driver(monkeypatch)
+    owner_thread = threading.get_ident()
+
+    class FakeLocator:
+        def inner_text(self, timeout=None):
+            assert threading.get_ident() == owner_thread
+            return "publisher dashboard"
+
+    class FakePage:
+        url = "https://mp.toutiao.com/profile_v4"
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            assert threading.get_ident() == owner_thread
+            return None
+
+        def title(self):
+            assert threading.get_ident() == owner_thread
+            return "Toutiao"
+
+        def locator(self, _selector):
+            assert threading.get_ident() == owner_thread
+            return FakeLocator()
+
+    class FakeContext:
+        def __init__(self, page):
+            self.pages = [page]
+
+        def storage_state(self, path):
+            assert threading.get_ident() == owner_thread
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write('{"cookies":[{"name":"session"}],"origins":[]}')
+
+        def close(self):
+            assert threading.get_ident() == owner_thread
+
+    class FakePlaywright:
+        def stop(self):
+            assert threading.get_ident() == owner_thread
+
+    try:
+        write_storage_state(test_app.data_dir, "demo")
+        account = client.post(
+            "/api/accounts/toutiao/login",
+            json={"display_name": "worker-finish-demo", "account_key": "demo", "use_browser": False},
+        ).json()
+
+        from server.app.models import AccountLoginSession
+        from server.app.services import accounts, browser_sessions
+
+        db = test_app.session_factory()
+        try:
+            request = AccountLoginSession(
+                id="worker-finish",
+                account_id=account["id"],
+                platform_code="toutiao",
+                account_key="demo",
+                channel="chromium",
+                status=accounts.LOGIN_STATUS_FINISHING,
+                browser_session_id="worker-session",
+            )
+            db.add(request)
+            db.commit()
+
+            page = FakePage()
+            session = RemoteBrowserSession(
+                id="worker-session",
+                account_key="demo",
+                display_number=99,
+                display=":99",
+                vnc_port=5900,
+                novnc_port=6080,
+                novnc_url="http://127.0.0.1:6080/vnc.html",
+                log_dir=test_app.data_dir,
+                playwright=FakePlaywright(),
+                browser_context=FakeContext(page),
+                page=page,
+            )
+            with browser_sessions._sessions_lock:
+                browser_sessions._active_sessions[session.id] = session
+                browser_sessions._session_keep_alive.add(session.id)
+
+            accounts._worker_finish_login_session(db, request)
+            db.refresh(request)
+
+            assert request.status == accounts.LOGIN_STATUS_FINISHED
+            assert request.logged_in is True
+            assert browser_sessions.get_session("worker-session") is None
+        finally:
+            db.close()
+    finally:
+        test_app.cleanup()
+
+
 def test_toutiao_login_registers_existing_storage_and_lists_account(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client
