@@ -743,15 +743,18 @@ def _read_and_save_login_state_from_remote_session(session, platform_code: str, 
 def _read_login_state_from_remote_session(session, platform_code: str) -> BrowserCheckResult:
     driver = _get_driver(platform_code)
     context = session.browser_context
+    # Always use the last open tab — login flows often open new tabs and the user
+    # completes login there, not on the original pages[0].
     page = session.page
-    if page is None and context is not None:
+    if context is not None:
         pages = list(getattr(context, "pages", []) or [])
-        page = pages[-1] if pages else context.new_page()
+        if pages:
+            page = pages[-1]
     if page is None:
         raise ValueError("Remote browser session has no page")
 
     try:
-        page.wait_for_load_state("networkidle", timeout=5000)
+        page.wait_for_load_state("networkidle", timeout=10000)
     except Exception:
         pass
     url = page.url

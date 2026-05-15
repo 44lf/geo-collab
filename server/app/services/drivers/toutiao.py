@@ -800,8 +800,12 @@ class ToutiaoDriver:
     publish_url = TOUTIAO_PUBLISH_URL
 
     def detect_logged_in(self, *, url: str, title: str, body: str) -> bool:
-        haystack = f"{url}\n{title}\n{body}"
-        if any(hint in haystack for hint in LOGIN_HINTS):
+        # URL-based redirect hints only checked in URL — body contains "退出登录" on any logged-in page
+        if any(hint in url for hint in ("login", "passport", "sso")):
+            return False
+        # QR/captcha hints only appear on login pages, not on authenticated dashboard pages
+        page_text = f"{title}\n{body}"
+        if any(hint in page_text for hint in (*QR_HINTS, *CAPTCHA_HINTS)):
             return False
         return "mp.toutiao.com" in url and ("profile_v4" in url or "头条号" in title)
 
