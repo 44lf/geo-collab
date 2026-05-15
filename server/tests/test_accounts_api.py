@@ -191,7 +191,7 @@ def test_toutiao_remote_login_session_creates_unknown_account(monkeypatch):
         id = "login-session-1"
         novnc_url = "http://127.0.0.1:6080/vnc.html"
 
-    monkeypatch.setattr("server.app.services.accounts._start_login_browser", lambda *_args: FakeSession())
+    monkeypatch.setattr("server.app.services.accounts._start_login_browser_via_worker", lambda *_args: FakeSession())
 
     try:
         response = client.post(

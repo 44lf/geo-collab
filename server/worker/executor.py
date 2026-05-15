@@ -12,6 +12,7 @@ import logging
 import os
 import signal
 import socket
+import threading
 import time
 from datetime import timedelta
 
@@ -20,6 +21,7 @@ from sqlalchemy import select, update as sa_update
 from server.app.core.time import utcnow
 from server.app.db.session import SessionLocal
 from server.app.models import PublishTask, WorkerHeartbeat
+from server.app.services.accounts import process_account_login_session_requests
 from server.app.services.tasks import (
     TERMINAL_TASK_STATUSES,
     execute_task,
@@ -105,6 +107,28 @@ def _write_worker_heartbeat(db) -> None:
     db.commit()
 
 
+def _account_login_loop() -> None:
+    """Process interactive login commands independently from publish task execution."""
+    last_heartbeat = 0.0
+    while not _shutdown:
+        db = SessionLocal()
+        processed = False
+        try:
+            now = time.monotonic()
+            if now - last_heartbeat >= 10:
+                _write_worker_heartbeat(db)
+                last_heartbeat = now
+            processed = process_account_login_session_requests(db, WORKER_ID)
+        except Exception:
+            _logger.exception("Worker %s: error processing account login request", WORKER_ID)
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+        time.sleep(0.1 if processed else 0.5)
+
+
 def _startup(db) -> None:
     """Run recovery routines on worker startup."""
     recover_stuck_records(db)
@@ -135,6 +159,8 @@ def main() -> None:
         db.close()
 
     _logger.info("Worker %s entering main loop", WORKER_ID)
+    login_thread = threading.Thread(target=_account_login_loop, daemon=True, name="account-login-worker")
+    login_thread.start()
 
     while not _shutdown:
         db = SessionLocal()

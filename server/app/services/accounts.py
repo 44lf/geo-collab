@@ -8,6 +8,7 @@ import re
 import sys
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -15,13 +16,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import and_, delete as sa_delete, or_, select, update as sa_update
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.config import get_settings
 from server.app.core.paths import ensure_data_dirs, get_data_dir
 from server.app.core.time import utcnow
-from server.app.models import Account, Platform, PublishRecord, PublishTaskAccount, TaskLog
+from server.app.models import Account, AccountLoginSession, Platform, PublishRecord, PublishTaskAccount, TaskLog
 from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, PlatformLoginRequest
 
 _logger = logging.getLogger(__name__)
@@ -41,6 +42,35 @@ class AccountBrowserSessionResult:
     account_key: str
     session_id: str
     novnc_url: str
+
+
+@dataclass(frozen=True)
+class LoginBrowserSessionHandle:
+    id: str
+    novnc_url: str
+
+
+LOGIN_STATUS_PENDING = "pending"
+LOGIN_STATUS_STARTING = "starting"
+LOGIN_STATUS_ACTIVE = "active"
+LOGIN_STATUS_FINISH_REQUESTED = "finish_requested"
+LOGIN_STATUS_FINISHING = "finishing"
+LOGIN_STATUS_FINISHED = "finished"
+LOGIN_STATUS_CANCEL_REQUESTED = "cancel_requested"
+LOGIN_STATUS_CANCELLING = "cancelling"
+LOGIN_STATUS_CANCELLED = "cancelled"
+LOGIN_STATUS_FAILED = "failed"
+
+LOGIN_TERMINAL_STATUSES = {
+    LOGIN_STATUS_FINISHED,
+    LOGIN_STATUS_CANCELLED,
+    LOGIN_STATUS_FAILED,
+}
+
+LOGIN_SESSION_START_TIMEOUT_SECONDS = 45.0
+LOGIN_SESSION_FINISH_TIMEOUT_SECONDS = 45.0
+LOGIN_SESSION_CANCEL_TIMEOUT_SECONDS = 5.0
+LOGIN_SESSION_POLL_SECONDS = 0.25
 
 
 def _run_in_plain_thread(fn: Callable[[], Any]) -> Any:
@@ -221,7 +251,14 @@ def start_login_session(
         account.updated_at = now
     db.flush()
 
-    session = _start_login_browser(platform_code, account_key, payload.channel, payload.executable_path)
+    session = _start_login_browser_via_worker(
+        db,
+        account.id,
+        platform_code,
+        account_key,
+        payload.channel,
+        payload.executable_path,
+    )
     return AccountBrowserSessionResult(
         account=get_account(db, account.id) or account,
         platform_code=platform_code,
@@ -238,7 +275,14 @@ def start_account_login_session(db: Session, account: Account, payload: AccountC
     account.updated_at = account.last_checked_at
     db.flush()
 
-    session = _start_login_browser(platform_code, account_key, payload.channel, payload.executable_path)
+    session = _start_login_browser_via_worker(
+        db,
+        account.id,
+        platform_code,
+        account_key,
+        payload.channel,
+        payload.executable_path,
+    )
     return AccountBrowserSessionResult(
         account=get_account(db, account.id) or account,
         platform_code=platform_code,
@@ -249,9 +293,315 @@ def start_account_login_session(db: Session, account: Account, payload: AccountC
 
 
 def finish_account_login_session(db: Session, account: Account, session_id: str) -> tuple[Account, BrowserCheckResult]:
+    request = _find_account_login_request(db, account.id, session_id)
+    if request is not None:
+        return _finish_login_browser_via_worker(db, account, request)
+
+    # Backward-compatible local fallback for single-process tests/dev sessions.
+    platform_code, account_key = account_key_from_state_path(account.state_path)
+    result = _finish_login_browser_local(platform_code, account_key, session_id)
+    _apply_login_result(account, result)
+    db.flush()
+    return get_account(db, account.id) or account, result
+
+
+def stop_account_login_session(db: Session, account: Account, session_id: str) -> None:
+    request = _find_account_login_request(db, account.id, session_id)
+    if request is not None:
+        _cancel_login_browser_via_worker(db, request)
+        return
+
+    # Backward-compatible local fallback for single-process tests/dev sessions.
+    _, account_key = account_key_from_state_path(account.state_path)
+    _stop_login_browser_local(account_key, session_id)
+
+
+def _new_login_session_request_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _touch_login_request(request: AccountLoginSession) -> None:
+    request.updated_at = utcnow()
+
+
+def _find_account_login_request(db: Session, account_id: int, session_id: str) -> AccountLoginSession | None:
+    return db.execute(
+        select(AccountLoginSession)
+        .where(
+            AccountLoginSession.account_id == account_id,
+            or_(
+                AccountLoginSession.id == session_id,
+                AccountLoginSession.browser_session_id == session_id,
+            ),
+        )
+        .order_by(AccountLoginSession.updated_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _wait_for_account_login_request(
+    db: Session,
+    request_id: str,
+    desired_statuses: set[str],
+    timeout_seconds: float,
+    timeout_message: str,
+) -> AccountLoginSession:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        db.rollback()
+        db.expire_all()
+        request = db.get(AccountLoginSession, request_id)
+        if request is None:
+            raise ValueError(f"Account login session not found: {request_id}")
+        if request.status in desired_statuses:
+            return request
+        if request.status == LOGIN_STATUS_FAILED:
+            raise ValueError(request.error_message or "Account login session failed")
+        if request.status in LOGIN_TERMINAL_STATUSES:
+            raise ValueError(f"Account login session is {request.status}")
+        if time.monotonic() >= deadline:
+            raise ValueError(timeout_message)
+        time.sleep(LOGIN_SESSION_POLL_SECONDS)
+
+
+def _start_login_browser_via_worker(
+    db: Session,
+    account_id: int,
+    platform_code: str,
+    account_key: str,
+    channel: str,
+    executable_path: str | None,
+) -> LoginBrowserSessionHandle:
+    request = AccountLoginSession(
+        id=_new_login_session_request_id(),
+        account_id=account_id,
+        platform_code=platform_code,
+        account_key=account_key,
+        channel=channel,
+        executable_path=executable_path,
+        status=LOGIN_STATUS_PENDING,
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+    db.add(request)
+    db.commit()
+
+    try:
+        request = _wait_for_account_login_request(
+            db,
+            request.id,
+            {LOGIN_STATUS_ACTIVE},
+            LOGIN_SESSION_START_TIMEOUT_SECONDS,
+            "Worker did not start the account login browser in time",
+        )
+    except ValueError:
+        db.expire_all()
+        pending = db.get(AccountLoginSession, request.id)
+        if pending is not None and pending.status == LOGIN_STATUS_PENDING:
+            pending.status = LOGIN_STATUS_FAILED
+            pending.error_message = "Worker did not start the account login browser in time"
+            _touch_login_request(pending)
+            db.commit()
+        raise
+
+    if not request.browser_session_id or not request.novnc_url:
+        raise ValueError("Worker started login session without browser connection info")
+    return LoginBrowserSessionHandle(id=request.browser_session_id, novnc_url=request.novnc_url)
+
+
+def _finish_login_browser_via_worker(
+    db: Session,
+    account: Account,
+    request: AccountLoginSession,
+) -> tuple[Account, BrowserCheckResult]:
+    if request.account_id != account.id:
+        raise ValueError("Remote browser session does not belong to this account")
+    if request.status == LOGIN_STATUS_ACTIVE:
+        request.status = LOGIN_STATUS_FINISH_REQUESTED
+        _touch_login_request(request)
+        db.commit()
+    elif request.status not in {LOGIN_STATUS_FINISH_REQUESTED, LOGIN_STATUS_FINISHING, LOGIN_STATUS_FINISHED}:
+        raise ValueError(f"Account login session is {request.status}")
+
+    request = _wait_for_account_login_request(
+        db,
+        request.id,
+        {LOGIN_STATUS_FINISHED},
+        LOGIN_SESSION_FINISH_TIMEOUT_SECONDS,
+        "Worker did not finish the account login session in time",
+    )
+
+    result = BrowserCheckResult(
+        logged_in=bool(request.logged_in),
+        url=request.result_url or "",
+        title=request.result_title or "",
+    )
+    db.expire_all()
+    return get_account(db, account.id) or account, result
+
+
+def _cancel_login_browser_via_worker(db: Session, request: AccountLoginSession) -> None:
+    if request.status in LOGIN_TERMINAL_STATUSES:
+        return
+    if request.status == LOGIN_STATUS_PENDING:
+        request.status = LOGIN_STATUS_CANCELLED
+        _touch_login_request(request)
+        db.commit()
+        return
+
+    request.status = LOGIN_STATUS_CANCEL_REQUESTED
+    _touch_login_request(request)
+    db.commit()
+    try:
+        _wait_for_account_login_request(
+            db,
+            request.id,
+            {LOGIN_STATUS_CANCELLED},
+            LOGIN_SESSION_CANCEL_TIMEOUT_SECONDS,
+            "Worker did not cancel the account login session in time",
+        )
+    except ValueError:
+        # DELETE should remain best-effort; the worker owns the live browser process.
+        _logger.warning("Account login session cancel is still pending: %s", request.id, exc_info=True)
+
+
+def process_account_login_session_requests(db: Session, worker_id: str) -> bool:
+    """Claim and process one account-login browser command for this worker."""
+    row = db.execute(
+        select(AccountLoginSession.id, AccountLoginSession.status)
+        .where(
+            or_(
+                and_(
+                    AccountLoginSession.status == LOGIN_STATUS_PENDING,
+                    AccountLoginSession.worker_id.is_(None),
+                ),
+                and_(
+                    AccountLoginSession.worker_id == worker_id,
+                    AccountLoginSession.status.in_(
+                        [LOGIN_STATUS_FINISH_REQUESTED, LOGIN_STATUS_CANCEL_REQUESTED]
+                    ),
+                ),
+            )
+        )
+        .order_by(AccountLoginSession.updated_at.asc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return False
+
+    request_id, status = row
+    next_status = {
+        LOGIN_STATUS_PENDING: LOGIN_STATUS_STARTING,
+        LOGIN_STATUS_FINISH_REQUESTED: LOGIN_STATUS_FINISHING,
+        LOGIN_STATUS_CANCEL_REQUESTED: LOGIN_STATUS_CANCELLING,
+    }[status]
+    where_clause = [AccountLoginSession.id == request_id, AccountLoginSession.status == status]
+    if status == LOGIN_STATUS_PENDING:
+        where_clause.append(AccountLoginSession.worker_id.is_(None))
+    else:
+        where_clause.append(AccountLoginSession.worker_id == worker_id)
+
+    rows = db.execute(
+        sa_update(AccountLoginSession)
+        .where(*where_clause)
+        .values(status=next_status, worker_id=worker_id, updated_at=utcnow())
+    ).rowcount
+    db.commit()
+    if rows == 0:
+        return False
+
+    request = db.get(AccountLoginSession, request_id)
+    if request is None:
+        return False
+    if next_status == LOGIN_STATUS_STARTING:
+        _worker_start_login_session(db, request)
+    elif next_status == LOGIN_STATUS_FINISHING:
+        _worker_finish_login_session(db, request)
+    elif next_status == LOGIN_STATUS_CANCELLING:
+        _worker_cancel_login_session(db, request)
+    return True
+
+
+def _worker_start_login_session(db: Session, request: AccountLoginSession) -> None:
+    try:
+        session = _start_login_browser(
+            request.platform_code,
+            request.account_key,
+            request.channel,
+            request.executable_path,
+        )
+        request.browser_session_id = session.id
+        request.novnc_url = session.novnc_url
+        request.status = LOGIN_STATUS_ACTIVE
+        request.error_message = None
+    except Exception as exc:
+        request.status = LOGIN_STATUS_FAILED
+        request.error_message = str(exc)
+        _logger.exception("Failed to start account login session %s", request.id)
+    finally:
+        _touch_login_request(request)
+        db.commit()
+
+
+def _worker_finish_login_session(db: Session, request: AccountLoginSession) -> None:
+    account = db.get(Account, request.account_id)
+    if account is None:
+        request.status = LOGIN_STATUS_FAILED
+        request.error_message = "Account not found"
+        _touch_login_request(request)
+        db.commit()
+        return
+
+    try:
+        if not request.browser_session_id:
+            raise ValueError("Remote browser session not found")
+        result = _finish_login_browser_local(
+            request.platform_code,
+            request.account_key,
+            request.browser_session_id,
+        )
+        _apply_login_result(account, result)
+        request.logged_in = result.logged_in
+        request.result_url = result.url
+        request.result_title = result.title
+        request.status = LOGIN_STATUS_FINISHED
+        request.error_message = None
+    except Exception as exc:
+        request.status = LOGIN_STATUS_FAILED
+        request.error_message = str(exc)
+        _logger.exception("Failed to finish account login session %s", request.id)
+    finally:
+        _touch_login_request(request)
+        db.commit()
+
+
+def _worker_cancel_login_session(db: Session, request: AccountLoginSession) -> None:
+    try:
+        if request.browser_session_id:
+            _stop_login_browser_local(request.account_key, request.browser_session_id)
+        request.status = LOGIN_STATUS_CANCELLED
+        request.error_message = None
+    except Exception as exc:
+        request.status = LOGIN_STATUS_FAILED
+        request.error_message = str(exc)
+        _logger.exception("Failed to cancel account login session %s", request.id)
+    finally:
+        _touch_login_request(request)
+        db.commit()
+
+
+def _apply_login_result(account: Account, result: BrowserCheckResult) -> None:
+    now = utcnow()
+    account.status = "valid" if result.logged_in else "expired"
+    account.last_checked_at = now
+    if result.logged_in:
+        account.last_login_at = now
+    account.updated_at = now
+
+
+def _finish_login_browser_local(platform_code: str, account_key: str, session_id: str) -> BrowserCheckResult:
     from server.app.services.browser_sessions import get_session, stop_remote_browser_session
 
-    platform_code, account_key = account_key_from_state_path(account.state_path)
     session = get_session(session_id)
     if session is None:
         raise ValueError(f"Remote browser session not found: {session_id}")
@@ -261,7 +611,7 @@ def finish_account_login_session(db: Session, account: Account, session_id: str)
         raise ValueError("Remote browser session has no browser context")
 
     try:
-        result = _run_in_plain_thread(
+        return _run_in_plain_thread(
             lambda: _read_and_save_login_state_from_remote_session(
                 session,
                 platform_code,
@@ -271,20 +621,10 @@ def finish_account_login_session(db: Session, account: Account, session_id: str)
     finally:
         _run_in_plain_thread(lambda: stop_remote_browser_session(session_id))
 
-    now = utcnow()
-    account.status = "valid" if result.logged_in else "expired"
-    account.last_checked_at = now
-    if result.logged_in:
-        account.last_login_at = now
-    account.updated_at = now
-    db.flush()
-    return get_account(db, account.id) or account, result
 
-
-def stop_account_login_session(account: Account, session_id: str) -> None:
+def _stop_login_browser_local(account_key: str, session_id: str) -> None:
     from server.app.services.browser_sessions import get_session, stop_remote_browser_session
 
-    _, account_key = account_key_from_state_path(account.state_path)
     session = get_session(session_id)
     if session is None:
         return

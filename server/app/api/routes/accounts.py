@@ -132,7 +132,7 @@ def stop_existing_account_login_session_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
-    stop_account_login_session(account, session_id)
+    stop_account_login_session(db, account, session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

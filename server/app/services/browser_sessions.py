@@ -382,7 +382,7 @@ def start_remote_browser_session(account_key: str, platform_code: str = "") -> R
         display=f":{display_number}",
         vnc_port=vnc_port,
         novnc_port=novnc_port,
-        novnc_url=_novnc_url(settings.publish_remote_browser_host),
+        novnc_url=_novnc_url(settings.publish_remote_browser_host, novnc_port),
         log_dir=log_dir,
     )
 
@@ -714,8 +714,8 @@ def _stop_idle_cleanup() -> None:
         _idle_cleanup_thread = None
 
 
-def _novnc_url(host: str) -> str:
-    return f"http://{host}/novnc/vnc.html?host={host}&port=80&path=novnc/websockify"
+def _novnc_url(host: str, novnc_port: int) -> str:
+    return f"http://{host}/novnc/vnc.html?host={host}&port=80&path=novnc/ws/{novnc_port}"
 
 
 def _reset_globals() -> None:

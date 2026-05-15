@@ -1,5 +1,6 @@
 # 所有 ORM 模型的统一导出入口
 from server.app.models.account import Account
+from server.app.models.account_login_session import AccountLoginSession
 from server.app.models.article import Article, ArticleBodyAsset
 from server.app.models.article_group import ArticleGroup, ArticleGroupItem
 from server.app.models.asset import Asset
@@ -11,6 +12,7 @@ from server.app.models.worker import WorkerHeartbeat
 
 __all__ = [
     "Account",
+    "AccountLoginSession",
     "Article",
     "ArticleBodyAsset",
     "ArticleGroup",
