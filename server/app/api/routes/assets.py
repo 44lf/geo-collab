@@ -59,8 +59,8 @@ def _generate_thumbnail(asset: Asset, width: int, data_dir: Path) -> None:
 
 @router.post("", response_model=AssetRead)
 async def upload_asset(
-    file: UploadFile = File(...),
     background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
