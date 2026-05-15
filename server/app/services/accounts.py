@@ -672,7 +672,7 @@ def _start_login_browser_impl(platform_code: str, account_key: str, channel: str
         page = _primary_page_for_context(context)
         attach_browser_handles(session.id, pw, context, page)
         keep_session_alive(session.id)
-        _load_login_page(page, platform_code, account_key, driver.home_url)
+        _start_login_page_loader(session.id, platform_code, account_key, driver.home_url)
         return session
     except Exception:
         try:
