@@ -225,44 +225,46 @@ def stream_task_events(
         prev_records = ""
         prev_task = ""
 
-        while True:
-            sess = _SL2()
-            try:
-                task = get_task(sess, task_id)
-                if task is None:
-                    yield "event: done\ndata: {}\n\n"
+        sess = _SL2()
+        try:
+            while True:
+                sess.expire_all()
+                try:
+                    task = get_task(sess, task_id)
+                    if task is None:
+                        yield "event: done\ndata: {}\n\n"
+                        break
+
+                    task_json = to_task_read(task).model_dump_json()
+                    if task_json != prev_task:
+                        yield f"event: task\ndata: {task_json}\n\n"
+                        prev_task = task_json
+
+                    new_logs = list_task_logs(sess, task_id, after_id=last_id, limit=100)
+                    for log in new_logs:
+                        yield f"event: log\ndata: {to_log_read(log).model_dump_json()}\n\n"
+                    if new_logs:
+                        last_id = max(log.id for log in new_logs)
+
+                    records = list_task_records(sess, task_id)
+                    records_json = "[" + ",".join(to_record_read(r).model_dump_json() for r in records) + "]"
+                    if records_json != prev_records:
+                        yield f"event: records\ndata: {records_json}\n\n"
+                        prev_records = records_json
+
+                    if task.status in TERMINAL_TASK_STATUSES:
+                        yield "event: done\ndata: {}\n\n"
+                        break
+
+                except GeneratorExit:
+                    break
+                except Exception:
+                    logging.getLogger(__name__).exception("SSE error for task %s", task_id)
                     break
 
-                task_json = to_task_read(task).model_dump_json()
-                if task_json != prev_task:
-                    yield f"event: task\ndata: {task_json}\n\n"
-                    prev_task = task_json
-
-                new_logs = list_task_logs(sess, task_id, after_id=last_id, limit=100)
-                for log in new_logs:
-                    yield f"event: log\ndata: {to_log_read(log).model_dump_json()}\n\n"
-                if new_logs:
-                    last_id = max(log.id for log in new_logs)
-
-                records = list_task_records(sess, task_id)
-                records_json = "[" + ",".join(to_record_read(r).model_dump_json() for r in records) + "]"
-                if records_json != prev_records:
-                    yield f"event: records\ndata: {records_json}\n\n"
-                    prev_records = records_json
-
-                if task.status in TERMINAL_TASK_STATUSES:
-                    yield "event: done\ndata: {}\n\n"
-                    break
-
-            except GeneratorExit:
-                break
-            except Exception:
-                logging.getLogger(__name__).exception("SSE error for task %s", task_id)
-                break
-            finally:
-                sess.close()
-
-            time.sleep(1)
+                time.sleep(1)
+        finally:
+            sess.close()
 
     return StreamingResponse(
         _generate(),

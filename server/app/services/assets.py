@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from server.app.core.paths import get_data_dir
 from server.app.core.time import utcnow
 from server.app.models import Asset
+from server.app.services.errors import ClientError
 
 
 # 存储结果：资源和其文件路径
@@ -80,7 +81,7 @@ def resolve_asset_path(asset: Asset) -> Path:
     data_dir = get_data_dir().resolve()
     path = (data_dir / asset.storage_key).resolve()
     if data_dir != path and data_dir not in path.parents:
-        raise ValueError("Asset path escaped data directory")
+        raise ClientError("Asset path escaped data directory")
     return path
 
 
@@ -213,7 +214,7 @@ async def store_upload(db: Session, user_id: int, upload: UploadFile) -> StoredA
 
         if total == 0:
             tmp_path.unlink(missing_ok=True)
-            raise ValueError("Uploaded file is empty")
+            raise ClientError("Uploaded file is empty")
 
         # SHA256 去重
         digest = sha256.hexdigest()

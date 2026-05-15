@@ -24,6 +24,7 @@ from server.app.core.paths import ensure_data_dirs, get_data_dir
 from server.app.core.time import utcnow
 from server.app.models import Account, AccountLoginSession, Platform, PublishRecord, PublishTaskAccount, TaskLog
 from server.app.schemas.account import AccountCheckRequest, AccountExportRequest, PlatformLoginRequest
+from server.app.services.errors import ClientError
 
 _logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ def account_key_from_state_path(state_path: str) -> tuple[str, str]:
         idx = parts.index("browser_states")
         return parts[idx + 1], parts[idx + 2]
     except (ValueError, IndexError):
-        raise ValueError(f"Invalid state path: {state_path}") from None
+        raise ClientError(f"Invalid state path: {state_path}") from None
 
 
 def get_or_create_platform(db: Session, code: str, name: str, base_url: str | None) -> Platform:
@@ -149,9 +150,9 @@ def launch_options(channel: str, executable_path: str | None) -> dict[str, Any]:
     if executable_path:
         path = Path(executable_path)
         if not path.is_absolute():
-            raise ValueError(f"Executable path must be absolute: {executable_path}")
+            raise ClientError(f"Executable path must be absolute: {executable_path}")
         if not path.is_file():
-            raise ValueError(f"Executable not found: {executable_path}")
+            raise ClientError(f"Executable not found: {executable_path}")
         options["executable_path"] = executable_path
     return options
 
@@ -173,7 +174,7 @@ def register_account_from_storage_state(
     payload: PlatformLoginRequest,
 ) -> Account:
     if payload.use_browser:
-        raise ValueError("Browser login must use login-session")
+        raise ClientError("Browser login must use login-session")
 
     driver = _get_driver(platform_code)
     platform = get_or_create_platform(db, driver.code, driver.name, driver.home_url)
@@ -182,7 +183,7 @@ def register_account_from_storage_state(
     state_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not state_path.exists():
-        raise ValueError(f"Storage state not found: {state_path}")
+        raise ClientError(f"Storage state not found: {state_path}")
 
     relative_state_path = relative_to_data_dir(state_path)
     account = db.execute(
@@ -352,15 +353,15 @@ def _wait_for_account_login_request(
         db.expire_all()
         request = db.get(AccountLoginSession, request_id)
         if request is None:
-            raise ValueError(f"Account login session not found: {request_id}")
+            raise ClientError(f"Account login session not found: {request_id}")
         if request.status in desired_statuses:
             return request
         if request.status == LOGIN_STATUS_FAILED:
-            raise ValueError(request.error_message or "Account login session failed")
+            raise ClientError(request.error_message or "Account login session failed")
         if request.status in LOGIN_TERMINAL_STATUSES:
-            raise ValueError(f"Account login session is {request.status}")
+            raise ClientError(f"Account login session is {request.status}")
         if time.monotonic() >= deadline:
-            raise ValueError(timeout_message)
+            raise ClientError(timeout_message)
         time.sleep(LOGIN_SESSION_POLL_SECONDS)
 
 
@@ -405,7 +406,7 @@ def _start_login_browser_via_worker(
         raise
 
     if not request.browser_session_id or not request.novnc_url:
-        raise ValueError("Worker started login session without browser connection info")
+        raise ClientError("Worker started login session without browser connection info")
     return LoginBrowserSessionHandle(id=request.browser_session_id, novnc_url=request.novnc_url)
 
 
@@ -415,13 +416,13 @@ def _finish_login_browser_via_worker(
     request: AccountLoginSession,
 ) -> tuple[Account, BrowserCheckResult]:
     if request.account_id != account.id:
-        raise ValueError("Remote browser session does not belong to this account")
+        raise ClientError("Remote browser session does not belong to this account")
     if request.status == LOGIN_STATUS_ACTIVE:
         request.status = LOGIN_STATUS_FINISH_REQUESTED
         _touch_login_request(request)
         db.commit()
     elif request.status not in {LOGIN_STATUS_FINISH_REQUESTED, LOGIN_STATUS_FINISHING, LOGIN_STATUS_FINISHED}:
-        raise ValueError(f"Account login session is {request.status}")
+        raise ClientError(f"Account login session is {request.status}")
 
     request = _wait_for_account_login_request(
         db,
@@ -554,7 +555,7 @@ def _worker_finish_login_session(db: Session, request: AccountLoginSession) -> N
 
     try:
         if not request.browser_session_id:
-            raise ValueError("Remote browser session not found")
+            raise ClientError("Remote browser session not found")
         result = _finish_login_browser_local(
             request.platform_code,
             request.account_key,
@@ -604,11 +605,11 @@ def _finish_login_browser_local(platform_code: str, account_key: str, session_id
 
     session = get_session(session_id)
     if session is None:
-        raise ValueError(f"Remote browser session not found: {session_id}")
+        raise ClientError(f"Remote browser session not found: {session_id}")
     if session.account_key != account_key:
-        raise ValueError("Remote browser session does not belong to this account")
+        raise ClientError("Remote browser session does not belong to this account")
     if session.browser_context is None:
-        raise ValueError("Remote browser session has no browser context")
+        raise ClientError("Remote browser session has no browser context")
 
     try:
         return _run_in_plain_thread(
@@ -629,7 +630,7 @@ def _stop_login_browser_local(account_key: str, session_id: str) -> None:
     if session is None:
         return
     if session.account_key != account_key:
-        raise ValueError("Remote browser session does not belong to this account")
+        raise ClientError("Remote browser session does not belong to this account")
     _run_in_plain_thread(lambda: stop_remote_browser_session(session_id))
 
 
@@ -751,7 +752,7 @@ def _read_login_state_from_remote_session(session, platform_code: str) -> Browse
         if pages:
             page = pages[-1]
     if page is None:
-        raise ValueError("Remote browser session has no page")
+        raise ClientError("Remote browser session has no page")
 
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
@@ -852,7 +853,7 @@ def delete_account(db: Session, account: Account) -> None:
         )
     ).scalars().all()
     if active:
-        raise ValueError("存在未完成发布记录，无法删除账号")
+        raise ClientError("存在未完成发布记录，无法删除账号")
 
     db.execute(sa_delete(PublishTaskAccount).where(PublishTaskAccount.account_id == account_id))
     record_ids = list(
@@ -869,7 +870,7 @@ def export_accounts_auth_package(db: Session, payload: AccountExportRequest) -> 
     ensure_data_dirs()
     accounts = _accounts_for_export(db, payload.account_ids)
     if not accounts:
-        raise ValueError("No accounts to export")
+        raise ClientError("No accounts to export")
 
     now = utcnow()
     export_path = _new_export_path(now)
@@ -913,7 +914,7 @@ def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) ->
         try:
             manifest = json.loads(archive.read("manifest.json"))
         except Exception as exc:
-            raise ValueError("无效的授权包：无法读取 manifest.json") from exc
+            raise ClientError("无效的授权包：无法读取 manifest.json") from exc
 
         for entry in manifest.get("accounts", []):
             state_path_rel: str = entry.get("state_path", "")
@@ -945,7 +946,7 @@ def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) ->
             dest = state_path_for_key(platform_code, account_key)
             dest.parent.mkdir(parents=True, exist_ok=True)
             if not dest.resolve().is_relative_to(get_data_dir().resolve()):
-                raise ValueError(f"ZIP entry path escapes data directory: {state_path_rel}")
+                raise ClientError(f"ZIP entry path escapes data directory: {state_path_rel}")
             dest.write_bytes(archive.read(archive_state_path))
 
             platform = get_or_create_platform(
@@ -1002,7 +1003,7 @@ def _accounts_for_export(db: Session, account_ids: list[int] | None) -> list[Acc
         found_ids = {account.id for account in accounts}
         missing_ids = [account_id for account_id in unique_ids if account_id not in found_ids]
         if missing_ids:
-            raise ValueError(f"Accounts not found: {', '.join(str(account_id) for account_id in missing_ids)}")
+            raise ClientError(f"Accounts not found: {', '.join(str(account_id) for account_id in missing_ids)}")
     return accounts
 
 
@@ -1010,7 +1011,7 @@ def _resolve_data_file(relative_path: str) -> Path:
     data_dir = get_data_dir().resolve()
     path = (data_dir / relative_path).resolve()
     if not path.is_relative_to(data_dir) or not path.is_file():
-        raise ValueError(f"Account state file not found: {relative_path}")
+        raise ClientError(f"Account state file not found: {relative_path}")
     return path
 
 

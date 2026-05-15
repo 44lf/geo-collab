@@ -68,7 +68,7 @@ from server.app.services.browser_sessions import (
     get_session_for_record,
     stop_remote_browser_session,
 )
-from server.app.services.errors import AccountError, ConflictError, ValidationError
+from server.app.services.errors import AccountError, ClientError, ConflictError, ValidationError
 from server.app.services.feishu import notify_task_finished
 from server.app.services.drivers.base import PublishError, UserInputRequired
 from server.app.services.publish_diagnostics import PublishDiagnosticEvent, capture_publish_diagnostics
@@ -727,9 +727,9 @@ def manual_confirm_record(
     error_message: str | None,
 ) -> PublishRecord:
     if record.status != "waiting_manual_publish":
-        raise ValueError(f"Record is not waiting for manual confirm: {record.status}")
+        raise ClientError(f"Record is not waiting for manual confirm: {record.status}")
     if outcome not in {"succeeded", "failed"}:
-        raise ValueError(f"Invalid outcome: {outcome}")
+        raise ClientError(f"Invalid outcome: {outcome}")
 
     record.status = outcome
     record.finished_at = utcnow()
@@ -752,7 +752,7 @@ def manual_confirm_record(
 # 重试失败的发布记录
 def resolve_user_input_record(db: Session, record: PublishRecord) -> PublishRecord:
     if record.status != "waiting_user_input":
-        raise ValueError(f"Record is not waiting for user input: {record.status}")
+        raise ClientError(f"Record is not waiting for user input: {record.status}")
 
     session = get_session_for_record(record.id)
     if session:
@@ -778,15 +778,15 @@ def resolve_user_input_record(db: Session, record: PublishRecord) -> PublishReco
 
 def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
     if record.status != "failed":
-        raise ValueError(f"Only failed records can be retried: {record.status}")
+        raise ClientError(f"Only failed records can be retried: {record.status}")
     if record.retry_of_record_id is not None:
-        raise ValueError("Retry records cannot be retried again; create a new task after checking the platform result")
+        raise ClientError("Retry records cannot be retried again; create a new task after checking the platform result")
 
     existing_retry = db.execute(
         select(PublishRecord).where(PublishRecord.retry_of_record_id == record.id)
     ).scalar_one_or_none()
     if existing_retry is not None:
-        raise ValueError(f"Record {record.id} already has retry record {existing_retry.id}")
+        raise ClientError(f"Record {record.id} already has retry record {existing_retry.id}")
 
     conflicting_record = db.execute(
         select(PublishRecord)
@@ -800,7 +800,7 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
         .order_by(PublishRecord.id.asc())
     ).scalar_one_or_none()
     if conflicting_record is not None:
-        raise ValueError(
+        raise ClientError(
             f"Article/account already has record {conflicting_record.id} in status {conflicting_record.status}"
         )
 
@@ -960,7 +960,7 @@ def _validated_task_inputs(db: Session, payload: TaskCreate, user_id: int | None
 
     platform = db.execute(select(Platform).where(Platform.code == payload.platform_code)).scalar_one_or_none()
     if platform is None:
-        raise ValueError(f"Platform not found: {payload.platform_code}")
+        raise ClientError(f"Platform not found: {payload.platform_code}")
 
     ordered_accounts = _validated_accounts(db, platform.id, payload.accounts, user_id=user_id)
     article_ids = _article_ids_for_task(db, payload, user_id=user_id)
@@ -1032,17 +1032,17 @@ def _validate_unique_articles(article_ids: list[int]) -> None:
 def _article_ids_for_task(db: Session, payload: TaskCreate, user_id: int | None = None) -> list[int]:
     if payload.task_type == "single":
         if payload.article_id is None:
-            raise ValueError("article_id is required for single task")
+            raise ClientError("article_id is required for single task")
         article = db.get(Article, payload.article_id)
         if article is None or (user_id is not None and article.user_id != user_id):
-            raise ValueError(f"Article not found: {payload.article_id}")
+            raise ClientError(f"Article not found: {payload.article_id}")
         return [payload.article_id]
 
     if payload.group_id is None:
-        raise ValueError("group_id is required for group_round_robin task")
+        raise ClientError("group_id is required for group_round_robin task")
     group = db.get(ArticleGroup, payload.group_id)
     if group is None or (user_id is not None and group.user_id != user_id):
-        raise ValueError(f"Article group not found: {payload.group_id}")
+        raise ClientError(f"Article group not found: {payload.group_id}")
     items = list(
         db.execute(
             select(ArticleGroupItem)

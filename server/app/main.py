@@ -57,10 +57,11 @@ from server.app.api.routes.auth import router as auth_router
 from server.app.api.routes.publish_records import router as publish_records_router
 from server.app.api.routes.system import router as system_router
 from server.app.api.routes.tasks import router as tasks_router
+from server.app.core.config import get_settings
 from server.app.core.paths import ensure_data_dirs
 from server.app.core.security import get_current_user
 from server.app.models.user import User
-from server.app.services.errors import AccountError, ConflictError, ValidationError
+from server.app.services.errors import AccountError, ClientError, ConflictError, ValidationError
 
 # PyInstaller 打包后 sys._MEIPASS 指向解压目录
 # 开发模式下从当前文件路径（server/app/main.py）上溯到项目根目录
@@ -69,6 +70,12 @@ WEB_DIST_DIR = str(_BASE_DIR / "web" / "dist")
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
+    if not settings.jwt_secret:
+        raise RuntimeError(
+            "GEO_JWT_SECRET is not set. Set it to a long random string before starting the server."
+        )
+
     # 确保数据目录存在（assets/ browser_states/ logs/ exports/）
     ensure_data_dirs()
 
@@ -103,9 +110,9 @@ def create_app() -> FastAPI:
     except Exception:
         pass
 
-    # 全局异常处理：业务层统一 raise ValueError → 400
-    @app.exception_handler(ValueError)
-    async def _value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+    # 全局异常处理：业务层统一 raise ClientError → 400
+    @app.exception_handler(ClientError)
+    async def _client_error_handler(request: Request, exc: ClientError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     # ConflictError(ValueError) 有更具体的含义 → 409，优先于 ValueError 处理器

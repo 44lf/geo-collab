@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
 from server.app.models import Article, ArticleGroup, ArticleGroupItem
-from server.app.services.errors import ConflictError
+from server.app.services.errors import ClientError, ConflictError
 from server.app.schemas.article_group import (
     ArticleGroupCreate,
     ArticleGroupItemsUpdate,
@@ -60,7 +60,7 @@ def replace_group_items(db: Session, group: ArticleGroup, payload: ArticleGroupI
     article_ids: list[int] = []
     for item in payload.items:
         if item.article_id in seen:
-            raise ValueError(f"Duplicate article_id: {item.article_id}")
+            raise ClientError(f"Duplicate article_id: {item.article_id}")
         seen.add(item.article_id)
         article_ids.append(item.article_id)
 
@@ -68,7 +68,7 @@ def replace_group_items(db: Session, group: ArticleGroup, payload: ArticleGroupI
         existing_ids = set(db.execute(select(Article.id).where(Article.id.in_(article_ids))).scalars().all())
         missing_ids = [article_id for article_id in article_ids if article_id not in existing_ids]
         if missing_ids:
-            raise ValueError(f"Article not found: {missing_ids[0]}")
+            raise ClientError(f"Article not found: {missing_ids[0]}")
 
     group.items.clear()
     db.flush()

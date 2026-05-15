@@ -13,7 +13,7 @@ from sqlalchemy.sql import text as sa_text
 from server.app.core.time import utcnow
 from server.app.models import Article, ArticleBodyAsset, ArticleGroupItem, Asset, PublishRecord, TaskLog
 from server.app.schemas.article import ArticleCreate, ArticleUpdate
-from server.app.services.errors import ConflictError
+from server.app.services.errors import ClientError, ConflictError
 
 _logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def loads_content_json(raw: str) -> dict[str, Any]:
 # 校验文章状态值是否合法
 def validate_article_status(status: str) -> None:
     if status not in VALID_ARTICLE_STATUSES:
-        raise ValueError(f"Invalid article status: {status}")
+        raise ClientError(f"Invalid article status: {status}")
 
 
 # 确认资源文件在数据库中存在
@@ -105,7 +105,7 @@ def ensure_asset_exists(db: Session, asset_id: str | None) -> None:
     if asset_id is None:
         return
     if db.get(Asset, asset_id) is None:
-        raise ValueError(f"Asset not found: {asset_id}")
+        raise ClientError(f"Asset not found: {asset_id}")
 
 
 # 同步文章正文中的图片关联信息（全量替换）
@@ -273,7 +273,7 @@ def delete_article(db: Session, article: Article) -> None:
         )
     ).scalars().all()
     if active:
-        raise ValueError("存在未完成发布记录，无法删除文章")
+        raise ClientError("存在未完成发布记录，无法删除文章")
 
     db.execute(sa_delete(ArticleGroupItem).where(ArticleGroupItem.article_id == article_id))
     record_ids = list(
