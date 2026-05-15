@@ -7,6 +7,7 @@ from server.app.models.asset import Asset
 from server.app.models.browser_session import BrowserSession, RecordBrowserSession
 from server.app.models.platform import Platform
 from server.app.models.publish import PublishRecord, PublishTask, PublishTaskAccount, TaskLog
+from server.app.models.tag import ArticleTag, Tag
 from server.app.models.user import User
 from server.app.models.worker import WorkerHeartbeat
 
@@ -18,12 +19,14 @@ __all__ = [
     "ArticleGroup",
     "ArticleGroupItem",
     "Asset",
+    "ArticleTag",
     "BrowserSession",
     "RecordBrowserSession",
     "Platform",
     "PublishRecord",
     "PublishTask",
     "PublishTaskAccount",
+    "Tag",
     "TaskLog",
     "User",
     "WorkerHeartbeat",

@@ -34,6 +34,7 @@ class Article(Base):
     body_assets = relationship("ArticleBodyAsset", back_populates="article", cascade="all, delete-orphan")
     group_items = relationship("ArticleGroupItem", back_populates="article")
     publish_records = relationship("PublishRecord", back_populates="article")
+    tags = relationship("Tag", secondary="article_tags", lazy="selectin")
 
 
 # 文章正文中的图片关联表，记录每张图片在正文中的位置
