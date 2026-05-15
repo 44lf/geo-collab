@@ -210,6 +210,7 @@ def _fill_body(page: Any, article: Article) -> None:
         elif segment.kind == "image":
             asset = _body_asset_for_segment(article, segment)
             _paste_body_image(page, asset)
+            _focus_body_editor(page)  # 恢复焦点，防止后续 End/Enter 键盘事件打到错位置
             page.keyboard.press("End")
             page.keyboard.press("Enter")
 
@@ -566,9 +567,6 @@ def _handle_cover(page: Any, article: Article) -> None:
         raise ToutiaoPublishError(f"Cover asset file not found: {article.cover_asset_id}")
     record_publish_diagnostic(f"cover upload start: asset_id={article.cover_asset_id}; path={cover_path.name}")
 
-    if _cover_already_present(page):
-        return
-
     try:
         _click_cover_upload_entry(page)
     except Exception as exc:
@@ -675,7 +673,9 @@ def _click_publish_and_wait(page: Any, stop_before_publish: bool = False) -> str
 
     # stop_before_publish=True 时停在预览状态，等待手动确认
     if stop_before_publish:
-        return page.url
+        raise UserInputRequired(
+            "已到达预览状态，请在远程浏览器中手动点击「确认发布」按钮完成发布。"
+        )
 
     # 第二步：等待"确认发布"按钮出现并点击
     try:
