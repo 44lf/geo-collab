@@ -63,6 +63,15 @@ def _attach_page_network_diagnostics(page: Any) -> None:
     page.on("response", on_response)
 
 
+def _clear_profile_locks(profile_dir: Path) -> None:
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        lock = profile_dir / name
+        try:
+            lock.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def run_publish(
     *,
     article: Article,
@@ -94,6 +103,7 @@ def run_publish(
             with publish_step("start Playwright"):
                 pw = sync_playwright().start()
             with publish_step("launch Chromium"):
+                _clear_profile_locks(profile_dir_for_key(platform_code, account_key))
                 options = launch_options(channel, executable_path)
                 options["env"] = {**os.environ, "DISPLAY": session.display}
                 context = pw.chromium.launch_persistent_context(
