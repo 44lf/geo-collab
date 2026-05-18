@@ -151,7 +151,7 @@ def _patch_common(monkeypatch, tmp_path: Path, stub_session, pw_cm, context, pag
 
 def test_run_publish_routes_by_platform_code(monkeypatch, tmp_path):
     """run_publish calls the driver matched by the platform code in state_path."""
-    from server.app.services import publish_runner
+    from server.app.modules.tasks import publish_Runner as publish_runner
 
     stub_session = _make_stub_session()
     pw_cm, context, page = _make_stub_pw_context_page()
@@ -200,7 +200,7 @@ def test_run_publish_routes_by_platform_code(monkeypatch, tmp_path):
 
 def test_run_publish_keeps_session_on_user_input_required(monkeypatch, tmp_path):
     """When driver.publish raises ToutiaoUserInputRequired, session is kept alive and exception has session_id/novnc_url."""
-    from server.app.services import publish_runner
+    from server.app.modules.tasks import publish_Runner as publish_runner
 
     stub_session = _make_stub_session()
     pw_cm, context, page = _make_stub_pw_context_page()

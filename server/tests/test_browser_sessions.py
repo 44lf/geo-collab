@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from server.app.core.config import get_settings
-from server.app.services import browser_sessions
 from server.app.modules.accounts import browser_Session
+from server.app.modules.accounts import browser_Session as browser_sessions
 
 
 class FakeProcess:

@@ -146,7 +146,7 @@ def test_worker_finish_login_session_uses_existing_thread(monkeypatch):
         ).json()
 
         from server.app.models import AccountLoginSession
-        from server.app.services import accounts, browser_sessions
+        from server.app.modules.accounts import account_Auth as accounts, browser_Session as browser_sessions
 
         db = test_app.session_factory()
         try:
