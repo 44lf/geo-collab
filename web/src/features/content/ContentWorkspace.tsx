@@ -276,6 +276,13 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
 
   const pasteImageRef = useRef<(file: File) => void>(() => {});
   const [charCount, setCharCount] = useState(0);
+  const [imageUploading, setImageUploading] = useState(0);
+  const pendingBlobsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const blobs = pendingBlobsRef.current;
+    return () => { blobs.forEach(URL.revokeObjectURL); };
+  }, []);
 
   const editor = useEditor({
     extensions: [
@@ -399,6 +406,15 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   }
 
   async function loadArticle(article: ArticleSummary) {
+    // Pre-populate title/metadata immediately from the list summary (no API wait)
+    setDraft({
+      id: article.id,
+      title: article.title,
+      author: article.author ?? "",
+      cover_asset_id: article.cover_asset_id,
+      status: article.status,
+      version: article.version,
+    });
     setLoading(true);
     try {
       const detail = await getArticle(article.id);
@@ -456,6 +472,10 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   async function persistArticle({ quiet = false }: { quiet?: boolean } = {}): Promise<Article | null> {
     if (!editor || !draft.title.trim()) {
       if (!quiet) toast("标题不能为空", "error");
+      return null;
+    }
+    if (imageUploading > 0) {
+      if (!quiet) toast("请等待图片上传完成再保存", "error");
       return null;
     }
     setLoading(true);
@@ -528,36 +548,50 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
 
   async function handleBodyImageUpload(file: File | null) {
     if (!file || !editor) return;
-    setLoading(true);
+
+    // Optimistic: insert immediately with a blob URL so the image appears at once
+    const blobUrl = URL.createObjectURL(file);
+    const tempAssetId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pendingBlobsRef.current.add(blobUrl);
+    editor.chain().focus().insertContent({
+      type: "image",
+      attrs: { src: blobUrl, alt: file.name, title: file.name, assetId: tempAssetId },
+    }).run();
+
+    setImageUploading((n) => n + 1);
     try {
       const asset = await uploadAsset(file);
-      editor
-        .chain()
-        .focus()
-        .insertContent({
-          type: "image",
-          attrs: {
-            src: withAssetToken(asset.url),
-            alt: asset.filename,
-            title: asset.filename,
-            assetId: asset.id,
-          },
-        })
-        .run();
-      const attemptedAutoSave = Boolean(draft.id && draft.title.trim());
-      const saved = attemptedAutoSave ? await persistArticle({ quiet: true }) : null;
-      toast(
-        saved
-          ? "正文图片已插入并保存"
-          : attemptedAutoSave
-            ? "正文图片已插入，自动保存失败，请手动保存"
-            : "正文图片已插入，保存文章后生效",
-        saved || !attemptedAutoSave ? "success" : "error",
-      );
+      const realSrc = withAssetToken(asset.url);
+
+      // Replace blob URL with the real asset URL in the editor document
+      const { state, view } = editor;
+      let tr = state.tr;
+      state.doc.descendants((node, pos) => {
+        if (node.type.name === "image" && node.attrs.assetId === tempAssetId) {
+          tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: realSrc, assetId: asset.id });
+          return false;
+        }
+      });
+      if (tr.docChanged) view.dispatch(tr);
+
+      pendingBlobsRef.current.delete(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+      toast("正文图片已插入，请保存文章", "success");
     } catch (error) {
+      // Remove the placeholder on failure
+      const { state, view } = editor;
+      let posFound = -1, sizeFound = 0;
+      state.doc.descendants((node, pos) => {
+        if (node.type.name === "image" && node.attrs.assetId === tempAssetId) {
+          posFound = pos; sizeFound = node.nodeSize; return false;
+        }
+      });
+      if (posFound >= 0) view.dispatch(state.tr.delete(posFound, posFound + sizeFound));
+      pendingBlobsRef.current.delete(blobUrl);
+      URL.revokeObjectURL(blobUrl);
       toast(error instanceof Error ? error.message : "正文图片上传失败", "error");
     } finally {
-      setLoading(false);
+      setImageUploading((n) => n - 1);
     }
   }
   pasteImageRef.current = (file: File) => void handleBodyImageUpload(file);
@@ -705,9 +739,9 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
             <Trash2 size={16} />
             删除
           </button>
-          <button className="primaryButton" disabled={loading} type="button" onClick={() => void saveArticle()}>
+          <button className="primaryButton" disabled={loading || imageUploading > 0} type="button" onClick={() => void saveArticle()}>
             <Save size={16} />
-            保存
+            {imageUploading > 0 ? `上传中 ${imageUploading}…` : "保存"}
           </button>
           <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (dirtyCheckRef?.current?.() ?? false) { setConfirmUnsavedNew(true); } else { resetDraft(); } }}>
             <Plus size={16} />

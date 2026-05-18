@@ -192,9 +192,13 @@ def _fill_body(page: Any, segments: list[BodySegment]) -> None:
             if segment.image_path is None:
                 raise ToutiaoPublishError(f"正文图片路径未解析: {segment.image_asset_id}")
             _paste_body_image_path(page, segment.image_path, segment.image_asset_id)
+            # 图片插入走 React drawer，不走 ProseMirror transaction，
+            # 所以 focus() 恢复的 selection 可能停在旧位置（开头/上一段）。
+            # 用 Control+End 强制移到文档末尾，避免后续内容插入到图片前面。
             _focus_body_editor(page)
-            page.keyboard.press("End")
+            page.keyboard.press("Control+End")
             page.keyboard.press("Enter")
+            page.wait_for_timeout(300)
 
 
 def _insert_body_text(page: Any, text: str) -> None:
@@ -202,9 +206,11 @@ def _insert_body_text(page: Any, text: str) -> None:
         return
     if text == "\n":
         page.keyboard.press("Enter")
+        page.wait_for_timeout(80)
         return
     page.evaluate("async (t) => { await navigator.clipboard.writeText(t); }", text)
     page.keyboard.press("Control+v")
+    page.wait_for_timeout(120)
 
 
 def _body_image_count(page: Any) -> int:
@@ -352,7 +358,8 @@ def _wait_body_image_inserted(page: Any, before_count: int, timeout_ms: int = 30
         arg=before_count,
         timeout=timeout_ms,
     )
-    page.wait_for_timeout(200)
+    # 600ms: ProseMirror 在 img 出现后还需要 onUpdate/updateState/selection 更新
+    page.wait_for_timeout(600)
 
 
 def _wait_body_image_ready(page: Any, before_count: int, timeout_ms: int = 30000) -> None:
