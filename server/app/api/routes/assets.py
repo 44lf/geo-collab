@@ -103,6 +103,7 @@ def read_asset_file(asset_id: str, db: Session = Depends(get_db)) -> Response:
                 "X-Accel-Redirect": f"/internal_data/{rel}",
                 "Content-Type": asset.mime_type,
                 "Content-Disposition": f'inline; filename="{asset.filename}"',
+                "Cache-Control": "public, max-age=31536000, immutable",
             },
         )
 

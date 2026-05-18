@@ -170,9 +170,17 @@ function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
     title: string;
     assetId: string | null;
     width: string;
+    progress: number | null;
   };
   const imgRef = useRef<HTMLImageElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const [imgError, setImgError] = useState(false);
+
+  const isPending = typeof attrs.assetId === "string" && attrs.assetId.startsWith("pending-");
+
+  useEffect(() => {
+    setImgError(false);
+  }, [attrs.src]);
 
   useEffect(() => {
     return () => {
@@ -208,15 +216,28 @@ function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
 
   return (
     <NodeViewWrapper style={{ display: "block", position: "relative", width: attrs.width ?? "100%" }}>
-      <img
-        ref={imgRef}
-        src={attrs.src}
-        alt={attrs.alt ?? ""}
-        title={attrs.title ?? ""}
-        data-asset-id={attrs.assetId ?? undefined}
-        style={{ width: "100%", display: "block", borderRadius: "var(--r)" }}
-        draggable={false}
-      />
+      {isPending && imgError ? (
+        <div className="imgUploadingPlaceholder">
+          <span>{attrs.progress != null ? `上传中 ${attrs.progress}%` : "上传中…"}</span>
+          {attrs.progress != null && (
+            <div className="imgUploadProgress">
+              <div className="imgUploadProgressBar" style={{ width: `${attrs.progress}%` }} />
+            </div>
+          )}
+        </div>
+      ) : (
+        <img
+          ref={imgRef}
+          src={attrs.src}
+          alt={attrs.alt ?? ""}
+          title={attrs.title ?? ""}
+          data-asset-id={attrs.assetId ?? undefined}
+          style={{ width: "100%", display: "block", borderRadius: "var(--r)" }}
+          draggable={false}
+          onError={() => { if (isPending) setImgError(true); }}
+          onLoad={() => setImgError(false)}
+        />
+      )}
       {selected && <div className="imgResizeHandle" onMouseDown={startResize} />}
     </NodeViewWrapper>
   );
@@ -235,6 +256,11 @@ const CustomImage = Image.extend({
         default: "100%",
         parseHTML: (el) => el.style.width || "100%",
         renderHTML: (attrs) => ({ style: `width: ${attrs.width ?? "100%"}` }),
+      },
+      progress: {
+        default: null,
+        parseHTML: () => null,
+        renderHTML: () => ({}),
       },
     };
   },
@@ -450,10 +476,6 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     }
   }
 
-  async function uploadAsset(file: File): Promise<Asset> {
-    return uploadAssetRequest(file);
-  }
-
   function applySavedArticle(saved: Article, contentJson?: Record<string, unknown>) {
     setSelectedArticle(saved);
     setDraft({
@@ -573,15 +595,26 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
 
     setImageUploading((n) => n + 1);
     try {
-      const asset = await uploadAsset(file);
+      function updateNodeProgress(percent: number) {
+        const { state, view } = editor!;
+        let tr = state.tr;
+        state.doc.descendants((node, pos) => {
+          if (node.type.name === "image" && node.attrs.assetId === tempAssetId) {
+            tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, progress: percent });
+            return false;
+          }
+        });
+        if (tr.docChanged) view.dispatch(tr);
+      }
+
+      const asset = await uploadAssetRequest(file, updateNodeProgress);
       const realSrc = withAssetToken(asset.url);
 
-      // Replace blob URL with the real asset URL in the editor document
       const { state, view } = editor;
       let tr = state.tr;
       state.doc.descendants((node, pos) => {
         if (node.type.name === "image" && node.attrs.assetId === tempAssetId) {
-          tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: realSrc, assetId: asset.id });
+          tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: realSrc, assetId: asset.id, progress: null });
           return false;
         }
       });
@@ -750,9 +783,10 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
           <h1>图文工作台</h1>
         </div>
         <div className="topActions">
-          {(imageUploading > 0 || statusText) ? (
-            <span className="statusHint">{imageUploading > 0 ? "图片传输中" : statusText}</span>
-          ) : null}
+          <div className="statusHints">
+            {imageUploading > 0 && <span className="statusHint">图片传输中</span>}
+            {loading && statusText ? <span className="statusHint">{statusText}</span> : null}
+          </div>
           <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
             <Trash2 size={16} />
             删除
