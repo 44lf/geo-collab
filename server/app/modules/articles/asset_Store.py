@@ -151,6 +151,7 @@ def _create_asset_from_path(
 
 
 async def store_upload(db: Session, user_id: int, upload: UploadFile) -> StoredAsset:
+    import aiofiles
     from fastapi import HTTPException
 
     from server.app.core.config import ALLOWED_MAGIC, MAX_ASSET_BYTES
@@ -162,47 +163,43 @@ async def store_upload(db: Session, user_id: int, upload: UploadFile) -> StoredA
     data_dir = get_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = data_dir / f".upload_tmp_{uuid.uuid4().hex}"
-    tmp = tmp_path.open("wb")
 
     sha256 = hashlib.sha256()
     total = 0
     first_chunk = True
 
     try:
-        while True:
-            chunk = await upload.read(262144)  # 256 KB chunks for better network efficiency
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_ASSET_BYTES:
-                tmp.close()
-                tmp_path.unlink(missing_ok=True)
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File exceeds {MAX_ASSET_BYTES // (1024 * 1024)}MB limit",
-                )
+        async with aiofiles.open(str(tmp_path), "wb") as tmp:
+            while True:
+                chunk = await upload.read(262144)  # 256 KB chunks for better network efficiency
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_ASSET_BYTES:
+                    tmp_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds {MAX_ASSET_BYTES // (1024 * 1024)}MB limit",
+                    )
 
-            if first_chunk:
-                valid_magic = False
-                for magic in ALLOWED_MAGIC:
-                    if chunk.startswith(magic):
-                        if magic == b"RIFF":
-                            if len(chunk) >= 12 and chunk[8:12] == b"WEBP":
+                if first_chunk:
+                    valid_magic = False
+                    for magic in ALLOWED_MAGIC:
+                        if chunk.startswith(magic):
+                            if magic == b"RIFF":
+                                if len(chunk) >= 12 and chunk[8:12] == b"WEBP":
+                                    valid_magic = True
+                                    break
+                            else:
                                 valid_magic = True
                                 break
-                        else:
-                            valid_magic = True
-                            break
-                if not valid_magic:
-                    tmp.close()
-                    tmp_path.unlink(missing_ok=True)
-                    raise HTTPException(status_code=415, detail="Unsupported file type")
-                first_chunk = False
+                    if not valid_magic:
+                        tmp_path.unlink(missing_ok=True)
+                        raise HTTPException(status_code=415, detail="Unsupported file type")
+                    first_chunk = False
 
-            tmp.write(chunk)
-            sha256.update(chunk)
-
-        tmp.close()
+                await tmp.write(chunk)
+                sha256.update(chunk)
 
         if total == 0:
             tmp_path.unlink(missing_ok=True)
@@ -218,7 +215,11 @@ async def store_upload(db: Session, user_id: int, upload: UploadFile) -> StoredA
                 db.refresh(existing)
                 return StoredAsset(asset=existing, path=existing_path)
 
-        stored = _create_asset_from_path(db, user_id, tmp_path, filename, content_type, digest, total)
+        import asyncio
+        loop = asyncio.get_event_loop()
+        stored = await loop.run_in_executor(
+            None, _create_asset_from_path, db, user_id, tmp_path, filename, content_type, digest, total
+        )
         db.flush()
         db.refresh(stored.asset)
         return stored
