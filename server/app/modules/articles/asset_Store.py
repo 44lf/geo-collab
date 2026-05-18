@@ -271,13 +271,9 @@ def get_asset_stats(db: Session) -> dict:
 
     orphan_ids = find_orphan_asset_ids(db)
 
-    cache_dir = get_data_dir() / "thumbnail_cache"
-    cache_size = sum(f.stat().st_size for f in cache_dir.rglob("*") if f.is_file()) if cache_dir.exists() else 0
-
     return {
         "total_count": row.total_count,
         "total_size_bytes": row.total_size_bytes,
         "deleted_count": int(row.deleted_count or 0),
         "orphan_count": len(orphan_ids),
-        "thumbnail_cache_size_bytes": cache_size,
     }

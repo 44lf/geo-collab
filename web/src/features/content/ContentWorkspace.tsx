@@ -28,7 +28,6 @@ import { uploadAsset as uploadAssetRequest } from "../../api/assets";
 import { assetSrc, countWords, emptyDoc, newClientRequestId, singleFlight, withAssetToken } from "../../api/core";
 import type { Article, ArticleCreatePayload, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleSummary, ArticleUpdatePayload, Asset, Draft } from "../../types";
 import { EditorToolbar } from "../../components/editor/EditorToolbar";
-import { compressImage } from "../../lib/compress-image";
 import { ArticleListItem } from "../../components/ArticleListItem";
 import { Modal } from "../../components/Modal";
 import { Pagination } from "../../components/Pagination";
@@ -211,7 +210,7 @@ function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
     <NodeViewWrapper style={{ display: "block", position: "relative", width: attrs.width ?? "100%" }}>
       <img
         ref={imgRef}
-        src={attrs.src.startsWith("blob:") ? attrs.src : `${attrs.src}?width=600`}
+        src={attrs.src}
         alt={attrs.alt ?? ""}
         title={attrs.title ?? ""}
         data-asset-id={attrs.assetId ?? undefined}
@@ -265,6 +264,8 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   const [articlePage, setArticlePage] = useState(0);
   const [draft, setDraft] = useState<Draft>(makeEmptyDraft);
   const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [pendingCoverUrl, setPendingCoverUrl] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
@@ -400,12 +401,14 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   function resetDraft() {
     setDraft(makeEmptyDraft());
     setSelectedArticle(null);
+    setPendingCoverUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
     editor?.commands.setContent(emptyDoc);
     setSelectedArticleIds([]);
     savedStateRef.current = null;
   }
 
   async function loadArticle(article: ArticleSummary) {
+    setPendingCoverUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
     // Pre-populate title/metadata immediately from the list summary (no API wait)
     setDraft({
       id: article.id,
@@ -416,6 +419,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       version: article.version,
     });
     setLoading(true);
+    setStatusText("加载中");
     try {
       const detail = await getArticle(article.id);
       setSelectedArticle(detail);
@@ -442,11 +446,12 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       toast(error instanceof Error ? error.message : "加载文章失败", "error");
     } finally {
       setLoading(false);
+      setStatusText("");
     }
   }
 
   async function uploadAsset(file: File): Promise<Asset> {
-    return uploadAssetRequest(await compressImage(file));
+    return uploadAssetRequest(file);
   }
 
   function applySavedArticle(saved: Article, contentJson?: Record<string, unknown>) {
@@ -479,6 +484,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       return null;
     }
     setLoading(true);
+    setStatusText("保存中");
     try {
       const contentJson = normalizeEditorDocument(editor.getJSON(), "save");
       const base = {
@@ -516,14 +522,19 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       return null;
     } finally {
       setLoading(false);
+      setStatusText("");
     }
   }
 
   async function handleCoverUpload(file: File | null) {
     if (!file) return;
-    setLoading(true);
+    const blobUrl = URL.createObjectURL(file);
+    setPendingCoverUrl(blobUrl);
+    setImageUploading((n) => n + 1);
     try {
-      const asset = await uploadAsset(file);
+      const asset = await uploadAssetRequest(file);
+      setPendingCoverUrl(null);
+      URL.revokeObjectURL(blobUrl);
       setDraft((current) => ({ ...current, cover_asset_id: asset.id }));
       if (draft.id) {
         const saved = await updateArticleCover(draft.id, { cover_asset_id: asset.id, version: draft.version });
@@ -540,9 +551,11 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         toast("封面已上传，保存文章后生效", "success");
       }
     } catch (error) {
+      setPendingCoverUrl(null);
+      URL.revokeObjectURL(blobUrl);
       toast(error instanceof Error ? error.message : "封面上传失败", "error");
     } finally {
-      setLoading(false);
+      setImageUploading((n) => n - 1);
     }
   }
 
@@ -603,6 +616,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   async function deleteCurrentArticle() {
     if (!draft.id) return;
     setLoading(true);
+    setStatusText("删除中");
     try {
       const deletedId = draft.id;
       await deleteArticle(deletedId);
@@ -613,6 +627,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       toast(error instanceof Error ? error.message : "删除失败", "error");
     } finally {
       setLoading(false);
+      setStatusText("");
     }
   }
 
@@ -735,13 +750,16 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
           <h1>图文工作台</h1>
         </div>
         <div className="topActions">
+          {(imageUploading > 0 || statusText) ? (
+            <span className="statusHint">{imageUploading > 0 ? "图片传输中" : statusText}</span>
+          ) : null}
           <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
             <Trash2 size={16} />
             删除
           </button>
           <button className="primaryButton" disabled={loading || imageUploading > 0} type="button" onClick={() => void saveArticle()}>
             <Save size={16} />
-            {imageUploading > 0 ? `上传中 ${imageUploading}…` : "保存"}
+            保存
           </button>
           <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (dirtyCheckRef?.current?.() ?? false) { setConfirmUnsavedNew(true); } else { resetDraft(); } }}>
             <Plus size={16} />
@@ -910,7 +928,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
 
           <section className="coverRow">
             <div className="coverPreview">
-              {assetSrc(draft.cover_asset_id) ? <img alt="封面" src={`${assetSrc(draft.cover_asset_id)}?width=300`} /> : <span>封面</span>}
+              {(pendingCoverUrl ?? assetSrc(draft.cover_asset_id)) ? <img alt="封面" src={pendingCoverUrl ?? assetSrc(draft.cover_asset_id)!} /> : <span>封面</span>}
             </div>
             <label className="fileButton">
               <Upload size={16} />
