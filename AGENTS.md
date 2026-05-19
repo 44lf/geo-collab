@@ -54,6 +54,8 @@ pnpm install
 - **Backend**: FastAPI, SQLAlchemy, Alembic. 9 route modules under `/api/`（auth、accounts、articles、article-groups、assets、chunked-assets、publish-records、system、tasks）。任务状态变更通过 `GET /api/tasks/{id}/stream`（SSE）推送。
 - **Database**: 开发/测试用 **SQLite** (`check_same_thread=False`, WAL mode, busy_timeout=5000, foreign_keys=ON)，Docker 用 **MySQL** (`mysql+pymysql`)。`alembic.ini` 的 `sqlalchemy.url` 是占位符，运行时由 `get_database_url()` 覆盖。
 - **Frontend**: React 19 + Vite + TypeScript (`web/`), feature-split (`features/content/`, `features/accounts/`, `features/tasks/`, `features/system/`), Tiptap rich-text editor, Lucide icons.
+- **Asset upload**: `web/src/api/assets.ts` 小文件走 `POST /api/assets`；大于 3MB 的 `File` 走 `web/src/api/chunked-upload.ts` 和 `/api/chunked-assets/*`。分片大小 3MB，前端并发 4。
+- **Chunked upload hash rule**: 前端不计算 SHA256，不要在上传链路调用 `crypto.subtle.digest()`。`POST /api/chunked-assets/upload-start` 只需要 JSON `{ "total_size": <bytes> }`；`file_hash` 仅为兼容旧客户端保留且被忽略。后端在 `ChunkedUploadManager.merge_chunks()` 合并分片时计算 SHA256，并写入 `Asset.sha256`。
 - **Modules** (under `server/app/modules/`):
   - `tasks/` — 任务引擎 + 驱动注册表 + Playwright 发布管线（`task_Executor.py`, `task_Crud.py`, `publish_Runner.py`, `drivers/toutiao.py` 等）
   - `accounts/` — 账号 CRUD、登录 session 状态机、Xvfb + x11vnc + websockify → noVNC 远程浏览器（`account_Auth.py`, `account_Crud.py`, `browser_Session.py`）
@@ -125,6 +127,7 @@ import server.app.modules.tasks.drivers.myplatform  # noqa: F401
 - Mock the publish runner: `monkeypatch.setattr("server.app.modules.tasks.task_Executor.build_publish_runner_for_record", lambda r: stub_runner)`.
 - Background task execution uses `bg_session_factory` — patched in `build_test_app` to `TestingSessionLocal` for cross-thread DB access.
 - `build_test_app` also calls `browser_Session._reset_globals()` to reset browser sessions (prevents cross-test leaks).
+- Chunked upload focused tests: `pytest server/tests/test_assets_api.py -q -k chunked`。当前覆盖 JSON body 初始化、服务端 SHA256 写入、unsupported type 保持 415。
 
 ## Gotchas
 
@@ -135,4 +138,5 @@ import server.app.modules.tasks.drivers.myplatform  # noqa: F401
 - `build_publish_runner_for_record(record)` in `task_Executor.py` routes by `platform_code` extracted from `account.state_path` — multi-platform ready via driver registry.
 - `bg_session_factory` (module-level var in `server/app/api/routes/tasks.py`) is imported lazily inside functions in both `tasks.py` and `publish_records.py` to avoid circular imports. Do **NOT** toplevel-import it.
 - **Route ordering**: `POST /api/accounts/{account_id:int}/login-session` MUST be registered before `POST /api/accounts/{platform_code}/login-session`. The `:int` converter prevents platform_code routes from swallowing numeric account IDs.
+- **Chunked upload errors**: `complete_chunked_upload` must re-raise `HTTPException` so 415/4xx 状态不被包装成 500。
 - **`docs/` 目录**：包含 `CHUNKED_UPLOAD.md`（分片上传实现）和 `UPLOAD_OPTIMIZATION.md`。`scripts/deploy_check.py` 可做部署前检查。

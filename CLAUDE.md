@@ -4,153 +4,153 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Geo 协作平台** — Linux 服务器多平台内容自动化发布平台。管理文章并自动发布到头条号等平台（后续可扩展搜狐、网易、小红书等）。架构：FastAPI 后端 + React/TypeScript 前端 + Playwright 浏览器自动化 + Xvfb/x11vnc/noVNC 远程人工介入。**仅支持 Linux 服务器部署（Docker Compose）**。
+**Geo 协作平台** — 多平台内容自动化发布平台。核心架构是 FastAPI 后端、React/TypeScript 前端、SQLAlchemy/Alembic、Playwright 浏览器自动化，以及 Xvfb/x11vnc/noVNC 远程人工介入。Docker Compose 是推荐部署方式。
 
 ## Dev Commands
 
-**激活 Python 环境**（必须）：
+Always activate the Python environment before Python commands:
+
 ```bash
 conda activate geo_xzpt
 ```
 
-**后端开发服务器**（端口 8000）：
+Backend development server:
+
 ```bash
 uvicorn server.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-**前端开发服务器**（端口 5173，代理 `/api` → `:8000`）：
+Frontend development server:
+
 ```bash
 pnpm --filter @geo/web dev
 ```
 
-**运行测试：**
+Frontend typecheck/build:
+
 ```bash
-pytest server/tests/
-pytest server/tests/test_tasks_api.py  # 单文件
+pnpm --filter @geo/web typecheck
+pnpm --filter @geo/web build
 ```
 
-**数据库迁移：**
+Backend tests:
+
+```bash
+pytest server/tests/ -v
+pytest server/tests/ -m "not mysql" -q
+pytest server/tests/test_assets_api.py -q
+```
+
+Database migrations:
+
 ```bash
 alembic upgrade head
 ```
 
-**构建前端：**
-```bash
-pnpm --filter @geo/web build
-```
+Docker Compose:
 
-**Docker Compose 启动（推荐开发/部署方式）：**
 ```bash
-docker-compose up --build
+docker-compose up -d
+docker-compose exec app python -m server.scripts.seed_users
 ```
 
 ## Architecture
 
 ### Backend (`server/app/`)
 
-FastAPI app，SQLAlchemy + Alembic migrations。**测试用 SQLite 内存库；生产用 MySQL**（`GEO_DB_*` 或 `GEO_DATABASE_URL`）。必填环境变量：`GEO_DATA_DIR`、`GEO_JWT_SECRET`。参考 `.env.example`。
+- Entry point: `server/app/main.py:create_app()`.
+- API routes: `auth`, `accounts`, `articles`, `article-groups`, `assets`, `chunked-assets`, `publish-records`, `system`, `tasks`.
+- Database: SQLite for local/test, MySQL in Docker. Runtime DB URL comes from `get_database_url()`; `alembic.ini` contains only a placeholder.
+- Auth: `/api/auth/login` sets `access_token` as an httpOnly JWT cookie. Admin bootstrap is checked through `/api/bootstrap`.
+- Config: pydantic-settings with the `GEO_` prefix. `get_settings()` is cached; call `.cache_clear()` after env changes in tests.
 
-**Core models** (`server/app/models/`):
-- `Platform` — 发布目标平台（如 toutiao）
-- `Account` — 平台账号，含 Playwright storage state 路径
-- `Article` — 文章内容：JSON（Tiptap 编辑器）、HTML、纯文本三份存储
-- `ArticleGroup` + `ArticleGroupItem` — 文章集合，用于批量发布
-- `Asset` — 上传的图片，存储在 `data_dir/assets/`
-- `PublishTask` → `PublishRecord` → `TaskLog` — 任务执行状态机
+### Domain Modules (`server/app/modules/`)
 
-**Routes** (`server/app/api/routes/`): accounts, articles, groups, assets, tasks, records, system.
+- `articles/` — article CRUD, article groups, Tiptap parsing, asset storage, chunked upload session management.
+- `accounts/` — account CRUD, login session state, browser profile paths, Xvfb/x11vnc/websockify/noVNC session management.
+- `tasks/` — task CRUD, execution engine, publish runner, platform driver registry, platform drivers.
 
-**Services** (`server/app/services/`):
-- `drivers/__init__.py` — **PlatformDriver Protocol + 注册表**（`register` / `get_driver` / `all_driver_codes`）；新平台只需新建一个 driver 文件
-- `drivers/toutiao.py` — **ToutiaoDriver**：实现头条号全部 Playwright 发布逻辑，模块 import 时自动调用 `register(ToutiaoDriver())`
-- `publish_runner.py` — **`run_publish()`**：通用发布编排，按 `account.state_path` 中的 platform_code 取 driver，启 Xvfb 远程会话，调 `driver.publish(...)`
-- `browser_sessions.py` — Xvfb + x11vnc + websockify → noVNC 流水线（Linux only）
-- `accounts.py` — 账号登录/校验/导入导出；路径按 `platform_code` 区分（`browser_states/<platform_code>/<account_key>/`）
-- `tasks.py` — 任务执行引擎；`build_publish_runner_for_record(record)` → `run_publish()`
-- `assets.py` — 文件存储（`store_bytes` / `resolve_asset_path`）
+### Shared (`server/app/shared/`)
+
+- `errors.py` — `ClientError`, `ConflictError`, `AccountError`, `ValidationError`.
+- `diagnostics.py` — publish diagnostics.
+- `feishu.py` — Feishu webhook helper.
+- `system_status.py` — system health/status helpers.
+
+Service code should raise the shared named exceptions instead of raw `ValueError`; raw `ValueError` is not globally converted to a client-safe response.
 
 ### Frontend (`web/`)
 
-React 19 + Vite + TypeScript。主账号 UI 在 `web/src/features/accounts/AccountsWorkspace.tsx`，使用 `DEFAULT_PLATFORM_CODE = "toutiao"` 控制当前平台（后续加平台时在此加选择器）。Tiptap 富文本编辑器。Lucide React 图标。
+React 19 + Vite + TypeScript. Feature folders live under `web/src/features/`; API clients live under `web/src/api/`. The frontend proxies `/api` to backend port `8000` during development.
 
-### Data Directory
+## Asset Upload
 
-`GEO_DATA_DIR`（必须设置，Docker 内默认 `/app/data`）：
-- `geo.db` — SQLite 数据库
-- `assets/` — 上传的图片
-- `browser_states/<platform_code>/<account_key>/` — Playwright 持久化 profile + `storage_state.json`
-- `exports/` — 账号授权导出 ZIP
-- `logs/browser-sessions/` — 每个远程浏览器 session 的进程日志
+- Small uploads use `POST /api/assets`.
+- Files larger than `3MB` use `web/src/api/chunked-upload.ts` and `/api/chunked-assets/*`.
+- Chunk size is `3MB`; frontend upload concurrency is `4`.
+- Upload start accepts JSON body `{ "total_size": <bytes> }`. `file_hash` is deprecated and ignored for old-client compatibility.
+- Frontend must not compute SHA256 for chunked uploads. Do not call `crypto.subtle.digest()` for this flow.
+- Backend computes SHA256 while merging chunks in `ChunkedUploadManager.merge_chunks()` and stores it on the `Asset` record.
+- `complete_chunked_upload` must preserve `HTTPException` statuses such as `415 Unsupported file type`; do not wrap them as generic `500`.
 
-## PlatformDriver — 扩展新平台
+## PlatformDriver
 
-实现 `server/app/services/drivers/__init__.py` 中的 `PlatformDriver` Protocol：
+Implement `server/app/modules/tasks/drivers/__init__.py`'s `PlatformDriver` protocol and register the driver at module import time:
 
 ```python
-class MyPlatformDriver:
-    code = "myplatform"       # 与 Platform.code 一致
+from server.app.modules.tasks.drivers import register
+
+
+class MyDriver:
+    code = "myplatform"
     name = "我的平台"
     home_url = "https://..."
     publish_url = "https://..."
 
     def detect_logged_in(self, *, url, title, body) -> bool: ...
-    def publish(self, *, page, context, article, account, state_path, stop_before_publish): ...
 
-# 文件底部
-from server.app.services.drivers import register
-register(MyPlatformDriver())
+    def publish(
+        self, *, page, context, payload: PublishPayload, stop_before_publish: bool
+    ) -> PublishResult: ...
+
+
+register(MyDriver())
 ```
 
-然后在 `server/app/main.py:create_app()` 顶部 import 一次触发注册即可。
+Then import the module in `server/app/main.py:create_app()` to trigger registration.
 
-## PlatformDriver — Toutiao 实现细节
+Drivers receive a prebuilt `PublishPayload`; they should not import ORM article/account/asset modules directly during browser automation.
 
-`server/app/services/drivers/toutiao.py` 自动化头条号发布。
+## Toutiao Automation Notes
 
-**关键实现细节：**
-- 使用 `launch_persistent_context`（profile 目录与 storage_state 分离）
-- **头条号使用字节自研组件库**（`byte-btn`、`byte-btn-primary`、`publish-btn-last`）— **不是** Ant Design 类名
-- 操作正文编辑区前必须先关闭 AI 创作助手抽屉（`.close-btn`）
-- 封面图**必填** — `_handle_cover()` 在 `article.cover_asset` 为 None 时直接抛出
-- 封面上传流程：点击 `.add-icon` → 对话框 → "本地上传" → `expect_file_chooser()` + `set_files()` → 等待"已上传 1 张图片"文字（最长 60s）→ 点"确定"
-- 发布**两步走**：点"预览并发布" → 等 1.5s → 点"确认发布"（两个不同按钮）
-- 发布后处理弹窗："作品同步授权"对话框和"加入创作者计划"弹窗都需要关闭
+- Toutiao uses ByteDance components such as `byte-btn`, `byte-btn-primary`, and `syl-toolbar-tool`; it is not Ant Design.
+- Verify selectors with Playwright against the live DOM before changing automation code.
+- Cover image is mandatory: `ToutiaoDriver._handle_cover()` raises when `article.cover_asset is None`.
+- Cover upload flow: click `.add-icon`, choose local upload, use `expect_file_chooser()`, set files, wait for "已上传 1 张图片", then confirm.
+- Publishing is two-step: click "预览并发布", then "确认发布". `stop_before_publish=True` stops after preview and requires manual confirmation.
+- Close post-publish popups such as "作品同步授权" and "加入创作者计划".
+- Close the AI assistant drawer before editing body content.
 
-**修改 Playwright 选择器时：** 用 `playwright-cli`（`@playwright/cli`）检查实时页面，拿到真实 `ref=eXXX` 元素句柄。不要猜测选择器 — 头条号 DOM 变化频繁。用 `open`、`snapshot`、`click`、`screenshot` 命令验证实际页面结构后再写代码。
+## Task Execution
 
-## Task Execution Model
+- `POST /api/tasks/{id}/execute` returns `202`.
+- Test/dev can run in a background thread through `bg_session_factory`, which tests monkeypatch to `TestingSessionLocal`.
+- Production uses `server/worker/executor.py` to poll, claim, and execute records with optimistic locking and leases.
+- Execution uses a per-task lock, per-account serialization, and `MAX_CONCURRENT_RECORDS=5`.
+- `bg_session_factory` is imported lazily inside route functions to avoid circular imports; do not toplevel-import it.
 
-`POST /api/tasks/{id}/execute` 立即返回 202 — 任务**异步执行**。
+## Testing Notes
 
-**生产环境（Worker 进程）：** 独立 worker 轮询 DB 认领并执行任务，API 仅清理过期认领后返回。启动命令：
-```bash
-python -m server.worker.executor
-```
+- `build_test_app(monkeypatch)` creates temp data dir, SQLite DB, FTS5 tables, admin user, and JWT cookie.
+- Tests using `build_test_app` must call `test_app.cleanup()` in `finally`.
+- Tests that execute tasks must pass `"stop_before_publish": false`, or records stay in `waiting_manual_publish`.
+- Mock publish runners with `monkeypatch.setattr("server.app.modules.tasks.task_Executor.build_publish_runner_for_record", lambda r: stub_runner)`.
+- Chunked asset tests live in `server/tests/test_assets_api.py`; the focused command is `pytest server/tests/test_assets_api.py -q -k chunked`.
 
-**测试环境：** `bg_session_factory` 被 monkeypatch 为 `TestingSessionLocal` 时，execute 端点在后台线程本地执行任务（无需 worker 进程）。
+## Gotchas
 
-**并发控制：** 每个任务一把 `threading.Lock` 防止重复执行；每个账号一把 Lock 串行处理；全局上限 `MAX_CONCURRENT_RECORDS = 5`（`ThreadPoolExecutor`）。
-
-**发布流程：** `build_publish_runner_for_record(record)` → `run_publish(article, account, ...)` → `managed_remote_browser_session` 启 Xvfb → `driver.publish(...)`
-
-**`stop_before_publish=true` 流程：** driver 点"预览并发布"但跳过"确认发布"，record 留在 `waiting_manual_publish` 状态。调 `POST /api/publish-records/{id}/manual-confirm` 带 `{"outcome": "succeeded"|"failed", ...}` 解决。
-
-**Error convention：** 使用 `server/app/services/errors.py` 中的具名异常，不要 raise 裸 `ValueError`：
-- `ValidationError` → HTTP 400（用户输入校验失败）
-- `AccountError` → HTTP 400（账号不存在/过期/平台不匹配）
-- `ClientError` → HTTP 400（其他客户端可见错误的基类）
-- `ConflictError(ClientError)` → HTTP 409（乐观锁/幂等冲突）
-
-## Testing
-
-测试用 `pytest`。`server/tests/utils.py` 中 `build_test_app` / `build_test_client` 构建内存 SQLite 应用并将 `GEO_DATA_DIR` monkeypatch 到临时目录。覆盖所有 API 路由；浏览器自动化不做单元测试。
-
-**在任务测试中 mock 发布器：**
-```python
-monkeypatch.setattr(tasks, "build_publish_runner_for_record", lambda r: stub_runner)
-# stub_runner 签名：(article, account, *, stop_before_publish=False) -> PublishFillResult
-```
-
-**Driver 测试：** `server/tests/test_drivers.py` — 测试注册表和 ToutiaoDriver 属性/登录检测逻辑。
-
-**发布编排测试：** `server/tests/test_publish_runner.py` — 用 stub driver 和 monkeypatch 测 `run_publish()` 路由和异常处理，不真实启动 Playwright。
+- `ensure_data_dirs()` runs at import time in `server/app/db/session.py`.
+- Route ordering matters: `POST /api/accounts/{account_id:int}/login-session` must be registered before `POST /api/accounts/{platform_code}/login-session`.
+- `TaskCreate.platform_code` defaults to `"toutiao"`.
+- `build_publish_runner_for_record(record)` routes by `platform_code` extracted from account state path.
+- Retry is only for original records, not retry records.
