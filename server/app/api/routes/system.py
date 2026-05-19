@@ -62,11 +62,12 @@ def read_system_status(
                 exists().where(PublishRecord.task_id == PublishTask.id, PublishRecord.status == "pending"),
             )
         ) or 0
-        # 自动清理 24 小时前的停止会话
-        cutoff = utcnow() - timedelta(hours=24)
+        # 自动清理：仅删除 stop_requested=True 且 1 小时未活动的会话
+        # （保护正在运行的发文任务，即使在高并发场景下）
+        cutoff = utcnow() - timedelta(hours=1)
         db.query(BrowserSession).filter(
             BrowserSession.stop_requested == True,
-            BrowserSession.started_at < cutoff,
+            BrowserSession.last_activity_at < cutoff,
         ).delete()
         db.commit()
         data["active_browser_sessions"] = db.scalar(select(func.count()).select_from(BrowserSession)) or 0
