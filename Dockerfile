@@ -8,6 +8,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/package.json web/package.json
 RUN corepack enable && corepack prepare pnpm@10.4.0 --activate
+# 使用国内 npm 源加速（npmmirror）
+RUN npm config set registry https://registry.npmmirror.com
 RUN pnpm install --frozen-lockfile
 
 COPY web ./web
