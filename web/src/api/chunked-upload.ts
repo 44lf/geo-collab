@@ -22,6 +22,45 @@ export interface ChunkedUploadResult {
 }
 
 /**
+ * 简单的异步信号量，用于控制并发数
+ * 不使用轮询，而是事件驱动的方式
+ */
+class AsyncSemaphore {
+  private permits: number;
+  private waitQueue: Array<() => void> = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits--;
+      return;
+    }
+
+    // 等待直到有 permit 可用
+    return new Promise((resolve) => {
+      this.waitQueue.push(() => {
+        this.permits--;
+        resolve();
+      });
+    });
+  }
+
+  release(): void {
+    if (this.waitQueue.length > 0) {
+      const resolve = this.waitQueue.shift();
+      if (resolve) {
+        resolve();
+      }
+    } else {
+      this.permits++;
+    }
+  }
+}
+
+/**
  * TCP 预热 — 在上传前建立连接，触发 TCP 慢启动
  * 通过发送一个空的初始化请求来"热身"连接
  */
@@ -85,8 +124,8 @@ export async function uploadLargeFile(
 
   // 并发上传（最多 MAX_CONCURRENT 个）
   const uploadedChunks = new Set<number>();
-  let activeUploads = 0;
   let uploadError: Error | null = null;
+  const semaphore = new AsyncSemaphore(MAX_CONCURRENT);
 
   const uploadChunk = async (index: number) => {
     if (uploadError) return;
@@ -123,18 +162,15 @@ export async function uploadLargeFile(
     }
   };
 
-  // 并发控制
+  // 使用事件驱动的信号量替代轮询
   const queue: Promise<void>[] = [];
   for (let i = 0; i < chunkCount; i++) {
     const promise = (async () => {
-      while (activeUploads >= MAX_CONCURRENT) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      activeUploads++;
+      await semaphore.acquire();
       try {
         await uploadChunk(i);
       } finally {
-        activeUploads--;
+        semaphore.release();
       }
     })();
 
