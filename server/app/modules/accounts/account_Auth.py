@@ -343,7 +343,7 @@ def _start_login_browser_via_worker(
             LOGIN_SESSION_START_TIMEOUT_SECONDS,
             "Worker did not start the account login browser in time",
         )
-    except ValueError:
+    except ClientError:
         db.expire_all()
         pending = db.get(AccountLoginSession, request.id)
         if pending is not None and pending.status == LOGIN_STATUS_PENDING:
@@ -409,7 +409,7 @@ def _cancel_login_browser_via_worker(db: Session, request: AccountLoginSession) 
             LOGIN_SESSION_CANCEL_TIMEOUT_SECONDS,
             "Worker did not cancel the account login session in time",
         )
-    except ValueError:
+    except ClientError:
         _logger.warning("Account login session cancel is still pending: %s", request.id, exc_info=True)
 
 
