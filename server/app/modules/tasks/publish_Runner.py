@@ -155,27 +155,25 @@ def run_publish(
         if record_id is not None:
             associate_record_with_session(record_id, session.id)
 
+    # Playwright sync API uses greenlets that are thread-local. If the context
+    # was created in a different thread (which has since exited), we must tear
+    # down that session and start fresh; attempting context.new_page() from
+    # the wrong thread raises greenlet.error.
     current_thread_id = threading.get_ident()
-    context_needs_creation = (
-        session.browser_context is None
-        or session.context_thread_id != current_thread_id
-    )
+    if (
+        session.browser_context is not None
+        and session.context_thread_id != current_thread_id
+    ):
+        # stop_remote_browser_session kills the Chromium process via OS signals
+        # and wraps all Playwright API calls in try/except, so it is safe to
+        # call from any thread even when the original greenlet thread has exited.
+        stop_remote_browser_session(session.id)
+        with publish_step("remote browser session (re-acquire after thread switch)"):
+            session = get_or_create_account_session(platform_code, account_key)
+            if record_id is not None:
+                associate_record_with_session(record_id, session.id)
 
-    if context_needs_creation:
-        # Close old context/playwright if it exists and is from a different thread
-        if session.browser_context is not None and session.context_thread_id != current_thread_id:
-            try:
-                session.browser_context.close()
-            except Exception:
-                pass
-            try:
-                if session.playwright is not None:
-                    session.playwright.stop()
-            except Exception:
-                pass
-            session.browser_context = None
-            session.playwright = None
-
+    if session.browser_context is None:
         pw = None
         try:
             with publish_step("start Playwright"):
