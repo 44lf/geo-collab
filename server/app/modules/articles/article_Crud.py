@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql import text as sa_text
 
 from server.app.core.time import utcnow
-from server.app.models import Article, ArticleBodyAsset, ArticleGroup, ArticleGroupItem, Asset, PublishRecord, PublishTask, TaskLog
+from server.app.models import Article, ArticleBodyAsset, ArticleGroup, ArticleGroupItem, Asset, PublishRecord, PublishTask
 from server.app.schemas.article import ArticleCreate, ArticleUpdate
 from server.app.schemas.article_group import ArticleGroupCreate, ArticleGroupItemsUpdate, ArticleGroupUpdate
 from server.app.shared.errors import ClientError, ConflictError
@@ -54,7 +54,7 @@ def sync_article_body_assets(db: Session, article: Article, content_json: dict) 
 def get_article(db: Session, article_id: int) -> Article | None:
     stmt = (
         select(Article)
-        .where(Article.id == article_id)
+        .where(Article.id == article_id, Article.is_deleted == False)  # noqa: E712
         .options(selectinload(Article.body_assets).selectinload(ArticleBodyAsset.asset))
     )
     return db.execute(stmt).scalar_one_or_none()
@@ -66,11 +66,15 @@ def _search_articles(db: Session, query: str, user_id: int | None = None) -> lis
     if dialect_name == "mysql":
         stmt = (
             select(Article)
-            .where(func.match(Article.title, Article.author, Article.plain_text).against(query, "boolean") > 0)
+            .where(
+                Article.is_deleted == False,  # noqa: E712
+                func.match(Article.title, Article.author, Article.plain_text).against(query, "boolean") > 0,
+            )
         )
     else:
         stmt = select(Article).where(
-            sa_text("articles_fts MATCH :q").bindparams(q=query)
+            Article.is_deleted == False,  # noqa: E712
+            sa_text("articles_fts MATCH :q").bindparams(q=query),
         )
 
     if user_id is not None:
@@ -98,7 +102,7 @@ def list_articles(
             stmt = (
                 select(Article)
                 .options(selectinload(Article.body_assets))
-                .where(Article.id.in_(ids))
+                .where(Article.id.in_(ids), Article.is_deleted == False)  # noqa: E712
                 .order_by(Article.updated_at.desc())
             )
             articles = list(db.execute(stmt).scalars().all())
@@ -107,7 +111,12 @@ def list_articles(
         except Exception:
             _logger.debug("FTS search unavailable, falling back to LIKE query", exc_info=True)
 
-    stmt = select(Article).options(selectinload(Article.body_assets)).order_by(Article.updated_at.desc())
+    stmt = (
+        select(Article)
+        .where(Article.is_deleted == False)  # noqa: E712
+        .options(selectinload(Article.body_assets))
+        .order_by(Article.updated_at.desc())
+    )
 
     if user_id is not None:
         stmt = stmt.where(Article.user_id == user_id)
@@ -125,7 +134,10 @@ def list_articles(
 def create_article(db: Session, user_id: int, payload: ArticleCreate) -> Article:
     if payload.client_request_id:
         existing = db.execute(
-            select(Article).where(Article.client_request_id == payload.client_request_id)
+            select(Article).where(
+                Article.client_request_id == payload.client_request_id,
+                Article.is_deleted == False,  # noqa: E712
+            )
         ).scalar_one_or_none()
         if existing is not None:
             return get_article(db, existing.id) or existing
@@ -201,13 +213,9 @@ def delete_article(db: Session, article: Article) -> None:
         raise ClientError("存在未完成发布记录，无法删除文章")
 
     db.execute(sa_delete(ArticleGroupItem).where(ArticleGroupItem.article_id == article_id))
-    record_ids = list(
-        db.execute(select(PublishRecord.id).where(PublishRecord.article_id == article_id)).scalars()
-    )
-    if record_ids:
-        db.execute(sa_delete(TaskLog).where(TaskLog.record_id.in_(record_ids)))
-        db.execute(sa_delete(PublishRecord).where(PublishRecord.id.in_(record_ids)))
-    db.delete(article)
+    article.is_deleted = True
+    article.deleted_at = utcnow()
+    article.updated_at = utcnow()
     db.flush()
 
 
@@ -216,18 +224,36 @@ def delete_article(db: Session, article: Article) -> None:
 def get_group(db: Session, group_id: int) -> ArticleGroup | None:
     stmt = (
         select(ArticleGroup)
-        .where(ArticleGroup.id == group_id)
+        .where(ArticleGroup.id == group_id, ArticleGroup.is_deleted == False)  # noqa: E712
         .options(selectinload(ArticleGroup.items).selectinload(ArticleGroupItem.article))
     )
     return db.execute(stmt).scalar_one_or_none()
 
 
 def list_groups(db: Session) -> list[ArticleGroup]:
-    stmt = select(ArticleGroup).options(selectinload(ArticleGroup.items)).order_by(ArticleGroup.updated_at.desc())
+    stmt = (
+        select(ArticleGroup)
+        .where(ArticleGroup.is_deleted == False)  # noqa: E712
+        .options(selectinload(ArticleGroup.items))
+        .order_by(ArticleGroup.updated_at.desc())
+    )
     return list(db.execute(stmt).scalars().all())
 
 
 def create_group(db: Session, user_id: int, payload: ArticleGroupCreate) -> ArticleGroup:
+    existing = db.execute(
+        select(ArticleGroup).where(ArticleGroup.user_id == user_id, ArticleGroup.name == payload.name)
+    ).scalar_one_or_none()
+    if existing is not None and existing.is_deleted:
+        existing.description = payload.description
+        existing.is_deleted = False
+        existing.deleted_at = None
+        existing.version += 1
+        existing.updated_at = utcnow()
+        existing.items.clear()
+        db.flush()
+        return get_group(db, existing.id) or existing
+
     group = ArticleGroup(user_id=user_id, name=payload.name, description=payload.description)
     db.add(group)
     db.flush()
@@ -262,7 +288,14 @@ def replace_group_items(db: Session, group: ArticleGroup, payload: ArticleGroupI
         article_ids.append(item.article_id)
 
     if article_ids:
-        existing_ids = set(db.execute(select(Article.id).where(Article.id.in_(article_ids))).scalars().all())
+        existing_ids = set(
+            db.execute(
+                select(Article.id).where(
+                    Article.id.in_(article_ids),
+                    Article.is_deleted == False,  # noqa: E712
+                )
+            ).scalars().all()
+        )
         missing_ids = [aid for aid in article_ids if aid not in existing_ids]
         if missing_ids:
             raise ClientError(f"Article not found: {missing_ids[0]}")
@@ -292,5 +325,7 @@ def delete_group(db: Session, group: ArticleGroup) -> None:
     if active_task:
         raise ClientError("存在未完成发布任务，无法删除分组")
 
-    db.delete(group)
+    group.is_deleted = True
+    group.deleted_at = utcnow()
+    group.updated_at = utcnow()
     db.flush()

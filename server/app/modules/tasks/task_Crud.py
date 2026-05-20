@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import delete as sa_delete, select, update as sa_update
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
@@ -58,6 +58,7 @@ def list_tasks(db: Session, skip: int = 0, limit: int = 100, user_id: int | None
             selectinload(PublishTask.accounts).selectinload(PublishTaskAccount.account),
             selectinload(PublishTask.records),
         )
+        .where(PublishTask.is_deleted == False)  # noqa: E712
         .order_by(PublishTask.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -70,7 +71,7 @@ def list_tasks(db: Session, skip: int = 0, limit: int = 100, user_id: int | None
 def get_task(db: Session, task_id: int) -> PublishTask | None:
     stmt = (
         select(PublishTask)
-        .where(PublishTask.id == task_id)
+        .where(PublishTask.id == task_id, PublishTask.is_deleted == False)  # noqa: E712
         .options(
             selectinload(PublishTask.platform),
             selectinload(PublishTask.accounts).selectinload(PublishTaskAccount.account),
@@ -81,7 +82,11 @@ def get_task(db: Session, task_id: int) -> PublishTask | None:
 
 
 def list_task_records(db: Session, task_id: int) -> list[PublishRecord]:
-    stmt = select(PublishRecord).where(PublishRecord.task_id == task_id).order_by(PublishRecord.id.asc())
+    stmt = (
+        select(PublishRecord)
+        .where(PublishRecord.task_id == task_id, PublishRecord.is_deleted == False)  # noqa: E712
+        .order_by(PublishRecord.id.asc())
+    )
     return list(db.execute(stmt).scalars().all())
 
 
@@ -96,17 +101,19 @@ def list_task_logs(db: Session, task_id: int, after_id: int = 0, limit: int = 10
 
 
 def delete_all_tasks(db: Session) -> None:
-    db.execute(sa_delete(TaskLog))
-    db.execute(sa_delete(PublishRecord))
-    db.execute(sa_delete(PublishTaskAccount))
-    db.execute(sa_delete(PublishTask))
+    now = utcnow()
+    db.execute(sa_update(PublishRecord).values(is_deleted=True, deleted_at=now))
+    db.execute(sa_update(PublishTask).values(is_deleted=True, deleted_at=now))
     db.flush()
 
 
 def create_task(db: Session, user_id: int, payload: TaskCreate, role: str = "operator") -> PublishTask:
     if payload.client_request_id:
         existing = db.execute(
-            select(PublishTask).where(PublishTask.client_request_id == payload.client_request_id)
+            select(PublishTask).where(
+                PublishTask.client_request_id == payload.client_request_id,
+                PublishTask.is_deleted == False,  # noqa: E712
+            )
         ).scalar_one_or_none()
         if existing is not None:
             return get_task(db, existing.id) or existing
@@ -174,7 +181,12 @@ def preview_task_assignment(
 
 
 def get_record(db: Session, record_id: int) -> PublishRecord | None:
-    return db.get(PublishRecord, record_id)
+    return db.execute(
+        select(PublishRecord).where(
+            PublishRecord.id == record_id,
+            PublishRecord.is_deleted == False,  # noqa: E712
+        )
+    ).scalar_one_or_none()
 
 
 def manual_confirm_record(
@@ -246,7 +258,10 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
         raise ClientError("Retry records cannot be retried again; create a new task after checking the platform result")
 
     existing_retry = db.execute(
-        select(PublishRecord).where(PublishRecord.retry_of_record_id == record.id)
+        select(PublishRecord).where(
+            PublishRecord.retry_of_record_id == record.id,
+            PublishRecord.is_deleted == False,  # noqa: E712
+        )
     ).scalar_one_or_none()
     if existing_retry is not None:
         raise ClientError(f"Record {record.id} already has retry record {existing_retry.id}")
@@ -258,6 +273,7 @@ def retry_record(db: Session, record: PublishRecord) -> PublishRecord:
             PublishRecord.article_id == record.article_id,
             PublishRecord.account_id == record.account_id,
             PublishRecord.id != record.id,
+            PublishRecord.is_deleted == False,  # noqa: E712
             PublishRecord.status.in_(["pending", "running", "waiting_manual_publish", "waiting_user_input", "succeeded"]),
         )
         .order_by(PublishRecord.id.asc())
@@ -296,6 +312,7 @@ def recover_stuck_records(db: Session) -> None:
             select(PublishRecord).where(
                 PublishRecord.status == "running",
                 PublishRecord.lease_until < now,
+                PublishRecord.is_deleted == False,  # noqa: E712
             )
         ).scalars().all()
     )
@@ -321,6 +338,7 @@ def recover_stuck_task_claims(db: Session) -> None:
         .where(
             PublishTask.worker_id.is_not(None),
             PublishTask.worker_lease_until < now,
+            PublishTask.is_deleted == False,  # noqa: E712
         )
         .values(worker_id=None, worker_lease_until=None, worker_heartbeat_at=None)
     ).rowcount
@@ -462,14 +480,24 @@ def _article_ids_for_task(db: Session, payload: TaskCreate, user_id: int | None 
     if payload.task_type == "single":
         if payload.article_id is None:
             raise ClientError("article_id is required for single task")
-        article = db.get(Article, payload.article_id)
+        article = db.execute(
+            select(Article).where(
+                Article.id == payload.article_id,
+                Article.is_deleted == False,  # noqa: E712
+            )
+        ).scalar_one_or_none()
         if article is None or (user_id is not None and article.user_id != user_id):
             raise ClientError(f"Article not found: {payload.article_id}")
         return [payload.article_id]
 
     if payload.group_id is None:
         raise ClientError("group_id is required for group_round_robin task")
-    group = db.get(ArticleGroup, payload.group_id)
+    group = db.execute(
+        select(ArticleGroup).where(
+            ArticleGroup.id == payload.group_id,
+            ArticleGroup.is_deleted == False,  # noqa: E712
+        )
+    ).scalar_one_or_none()
     if group is None or (user_id is not None and group.user_id != user_id):
         raise ClientError(f"Article group not found: {payload.group_id}")
     items = list(
@@ -483,4 +511,16 @@ def _article_ids_for_task(db: Session, payload: TaskCreate, user_id: int | None 
     )
     if not items:
         raise ValidationError("Article group has no articles")
-    return [item.article_id for item in items]
+    article_ids = [item.article_id for item in items]
+    active_article_ids = set(
+        db.execute(
+            select(Article.id).where(
+                Article.id.in_(article_ids),
+                Article.is_deleted == False,  # noqa: E712
+            )
+        ).scalars().all()
+    )
+    missing_ids = [article_id for article_id in article_ids if article_id not in active_article_ids]
+    if missing_ids:
+        raise ClientError(f"Article not found: {missing_ids[0]}")
+    return article_ids

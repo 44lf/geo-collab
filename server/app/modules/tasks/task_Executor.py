@@ -73,6 +73,8 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
     _task_cancel[task.id] = cancel_event
 
     try:
+        if task.is_deleted:
+            raise ConflictError(f"Task {task.id} has been deleted")
         if task.status in TERMINAL_TASK_STATUSES:
             raise ConflictError(f"Task is already terminal: {task.status}")
 
@@ -80,7 +82,11 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
         if task.status == "pending":
             stmt = (
                 sa_update(PublishTask)
-                .where(PublishTask.id == task.id, PublishTask.status == "pending")
+                .where(
+                    PublishTask.id == task.id,
+                    PublishTask.status == "pending",
+                    PublishTask.is_deleted == False,  # noqa: E712
+                )
                 .values(
                     status="running",
                     started_at=now,
@@ -121,7 +127,11 @@ def _heartbeat_task_worker(db: Session, task_id: int) -> None:
     values: dict[str, object] = {"worker_heartbeat_at": now}
     if os.environ.get("GEO_WORKER_ID"):
         values["worker_lease_until"] = now + timedelta(seconds=WORKER_LEASE_EXTENSION_SECONDS)
-    db.execute(sa_update(PublishTask).where(PublishTask.id == task_id).values(**values))
+    db.execute(
+        sa_update(PublishTask)
+        .where(PublishTask.id == task_id, PublishTask.is_deleted == False)  # noqa: E712
+        .values(**values)
+    )
 
 
 def _heartbeat_running_records(db: Session, task_id: int) -> None:
@@ -129,18 +139,31 @@ def _heartbeat_running_records(db: Session, task_id: int) -> None:
     new_lease = now + timedelta(seconds=get_settings().publish_record_timeout_seconds + 60)
     db.execute(
         sa_update(PublishRecord)
-        .where(PublishRecord.task_id == task_id, PublishRecord.status == "running")
+        .where(
+            PublishRecord.task_id == task_id,
+            PublishRecord.status == "running",
+            PublishRecord.is_deleted == False,  # noqa: E712
+        )
         .values(lease_until=new_lease)
     )
 
 
 def _task_cancel_requested(db: Session, task_id: int) -> bool:
-    value = db.execute(select(PublishTask.cancel_requested).where(PublishTask.id == task_id)).scalar_one_or_none()
+    value = db.execute(
+        select(PublishTask.cancel_requested).where(
+            PublishTask.id == task_id,
+            PublishTask.is_deleted == False,  # noqa: E712
+        )
+    ).scalar_one_or_none()
     return bool(value)
 
 
 def _request_task_cancel(db: Session, task_id: int) -> None:
-    db.execute(sa_update(PublishTask).where(PublishTask.id == task_id).values(cancel_requested=True))
+    db.execute(
+        sa_update(PublishTask)
+        .where(PublishTask.id == task_id, PublishTask.is_deleted == False)  # noqa: E712
+        .values(cancel_requested=True)
+    )
 
 
 def _cancel_not_running_records(db: Session, task: PublishTask, records: list[PublishRecord]) -> None:
@@ -333,7 +356,11 @@ def _claim_record(db: Session, task_id: int, record: PublishRecord) -> bool:
     lease_until = now + timedelta(seconds=get_settings().publish_record_timeout_seconds + 60)
     stmt = (
         sa_update(PublishRecord)
-        .where(PublishRecord.id == record.id, PublishRecord.status == "pending")
+        .where(
+            PublishRecord.id == record.id,
+            PublishRecord.status == "pending",
+            PublishRecord.is_deleted == False,  # noqa: E712
+        )
         .values(status="running", started_at=now, lease_until=lease_until)
     )
     if db.execute(stmt).rowcount == 0:
@@ -349,7 +376,7 @@ def _claim_record(db: Session, task_id: int, record: PublishRecord) -> bool:
 def _load_article_for_publish(db: Session, article_id: int) -> Article | None:
     return db.execute(
         select(Article)
-        .where(Article.id == article_id)
+        .where(Article.id == article_id, Article.is_deleted == False)  # noqa: E712
         .options(
             selectinload(Article.cover_asset),
             selectinload(Article.body_assets).selectinload(ArticleBodyAsset.asset),
@@ -360,6 +387,8 @@ def _load_article_for_publish(db: Session, article_id: int) -> Article | None:
 def _validate_record_inputs(article: Article | None, account: Account | None) -> str | None:
     if article is None or account is None:
         return "Record article or account not found"
+    if getattr(account, "is_deleted", False):
+        return "Record account has been deleted"
     if not article.title or not article.title.strip():
         return "文章标题不能为空"
     if not has_publishable_body(article):
@@ -457,14 +486,22 @@ def _finish_record_future(db: Session, task: PublishTask, record_id: int, future
         if task.stop_before_publish:
             stmt = (
                 sa_update(PublishRecord)
-                .where(PublishRecord.id == record_id, PublishRecord.status == "running")
+                .where(
+                    PublishRecord.id == record_id,
+                    PublishRecord.status == "running",
+                    PublishRecord.is_deleted == False,  # noqa: E712
+                )
                 .values(status="waiting_manual_publish", finished_at=utcnow(), lease_until=None)
             )
             message = "等待手动确认发布"
         else:
             stmt = (
                 sa_update(PublishRecord)
-                .where(PublishRecord.id == record_id, PublishRecord.status == "running")
+                .where(
+                    PublishRecord.id == record_id,
+                    PublishRecord.status == "running",
+                    PublishRecord.is_deleted == False,  # noqa: E712
+                )
                 .values(status="succeeded", publish_url=result.url or None, finished_at=utcnow(), lease_until=None)
             )
             message = result.message
@@ -506,7 +543,11 @@ def _mark_record_failed(
 ) -> None:
     stmt = (
         sa_update(PublishRecord)
-        .where(PublishRecord.id == record_id, PublishRecord.status == "running")
+        .where(
+            PublishRecord.id == record_id,
+            PublishRecord.status == "running",
+            PublishRecord.is_deleted == False,  # noqa: E712
+        )
         .values(status="failed", error_message=error_message, finished_at=utcnow(), lease_until=None)
     )
     if db.execute(stmt).rowcount > 0:
@@ -522,7 +563,11 @@ def _mark_record_waiting_user_input(
 ) -> None:
     stmt = (
         sa_update(PublishRecord)
-        .where(PublishRecord.id == record_id, PublishRecord.status == "running")
+        .where(
+            PublishRecord.id == record_id,
+            PublishRecord.status == "running",
+            PublishRecord.is_deleted == False,  # noqa: E712
+        )
         .values(status="waiting_user_input", error_message=message, finished_at=None, lease_until=None)
     )
     if db.execute(stmt).rowcount > 0:
@@ -588,6 +633,7 @@ def cancel_task(db: Session, task: PublishTask) -> PublishTask:
             .where(
                 PublishTask.id == task.id,
                 PublishTask.status.not_in(TERMINAL_TASK_STATUSES),
+                PublishTask.is_deleted == False,  # noqa: E712
             )
             .values(status="cancelled", finished_at=now)
         ).rowcount

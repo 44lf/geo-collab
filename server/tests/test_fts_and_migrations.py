@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -11,6 +12,10 @@ from sqlalchemy import create_engine, inspect, text
 
 from server.app.core.config import get_settings
 from server.tests.utils import build_test_app
+
+
+def _new_temp_data_dir() -> Path:
+    return Path(tempfile.gettempdir()) / "geo-test-data" / uuid.uuid4().hex
 
 
 def _tiptap_doc() -> dict:
@@ -103,7 +108,7 @@ def test_fts_fallback_when_match_throws(monkeypatch):
 
 @pytest.mark.mysql
 def test_alembic_upgrade_from_empty_to_head(monkeypatch):
-    data_dir = Path.cwd() / ".test-data" / uuid.uuid4().hex
+    data_dir = _new_temp_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("GEO_DATA_DIR", str(data_dir))
     get_settings.cache_clear()
@@ -141,7 +146,7 @@ def test_alembic_upgrade_from_empty_to_head(monkeypatch):
 @pytest.mark.mysql
 def test_migration_trigram_fallback(monkeypatch):
     """Verify FTS5 table is created even when trigram tokenizer is unavailable."""
-    data_dir = Path.cwd() / ".test-data" / uuid.uuid4().hex
+    data_dir = _new_temp_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("GEO_DATA_DIR", str(data_dir))
     get_settings.cache_clear()

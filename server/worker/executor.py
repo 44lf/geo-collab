@@ -56,11 +56,13 @@ def _claim_next_task(db) -> PublishTask | None:
         select(PublishTask.id)
         .where(
             PublishTask.status.in_(["pending", "running"]),
+            PublishTask.is_deleted == False,  # noqa: E712
             PublishTask.worker_id.is_(None),
             exists(
                 select(1).where(
                     PublishRecord.task_id == PublishTask.id,
                     PublishRecord.status == "pending",
+                    PublishRecord.is_deleted == False,  # noqa: E712
                 )
             ),
         )
@@ -75,7 +77,11 @@ def _claim_next_task(db) -> PublishTask | None:
     lease_until = now + timedelta(minutes=CLAIM_LEASE_MINUTES)
     rows = db.execute(
         sa_update(PublishTask)
-        .where(PublishTask.id == candidate_id, PublishTask.worker_id.is_(None))
+        .where(
+            PublishTask.id == candidate_id,
+            PublishTask.worker_id.is_(None),
+            PublishTask.is_deleted == False,  # noqa: E712
+        )
         .values(worker_id=WORKER_ID, worker_lease_until=lease_until, worker_heartbeat_at=now)
     ).rowcount
 
@@ -89,7 +95,11 @@ def _claim_next_task(db) -> PublishTask | None:
 def _release_task_claim(db, task_id: int) -> None:
     db.execute(
         sa_update(PublishTask)
-        .where(PublishTask.id == task_id, PublishTask.worker_id == WORKER_ID)
+        .where(
+            PublishTask.id == task_id,
+            PublishTask.worker_id == WORKER_ID,
+            PublishTask.is_deleted == False,  # noqa: E712
+        )
         .values(worker_id=None, worker_lease_until=None, worker_heartbeat_at=None)
     )
     db.commit()

@@ -51,15 +51,26 @@ def read_system_status(
     base = get_system_status()
     data = base.model_dump()
     try:
-        data["article_count"] = db.scalar(select(func.count()).select_from(Article)) or 0
-        data["account_count"] = db.scalar(select(func.count()).select_from(Account)) or 0
-        data["task_count"] = db.scalar(select(func.count()).select_from(PublishTask)) or 0
+        data["article_count"] = db.scalar(
+            select(func.count()).select_from(Article).where(Article.is_deleted == False)  # noqa: E712
+        ) or 0
+        data["account_count"] = db.scalar(
+            select(func.count()).select_from(Account).where(Account.is_deleted == False)  # noqa: E712
+        ) or 0
+        data["task_count"] = db.scalar(
+            select(func.count()).select_from(PublishTask).where(PublishTask.is_deleted == False)  # noqa: E712
+        ) or 0
         data["pending_task_count"] = db.scalar(
             select(func.count())
             .select_from(PublishTask)
             .where(
                 PublishTask.status.in_(["pending", "running"]),
-                exists().where(PublishRecord.task_id == PublishTask.id, PublishRecord.status == "pending"),
+                PublishTask.is_deleted == False,  # noqa: E712
+                exists().where(
+                    PublishRecord.task_id == PublishTask.id,
+                    PublishRecord.status == "pending",
+                    PublishRecord.is_deleted == False,  # noqa: E712
+                ),
             )
         ) or 0
         # 自动清理：仅删除 stop_requested=True 且 1 小时未活动的会话

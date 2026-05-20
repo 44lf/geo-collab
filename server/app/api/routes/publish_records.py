@@ -25,7 +25,7 @@ router = APIRouter()
 def _verify_record_ownership(record: PublishRecord | None, current_user: User, db: Session) -> PublishRecord:
     if record is None:
         raise HTTPException(status_code=404, detail="Record not found")
-    task = db.get(PublishTask, record.task_id)
+    task = get_task(db, record.task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Record not found")
     if current_user.role != "admin" and task.user_id != current_user.id:

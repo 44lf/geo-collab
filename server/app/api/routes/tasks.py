@@ -88,6 +88,7 @@ def create_task_endpoint(
                 select(PublishTask).where(
                     PublishTask.client_request_id == payload.client_request_id,
                     PublishTask.user_id == current_user.id,
+                    PublishTask.is_deleted == False,  # noqa: E712
                 )
             ).scalar_one_or_none()
             if existing is not None:

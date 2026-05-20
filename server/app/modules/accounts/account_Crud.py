@@ -5,12 +5,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.paths import get_data_dir
 from server.app.core.time import utcnow
-from server.app.models import Account, Platform, PublishRecord, PublishTaskAccount, TaskLog
+from server.app.models import Account, Platform, PublishRecord
 from server.app.shared.errors import ClientError
 
 
@@ -113,8 +113,6 @@ def delete_account(db: Session, account: Account) -> None:
     if active:
         raise ClientError("存在未完成发布记录，无法删除账号")
 
-    db.execute(sa_delete(PublishTaskAccount).where(PublishTaskAccount.account_id == account_id))
-    db.execute(sa_delete(PublishRecord).where(PublishRecord.account_id == account_id))
     account.is_deleted = True
     account.deleted_at = utcnow()
     account.updated_at = utcnow()

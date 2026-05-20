@@ -1,4 +1,5 @@
 import shutil
+import tempfile
 import threading
 import uuid
 from pathlib import Path
@@ -27,7 +28,7 @@ class TestApp:
 
 
 def build_test_app(monkeypatch) -> TestApp:
-    data_dir = Path.cwd() / ".test-data" / uuid.uuid4().hex
+    data_dir = Path(tempfile.gettempdir()) / "geo-test-data" / uuid.uuid4().hex
     data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("GEO_DATA_DIR", str(data_dir))
     monkeypatch.setenv("GEO_JWT_SECRET", "test-secret")

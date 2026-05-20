@@ -1,4 +1,4 @@
-from server.app.models import PublishRecord, PublishTask
+from server.app.models import Account, Article, PublishRecord, PublishTask, PublishTaskAccount, TaskLog
 from server.app.modules.accounts import get_or_create_platform
 from server.tests.utils import build_test_app
 
@@ -42,6 +42,7 @@ def _create_task_and_record(test_app, article_id: int, account_id: int, record_s
         )
         db.add(task)
         db.flush()
+        db.add(PublishTaskAccount(task_id=task.id, account_id=account_id, sort_order=0))
 
         record = PublishRecord(
             task_id=task.id,
@@ -113,6 +114,14 @@ class TestDeleteArticleGuard:
 
             # Verify article is gone
             assert client.get(f"/api/articles/{article_id}").status_code == 404
+            db = test_app.session_factory()
+            try:
+                deleted_article = db.get(Article, article_id)
+                assert deleted_article is not None
+                assert bool(deleted_article.is_deleted) is True
+                assert deleted_article.deleted_at is not None
+            finally:
+                db.close()
         finally:
             test_app.cleanup()
 
@@ -127,11 +136,10 @@ class TestDeleteArticleGuard:
             resp = client.delete(f"/api/articles/{article_id}")
             assert resp.status_code == 204
 
-            # Historical records are deleted alongside the article (required by FK constraint)
             db = test_app.session_factory()
             try:
                 remaining = db.get(PublishRecord, record_id)
-                assert remaining is None, "Historical succeeded records are deleted (FK constraint)"
+                assert remaining is not None, "Historical succeeded records are retained after article soft delete"
             finally:
                 db.close()
         finally:
@@ -151,7 +159,7 @@ class TestDeleteArticleGuard:
             db = test_app.session_factory()
             try:
                 remaining = db.get(PublishRecord, record_id)
-                assert remaining is None, "Historical failed records are deleted (FK constraint)"
+                assert remaining is not None, "Historical failed records are retained after article soft delete"
             finally:
                 db.close()
         finally:
@@ -213,6 +221,15 @@ class TestDeleteAccountGuard:
             assert resp.status_code == 204
 
             assert client.get(f"/api/accounts/{account_id}").status_code == 404
+
+            db = test_app.session_factory()
+            try:
+                deleted_account = db.get(Account, account_id)
+                assert deleted_account is not None
+                assert bool(deleted_account.is_deleted) is True
+                assert deleted_account.deleted_at is not None
+            finally:
+                db.close()
         finally:
             test_app.cleanup()
 
@@ -230,7 +247,8 @@ class TestDeleteAccountGuard:
             db = test_app.session_factory()
             try:
                 remaining = db.get(PublishRecord, record_id)
-                assert remaining is None, "Historical succeeded records are deleted (FK constraint)"
+                assert remaining is not None, "Historical succeeded records are retained after account soft delete"
+                assert bool(db.get(Account, account_id).is_deleted) is True
             finally:
                 db.close()
         finally:
@@ -250,7 +268,36 @@ class TestDeleteAccountGuard:
             db = test_app.session_factory()
             try:
                 remaining = db.get(PublishRecord, record_id)
-                assert remaining is None, "Historical failed records are deleted (FK constraint)"
+                assert remaining is not None, "Historical failed records are retained after account soft delete"
+            finally:
+                db.close()
+        finally:
+            test_app.cleanup()
+
+    def test_record_logs_are_retained_after_account_deletion(self, monkeypatch):
+        test_app = build_test_app(monkeypatch)
+        client = test_app.client
+        try:
+            article_id = _create_article(client)
+            account_id = _create_account(test_app, "acc-with-log", "Acc")
+            record_id = _create_task_and_record(test_app, article_id, account_id, "succeeded")
+            db = test_app.session_factory()
+            try:
+                record = db.get(PublishRecord, record_id)
+                assert record is not None
+                db.add(TaskLog(task_id=record.task_id, record_id=record_id, level="info", message="done"))
+                db.commit()
+            finally:
+                db.close()
+
+            resp = client.delete(f"/api/accounts/{account_id}")
+            assert resp.status_code == 204
+
+            db = test_app.session_factory()
+            try:
+                assert db.get(PublishRecord, record_id) is not None
+                assert db.query(TaskLog).filter(TaskLog.record_id == record_id).count() == 1
+                assert db.query(PublishTaskAccount).filter(PublishTaskAccount.account_id == account_id).count() == 1
             finally:
                 db.close()
         finally:

@@ -44,7 +44,11 @@ def read_articles(
     article_ids = [a.id for a in articles]
     rows = db.execute(
         select(PublishRecord.article_id, func.count().label("cnt"))
-        .where(PublishRecord.article_id.in_(article_ids), PublishRecord.status == "succeeded")
+        .where(
+            PublishRecord.article_id.in_(article_ids),
+            PublishRecord.status == "succeeded",
+            PublishRecord.is_deleted == False,  # noqa: E712
+        )
         .group_by(PublishRecord.article_id)
     ).all()
     count_map = {row.article_id: row.cnt for row in rows}
@@ -81,6 +85,7 @@ def create_article_endpoint(
                 select(Article).where(
                     Article.client_request_id == payload.client_request_id,
                     Article.user_id == current_user.id,
+                    Article.is_deleted == False,  # noqa: E712
                 )
             ).scalar_one_or_none()
             if existing is not None:

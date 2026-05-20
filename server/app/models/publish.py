@@ -56,6 +56,8 @@ class PublishTask(Base):
     worker_lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     worker_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -107,6 +109,9 @@ class PublishRecord(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 租约到期时间，用于崩溃恢复
+
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     task = relationship("PublishTask", back_populates="records")
     article = relationship("Article", back_populates="publish_records")

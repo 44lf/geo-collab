@@ -152,6 +152,8 @@ def register_account_from_storage_state(
         account.display_name = payload.display_name
         account.status = "valid"
         account.note = payload.note
+        account.is_deleted = False
+        account.deleted_at = None
         account.last_login_at = now
         account.last_checked_at = now
         account.updated_at = now
@@ -195,6 +197,8 @@ def start_login_session(
         account.display_name = payload.display_name
         account.note = payload.note
         account.status = "unknown"
+        account.is_deleted = False
+        account.deleted_at = None
         account.last_checked_at = now
         account.updated_at = now
     db.flush()
@@ -848,7 +852,7 @@ def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) ->
             existing = db.execute(
                 select(Account).where(Account.state_path == state_path_rel)
             ).scalar_one_or_none()
-            if existing is not None:
+            if existing is not None and not existing.is_deleted:
                 skipped.append(display_name)
                 continue
 
@@ -887,18 +891,31 @@ def import_accounts_auth_package(db: Session, user_id: int, zip_bytes: bytes) ->
             imported_status = entry.get("status", "unknown")
             if imported_status not in _valid_statuses:
                 imported_status = "unknown"
-            account = Account(
-                user_id=user_id,
-                platform=platform,
-                display_name=display_name,
-                platform_user_id=entry.get("platform_user_id"),
-                status=imported_status,
-                state_path=state_path_rel,
-                note=entry.get("note"),
-                last_login_at=last_login_at,
-                last_checked_at=now,
-            )
-            db.add(account)
+            if existing is None:
+                account = Account(
+                    user_id=user_id,
+                    platform=platform,
+                    display_name=display_name,
+                    platform_user_id=entry.get("platform_user_id"),
+                    status=imported_status,
+                    state_path=state_path_rel,
+                    note=entry.get("note"),
+                    last_login_at=last_login_at,
+                    last_checked_at=now,
+                )
+                db.add(account)
+            else:
+                existing.user_id = user_id
+                existing.platform = platform
+                existing.display_name = display_name
+                existing.platform_user_id = entry.get("platform_user_id")
+                existing.status = imported_status
+                existing.note = entry.get("note")
+                existing.last_login_at = last_login_at
+                existing.last_checked_at = now
+                existing.is_deleted = False
+                existing.deleted_at = None
+                existing.updated_at = now
             imported.append(display_name)
 
     db.flush()
