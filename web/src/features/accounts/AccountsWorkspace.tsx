@@ -6,7 +6,6 @@ import {
   importAccountPackage,
   listAccounts,
   listPlatforms,
-  loginPlatformAccount,
   pollLoginSessionUntilActive,
   startAccountLoginSession,
   startPlatformLoginSession,
@@ -35,12 +34,23 @@ export function AccountsWorkspace() {
   const [renameValue, setRenameValue] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState<Account | null>(null);
   const [activeLoginSessions, setActiveLoginSessions] = useState<Record<number, ActiveLoginSession>>({});
-  const selectedPlatformCode = platforms[0]?.code ?? DEFAULT_PLATFORM_CODE;
-  const selectedPlatformName = platforms[0]?.name ?? "头条号";
+  const [selectedPlatform, setSelectedPlatform] = useState("");
+
+  const selectedPlatformCode = selectedPlatform || (platforms[0]?.code ?? DEFAULT_PLATFORM_CODE);
+  const selectedPlatformName = platforms.find(p => p.code === selectedPlatformCode)?.name ?? "";
+
+  const filteredAccounts = selectedPlatform
+    ? accounts.filter(a => a.platform_code === selectedPlatform)
+    : accounts;
 
   async function refreshAccounts() {
     const data = await listAccounts();
     setAccounts(data);
+  }
+
+  function handlePlatformChange(platformCode: string) {
+    setSelectedPlatform(platformCode);
+    localStorage.setItem('selectedPlatform', platformCode);
   }
 
   useEffect(() => {
@@ -52,40 +62,13 @@ export function AccountsWorkspace() {
       setPlatforms(platformData);
       setAccounts(accountData);
     })();
+
+    // 从 localStorage 恢复平台选择
+    const savedPlatform = localStorage.getItem('selectedPlatform');
+    if (savedPlatform) {
+      setSelectedPlatform(savedPlatform);
+    }
   }, []);
-
-  async function login(useBrowser: boolean) {
-    if (useBrowser) {
-      await startNewRemoteLogin();
-      return;
-    }
-    setLoading(true);
-    toast("正在复用已保存状态", "info");
-    try {
-      const payload: PlatformLoginPayload = {
-        display_name: displayName,
-        account_key: accountKey,
-        use_browser: useBrowser,
-      };
-      await loginPlatformAccount(selectedPlatformCode, { ...payload, channel: "chromium", wait_seconds: 180 });
-      await refreshAccounts();
-      setDisplayName("头条号账号");
-      setAccountKey("");
-      toast("账号已添加", "success");
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "添加账号失败", "error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function check(account: Account) {
-    await startExistingRemoteLogin(account, "校验");
-  }
-
-  async function relogin(account: Account) {
-    await startExistingRemoteLogin(account, "重新登录");
-  }
 
   async function startNewRemoteLogin() {
     setLoading(true);
@@ -315,7 +298,14 @@ export function AccountsWorkspace() {
           <h2>添加平台账号</h2>
           <label>
             平台
-            <input value={selectedPlatformName} readOnly />
+            <select value={selectedPlatform} onChange={(event) => handlePlatformChange(event.target.value)}>
+              <option value="">-- 全部 --</option>
+              {platforms.map(platform => (
+                <option key={platform.code} value={platform.code}>
+                  {platform.name}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             显示名称
@@ -326,19 +316,25 @@ export function AccountsWorkspace() {
             <input value={accountKey} onChange={(event) => setAccountKey(event.target.value)} />
           </label>
           <div className="accountActions">
-            <button className="primaryButton" disabled={loading} type="button" onClick={() => void startNewRemoteLogin()}>
+            <button className="primaryButton" disabled={loading || !selectedPlatform} type="button" onClick={() => void startNewRemoteLogin()}>
               <UserPlus size={16} />
               添加授权
             </button>
-            <button className="secondaryButton" disabled={loading} type="button" onClick={() => void login(false)}>
-              <CheckCircle2 size={16} />
-              复用状态
-            </button>
           </div>
+          <small style={{ color: "var(--fg-3)", fontSize: 11 }}>* 仅选择具体平台后可添加</small>
         </section>
 
-        <section className="accountList">
-          {accounts.map((account) => (
+        <div>
+          <div className="listHeader">
+            <h3>授权账号 <span style={{ color: "var(--fg)", fontSize: 13, textTransform: "none", letterSpacing: 0 }}>
+              {selectedPlatform && selectedPlatformName ? `(${selectedPlatformName})` : "(全部)"}
+            </span></h3>
+            <button type="button" className="listHeaderButton" disabled={loading} onClick={() => void refreshAccounts()}>
+              🔄 刷新
+            </button>
+          </div>
+          <section className="accountList">
+            {filteredAccounts.map((account) => (
             <article className="accountCard" key={account.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {renamingId === account.id ? (
@@ -398,8 +394,9 @@ export function AccountsWorkspace() {
               ) : null}
             </article>
           ))}
-          {accounts.length === 0 ? <p className="emptyText">暂无授权账号</p> : null}
-        </section>
+            {filteredAccounts.length === 0 ? <p className="emptyText">暂无授权账号</p> : null}
+          </section>
+        </div>
       </section>
 
       {confirmDeleteAccount ? (

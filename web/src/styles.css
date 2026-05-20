@@ -979,7 +979,8 @@ input:focus, select:focus, textarea:focus {
   font-weight: 500;
 }
 
-.accountForm input {
+.accountForm input,
+.accountForm select {
   width: 100%;
   border: 1px solid var(--hair);
   border-radius: var(--r);
@@ -989,25 +990,35 @@ input:focus, select:focus, textarea:focus {
   background: var(--paper);
 }
 
+.accountForm select {
+  cursor: pointer;
+}
+
 .accountActions { display: flex; gap: 8px; }
 .accountActions .primaryButton, .accountActions .secondaryButton { flex: 1; }
 
 .accountList {
   display: grid;
-  gap: 1px;
-  background: var(--hair);
-  border: 1px solid var(--hair);
-  border-radius: var(--r-lg);
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
+  max-height: 500px;
+  overflow-y: auto;
+  padding: 1px 0;
 }
 
 .accountCard {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px 16px;
-  padding: 20px 22px;
+  padding: 16px 18px;
   background: var(--paper);
   transition: background .15s;
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
 }
 .accountCard:hover { background: var(--cream); }
 
@@ -1054,6 +1065,45 @@ input:focus, select:focus, textarea:focus {
   transition: all .14s;
 }
 .accountCardActions button:hover { border-color: var(--hair-2); color: var(--fg); background: var(--cream); }
+
+.listHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  margin-bottom: 8px;
+}
+
+.listHeader h3 {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-3);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.listHeaderButton {
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  background: var(--paper);
+  cursor: pointer;
+  transition: all .12s;
+}
+
+.listHeaderButton:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--hair-2);
+  background: var(--cream);
+}
+
+.listHeaderButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 /* ═══════════════════════════════ SYSTEM STATUS ═══════════════════════════════ */
 .statGrid {
