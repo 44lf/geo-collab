@@ -104,7 +104,7 @@ def _run_in_plain_thread(fn: Callable[[], Any]) -> Any:
             pass
         try:
             result.append(fn())
-        except BaseException:
+        except Exception:
             exc_type, exc, tb = sys.exc_info()
             if exc_type is not None and exc is not None:
                 error.append((exc_type, exc, tb))
@@ -679,7 +679,7 @@ def _load_login_page(page, platform_code: str, account_key: str, home_url: str) 
             account_key,
             exc_info=True,
         )
-        raise ClientError(f"Remote login page load failed: {home_url}") from None
+        raise ClientError(f"Remote login page load failed: {home_url}")
 
 
 def _start_login_page_loader(session_id: str, platform_code: str, account_key: str, home_url: str) -> None:

@@ -259,6 +259,10 @@ def stream_task_events(
                     break
                 except Exception:
                     logging.getLogger(__name__).exception("SSE error for task %s", task_id)
+                    try:
+                        yield "retry: 15000\nevent: error\ndata: {}\n\n"
+                    except Exception:
+                        pass
                     break
 
                 time.sleep(1)

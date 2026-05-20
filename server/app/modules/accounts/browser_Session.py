@@ -657,18 +657,18 @@ def _start_idle_cleanup() -> None:
             try:
                 _cleanup_stop_requested_sessions()
             except Exception:
-                pass
+                _logger.warning("stop-requested session cleanup failed", exc_info=True)
             idle_tick += 1
             if idle_tick >= 15:  # every 30s
                 idle_tick = 0
                 try:
                     _cleanup_stale_sessions(idle_timeout())
                 except Exception:
-                    pass
+                    _logger.warning("stale session cleanup failed", exc_info=True)
                 try:
                     _cleanup_zombie_sessions()
                 except Exception:
-                    pass
+                    _logger.warning("zombie session cleanup failed", exc_info=True)
 
     _idle_cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True, name="session-idle-cleanup")
     _idle_cleanup_thread.start()

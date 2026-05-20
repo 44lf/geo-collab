@@ -103,10 +103,15 @@ def create_app() -> FastAPI:
     from server.app.modules.tasks import recover_stuck_records
     try:
         recover_db = SessionLocal()
-        recover_stuck_records(recover_db)
-        recover_db.close()
+        try:
+            recover_stuck_records(recover_db)
+        finally:
+            recover_db.close()
     except Exception:
-        pass
+        import logging as _logging
+        _logging.getLogger(__name__).exception(
+            "Startup recovery failed — stuck records may not have been reset"
+        )
 
     # 全局异常处理：业务层统一 raise ClientError → 400
     @app.exception_handler(ClientError)
