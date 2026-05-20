@@ -166,6 +166,9 @@ alembic upgrade head
 echo "🔄 创建初始用户（如设置了 GEO_SEED_USERS）..."
 python -m server.scripts.seed_users || true
 
+docker compose exec app python -m server.scripts.seed_users   # 服务器用这个
+
+
 echo "✓ 启动 API 服务..."
 exec uvicorn server.app.main:app --host 0.0.0.0 --port 8000
 ```

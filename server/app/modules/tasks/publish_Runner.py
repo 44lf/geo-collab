@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -154,7 +155,13 @@ def run_publish(
         if record_id is not None:
             associate_record_with_session(record_id, session.id)
 
-    if session.browser_context is None:
+    current_thread_id = threading.get_ident()
+    context_needs_creation = (
+        session.browser_context is None
+        or session.context_thread_id != current_thread_id
+    )
+
+    if context_needs_creation:
         pw = None
         try:
             with publish_step("start Playwright"):
@@ -172,6 +179,7 @@ def run_publish(
                 if callable(grant_permissions):
                     grant_permissions(["clipboard-read", "clipboard-write"])
                 attach_browser_handles(session.id, pw, context, None)
+                session.context_thread_id = current_thread_id
         except Exception:
             if pw is not None:
                 try:

@@ -52,6 +52,7 @@ class RemoteBrowserSession:
     playwright: Any | None = field(default=None, repr=False)
     browser_context: Any | None = field(default=None, repr=False)
     page: Any | None = field(default=None, repr=False)
+    context_thread_id: int | None = field(default=None, repr=False)
     operation_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     started_at: float = field(default_factory=time.monotonic)
 
