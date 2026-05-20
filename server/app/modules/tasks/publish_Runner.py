@@ -13,6 +13,7 @@ from server.app.modules.articles.tiptap_Parser import BodySegment, parse_body_se
 from server.app.modules.tasks.drivers.driver_Base import PublishPayload
 from server.app.modules.accounts import account_key_from_state_path, launch_options, profile_dir_for_key, clear_profile_locks
 from server.app.modules.accounts import (
+    associate_record_with_session,
     attach_browser_handles,
     get_or_create_account_session,
     keep_session_alive,
@@ -120,6 +121,7 @@ def _build_payload(
 
 def run_publish(
     *,
+    record_id: int | None = None,
     article: Article,
     account: Account,
     channel: str = "chromium",
@@ -145,6 +147,9 @@ def run_publish(
 
     with publish_step("remote browser session"):
         session = get_or_create_account_session(platform_code, account_key)
+        # Associate immediately so the timeout handler can stop this session.
+        if record_id is not None:
+            associate_record_with_session(record_id, session.id)
 
     if session.browser_context is None:
         pw = None

@@ -225,9 +225,21 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
                 running_record = running.pop(future)
                 if future in timed_out and not future.done():
                     _mark_record_failed(db, task.id, running_record.record_id, "Timeout: record execution exceeded 300s")
+                    # Stopping the session closes Chromium context, causing the
+                    # Playwright thread to receive TargetClosedError and terminate.
+                    try:
+                        session = get_session_for_record(running_record.record_id)
+                        if session is not None:
+                            stop_remote_browser_session(session.id)
+                    except Exception:
+                        _logger.warning(
+                            "Failed to stop session for timed-out record %d",
+                            running_record.record_id,
+                            exc_info=True,
+                        )
                     future.cancel()
                     try:
-                        future.result(timeout=5)
+                        future.result(timeout=10)
                     except Exception:
                         pass
                     _release_account_lock(running_record.account_id)
@@ -541,9 +553,11 @@ def build_publish_runner_for_record(record: PublishRecord):
     settings = get_settings()
     channel = settings.publish_browser_channel
     executable_path = settings.publish_browser_executable_path
+    _record_id = record.id
 
     def _runner(article, account, *, stop_before_publish=False):
         return run_publish(
+            record_id=_record_id,
             article=article,
             account=account,
             channel=channel,
