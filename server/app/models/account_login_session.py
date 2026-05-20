@@ -30,6 +30,7 @@ class AccountLoginSession(Base):
     result_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     result_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    previous_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

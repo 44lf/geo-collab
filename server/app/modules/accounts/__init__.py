@@ -19,6 +19,7 @@ from server.app.modules.accounts.account_Crud import (  # noqa: F401
     state_dir_for_key,
     state_path_for_key,
     profile_dir_for_key,
+    clear_profile_locks,
     relative_to_data_dir,
     account_key_from_state_path,
     get_or_create_platform,

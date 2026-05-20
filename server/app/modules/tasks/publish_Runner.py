@@ -11,7 +11,7 @@ from server.app.models import Account, Article
 from server.app.modules.articles.asset_Store import resolve_asset_path
 from server.app.modules.articles.tiptap_Parser import BodySegment, parse_body_segments
 from server.app.modules.tasks.drivers.driver_Base import PublishPayload
-from server.app.modules.accounts import account_key_from_state_path, launch_options, profile_dir_for_key
+from server.app.modules.accounts import account_key_from_state_path, launch_options, profile_dir_for_key, clear_profile_locks
 from server.app.modules.accounts import (
     attach_browser_handles,
     get_or_create_account_session,
@@ -65,14 +65,6 @@ def _attach_page_network_diagnostics(page: Any) -> None:
     page.on("requestfailed", on_request_failed)
     page.on("response", on_response)
 
-
-def _clear_profile_locks(profile_dir: Path) -> None:
-    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
-        lock = profile_dir / name
-        try:
-            lock.unlink(missing_ok=True)
-        except OSError:
-            pass
 
 
 def _build_payload(
@@ -160,7 +152,7 @@ def run_publish(
             with publish_step("start Playwright"):
                 pw = sync_playwright().start()
             with publish_step("launch Chromium"):
-                _clear_profile_locks(profile_dir_for_key(platform_code, account_key))
+                clear_profile_locks(profile_dir_for_key(platform_code, account_key))
                 options = launch_options(channel, executable_path)
                 options["env"] = {**os.environ, "DISPLAY": session.display}
                 context = pw.chromium.launch_persistent_context(

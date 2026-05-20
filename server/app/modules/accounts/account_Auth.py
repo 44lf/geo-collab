@@ -29,6 +29,7 @@ from server.app.modules.accounts.account_Crud import (
     state_path_for_key,
     state_dir_for_key,
     profile_dir_for_key,
+    clear_profile_locks,
     relative_to_data_dir,
     account_key_from_state_path,
     get_or_create_platform,
@@ -183,6 +184,7 @@ def start_login_session(
     ).scalar_one_or_none()
     now = utcnow()
     if account is None:
+        previous_status = None
         account = Account(
             user_id=user_id,
             platform=platform,
@@ -195,6 +197,7 @@ def start_login_session(
         )
         db.add(account)
     else:
+        previous_status = account.status
         account.display_name = payload.display_name
         account.note = payload.note
         account.status = "unknown"
@@ -209,6 +212,7 @@ def start_login_session(
         account_key,
         payload.channel,
         payload.executable_path,
+        previous_status=previous_status,
     )
     return AccountBrowserSessionResult(
         account=get_account(db, account.id) or account,
@@ -221,6 +225,7 @@ def start_login_session(
 
 def start_account_login_session(db: Session, account: Account, payload: AccountCheckRequest) -> AccountBrowserSessionResult:
     platform_code, account_key = account_key_from_state_path(account.state_path)
+    previous_status = account.status
     account.status = "unknown"
     account.last_checked_at = utcnow()
     account.updated_at = account.last_checked_at
@@ -233,6 +238,7 @@ def start_account_login_session(db: Session, account: Account, payload: AccountC
         account_key,
         payload.channel,
         payload.executable_path,
+        previous_status=previous_status,
     )
     return AccountBrowserSessionResult(
         account=get_account(db, account.id) or account,
@@ -320,6 +326,7 @@ def _start_login_browser_via_worker(
     account_key: str,
     channel: str,
     executable_path: str | None,
+    previous_status: str | None = None,
 ) -> LoginBrowserSessionHandle:
     request = AccountLoginSession(
         id=_new_login_session_request_id(),
@@ -329,6 +336,7 @@ def _start_login_browser_via_worker(
         channel=channel,
         executable_path=executable_path,
         status=LOGIN_STATUS_PENDING,
+        previous_status=previous_status,
         created_at=utcnow(),
         updated_at=utcnow(),
     )
@@ -529,6 +537,11 @@ def _worker_cancel_login_session(db: Session, request: AccountLoginSession) -> N
             _stop_login_browser_impl(request.account_key, request.browser_session_id)
         request.status = LOGIN_STATUS_CANCELLED
         request.error_message = None
+        if request.previous_status is not None:
+            account = db.get(Account, request.account_id)
+            if account is not None and account.status == "unknown":
+                account.status = request.previous_status
+                account.updated_at = utcnow()
     except Exception as exc:
         request.status = LOGIN_STATUS_FAILED
         request.error_message = str(exc)
@@ -612,20 +625,11 @@ def _start_login_browser_impl(platform_code: str, account_key: str, channel: str
         options = launch_options(channel, executable_path)
         options["env"] = {**os.environ, "DISPLAY": session.display}
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                context = pw.chromium.launch_persistent_context(
-                    user_data_dir=str(profile_dir_for_key(platform_code, account_key)),
-                    **options,
-                )
-                break
-            except Exception as e:
-                if attempt < max_retries - 1 and "profile appears to be in use" in str(e).lower():
-                    import time
-                    time.sleep(0.5 * (attempt + 1))
-                    continue
-                raise
+        clear_profile_locks(profile_dir_for_key(platform_code, account_key))
+        context = pw.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir_for_key(platform_code, account_key)),
+            **options,
+        )
         context.set_default_navigation_timeout(30000)
         page = _primary_page_for_context(context)
         attach_browser_handles(session.id, pw, context, page)

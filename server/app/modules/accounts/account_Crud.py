@@ -32,6 +32,15 @@ def profile_dir_for_key(platform_code: str, account_key: str) -> Path:
     return state_dir_for_key(platform_code, account_key) / "profile"
 
 
+def clear_profile_locks(profile_dir: Path) -> None:
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        lock = profile_dir / name
+        try:
+            lock.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def relative_to_data_dir(path: Path) -> str:
     return path.resolve().relative_to(get_data_dir().resolve()).as_posix()
 
