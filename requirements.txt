@@ -2,6 +2,7 @@ fastapi==0.124.0
 uvicorn[standard]==0.38.0
 SQLAlchemy==2.0.45
 alembic==1.17.2
+pydantic==2.13.3
 pydantic-settings==2.12.0
 pytest==9.0.2
 httpx==0.28.1
@@ -15,7 +16,8 @@ pymysql==1.1.1
 python-jose[cryptography]==3.4.0
 aiofiles==24.1.0
 slowapi==0.1.9
-litellm
+litellm==1.85.1
+openai==2.37.0
 langgraph
 markdown
 python-frontmatter
