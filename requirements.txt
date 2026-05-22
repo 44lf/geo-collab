@@ -19,3 +19,4 @@ litellm
 langgraph
 markdown
 python-frontmatter
+minio

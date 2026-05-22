@@ -36,6 +36,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      minio:
+        condition: service_started
     env_file:
       - .env
     environment:
@@ -58,6 +60,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      minio:
+        condition: service_started
     env_file:
       - .env
     environment:

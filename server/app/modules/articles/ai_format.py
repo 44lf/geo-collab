@@ -148,6 +148,7 @@ def run_ai_format(article_id: int) -> None:
 
         new_content_json = _apply_headings(content_json, heading_indices)
 
+        refs: list = []
         if mode_a:
             image_positions: list[int] = parsed.get("image_positions", [])
             if image_positions and article.stock_category_id:
@@ -168,7 +169,7 @@ def run_ai_format(article_id: int) -> None:
         logger.info(
             "ai_format applied %d headings%s to article %s",
             len(heading_indices),
-            f" + {len(refs) if mode_a else 0} images" if mode_a else "",
+            f" + {len(refs)} images" if refs else "",
             article_id,
         )
 
