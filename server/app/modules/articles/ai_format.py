@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from server.app.core.config import get_settings
@@ -11,18 +12,28 @@ logger = logging.getLogger(__name__)
 
 # 模式 A：无图且有栏目 — 同时识别小标题和插图位置
 _SYSTEM_PROMPT_WITH_IMAGES = (
-    "你是一个文章排版助手。给定编号的顶层节点列表（每行格式：序号 [类型]: 文本），请：\n"
-    "1. 判断哪些节点应格式化为小标题（H1），小标题通常是简短的主题引导句，一般不超过20个字。\n"
+    "你是文章排版助手。给定编号的顶层节点列表（每行格式：序号 [类型]: 文本）。\n"
+    "任务：\n"
+    "1. 判断哪些节点应设为小标题（H1）。小标题特征：简短（≤20字）、作为章节引导、语义是"标题"而非正文句子。原则：宁少勿多。\n"
     "2. 标出应插入配图的位置（在哪个节点索引之后插图），根据文章内容判断需要几张（如游戏推荐文章，每款游戏对应一张）。\n"
-    '只返回合法 JSON，格式为 {"heading_indices": [0,3], "image_positions": [1,4,7]}，不输出任何其他内容。'
+    "返回格式：只返回一行合法 JSON，不加任何 markdown 标记、代码块或解释文字。\n"
+    '格式示例：{"heading_indices": [0,3], "image_positions": [1,4,7]}'
 )
 
 # 模式 B：已有图或无栏目 — 仅整理小标题（含重新评估已有标题）
 _SYSTEM_PROMPT_HEADINGS_ONLY = (
-    "你是一个文章排版助手。给定编号的顶层节点列表（每行格式：序号 [类型]: 文本），"
-    "判断哪些节点应格式化为小标题（H1），包括验证已有小标题是否合逻辑、是否连贯。"
-    '只返回合法 JSON，格式为 {"heading_indices": [0,3]}，没有小标题则返回 {"heading_indices": []}，不输出任何其他内容。'
+    "你是文章排版助手。给定编号的顶层节点列表（每行格式：序号 [类型]: 文本）。\n"
+    "任务：判断哪些节点应设为小标题（H1），包括验证已有小标题是否合逻辑、是否连贯。\n"
+    "小标题特征：简短（≤20字）、作为章节引导、语义是"标题"而非正文句子。原则：宁少勿多，不确定时不标。\n"
+    "返回格式：只返回一行合法 JSON，不加任何 markdown 标记、代码块或解释文字。\n"
+    '格式示例：{"heading_indices": [2,7]}，无小标题则返回 {"heading_indices": []}'
 )
+
+
+def _extract_json(raw: str) -> str:
+    """从 LLM 输出中提取 JSON，兼容 markdown 代码块包裹的情况。"""
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    return m.group(1) if m else raw
 
 
 def _top_level_text_nodes(content_json: dict) -> list[tuple[int, dict]]:
@@ -143,7 +154,7 @@ def run_ai_format(article_id: int) -> None:
         )
 
         raw = (response.choices[0].message.content or "").strip()
-        parsed = json.loads(raw)
+        parsed = json.loads(_extract_json(raw))
         heading_indices = set(parsed.get("heading_indices", []))
 
         new_content_json = _apply_headings(content_json, heading_indices)

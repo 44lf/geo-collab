@@ -311,10 +311,46 @@ def _insert_text_paragraph(page: Any, runs: tuple[tuple[str, bool], ...]) -> Non
     _insert_runs(page, runs)
 
 
+def _set_heading_via_pm(page: Any) -> None:
+    """通过 ProseMirror dispatch 把当前块设为 h1，绕开 Ctrl+Alt+1 键盘快捷键。
+
+    Ctrl+Alt+1 在 Linux/Xvfb 环境下会被 WM（Openbox/ICEWM）拦截为切换工作区，
+    导致 Chromium 失焦，后续粘贴操作失效，已插入内容丢失。
+    此函数通过 JS evaluate 直接操作 ProseMirror 状态，与系统快捷键完全隔离。
+    若 PM 实例路径无法找到（不同版本挂载点不同），静默跳过，内容仍完整插入。
+    """
+    try:
+        applied = page.evaluate(
+            """() => {
+                const editor = Array.from(document.querySelectorAll("[contenteditable='true']"))
+                    .find(el => el.getBoundingClientRect().height >= 80);
+                if (!editor) return false;
+                // syl-editor 把 view 挂在不同属性上，逐一尝试
+                const view = editor._prosemirror_view
+                    ?? editor.__prosemirror_view__
+                    ?? editor.pmView
+                    ?? editor._view
+                    ?? null;
+                if (!view || !view.state || !view.dispatch) return false;
+                const headingType = view.state.schema.nodes.heading;
+                if (!headingType) return false;
+                const { setBlockType } = window.ProsemirrorCommands
+                    ?? window.prosemirrorCommands
+                    ?? {};
+                if (typeof setBlockType !== 'function') return false;
+                const cmd = setBlockType(headingType, { level: 1 });
+                return cmd(view.state, view.dispatch) ?? false;
+            }"""
+        )
+        if applied:
+            page.wait_for_timeout(150)
+    except Exception:
+        logger.warning("_set_heading_via_pm failed, will insert as plain paragraph", exc_info=True)
+
+
 def _insert_heading_paragraph(page: Any, runs: tuple[tuple[str, bool], ...]) -> None:
-    """Apply heading format on current line (Ctrl+Alt+1), then insert text."""
-    page.keyboard.press("Control+Alt+1")
-    page.wait_for_timeout(150)
+    """尝试用 ProseMirror API 设为 h1，失败则静默降级为普通段落（保证内容完整）。"""
+    _set_heading_via_pm(page)
     _insert_runs(page, runs)
 
 
