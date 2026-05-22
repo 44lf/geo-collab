@@ -43,6 +43,20 @@ def _top_level_text_nodes(content_json: dict) -> list[tuple[int, dict]]:
     ]
 
 
+def _non_empty_text_nodes(content_json: dict) -> list[tuple[int, dict]]:
+    return [(i, node) for i, node in _top_level_text_nodes(content_json) if _node_text(node).strip()]
+
+
+def has_ai_format_targets(raw_content_json: Any) -> bool:
+    if isinstance(raw_content_json, str):
+        content_json = loads_content_json(raw_content_json)
+    elif isinstance(raw_content_json, dict):
+        content_json = raw_content_json
+    else:
+        content_json = {}
+    return bool(_non_empty_text_nodes(content_json))
+
+
 def _node_text(node: dict) -> str:
     parts = []
     for child in node.get("content") or []:
@@ -199,8 +213,9 @@ def run_ai_format(
             return
 
         content_json = loads_content_json(article.content_json)
-        text_nodes = _top_level_text_nodes(content_json)
+        text_nodes = _non_empty_text_nodes(content_json)
         if not text_nodes:
+            logger.info("ai_format skipped article %s: no non-empty paragraph/heading nodes", article_id)
             return
 
         listing = "\n".join(

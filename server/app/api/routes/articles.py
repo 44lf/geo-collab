@@ -11,7 +11,7 @@ from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
 from server.app.models import Article, PublishRecord, User
 from server.app.schemas.article import ArticleCoverUpdate, ArticleCreate, ArticleListRead, ArticleRead, ArticleUpdate
-from server.app.shared.errors import ConflictError
+from server.app.shared.errors import ClientError, ConflictError
 from server.app.modules.articles import (
     create_article,
     delete_article,
@@ -183,6 +183,10 @@ def trigger_ai_format_endpoint(
 ) -> dict[str, str]:
     article = _verify_article_ownership(get_article(db, article_id), current_user)
     _check_not_ai_locked(db, article)
+    from server.app.modules.articles.ai_format import has_ai_format_targets
+
+    if not has_ai_format_targets(article.content_json):
+        raise ClientError("文章正文为空，无法进行 AI 格式调整")
 
     lock_started_at = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
     article.ai_checking = True

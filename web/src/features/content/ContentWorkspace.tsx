@@ -760,13 +760,17 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   }
 
   async function handleAiFormat() {
-    if (!draft?.id) return;
+    const saved = await persistArticle({ quiet: true });
+    if (!saved) {
+      toast("请先保存有效文章后再启动 AI 格式", "error");
+      return;
+    }
     const startedAt = Date.now();
     setAiChecking(true);
     setAiCheckStartedAt(startedAt);
     setAiFormatRemainingSeconds(AI_FORMAT_TIMEOUT_SECONDS);
     try {
-      await triggerAiFormat(draft.id);
+      await triggerAiFormat(saved.id);
       toast("AI 排版已启动，请稍候…", "success");
     } catch (error) {
       setAiChecking(false);

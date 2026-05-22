@@ -227,6 +227,26 @@ def _focus_body_editor(page: Any) -> None:
         raise ToutiaoPublishError("Toutiao body editor not found")
 
 
+def _focus_body_editor_end(page: Any) -> None:
+    moved = page.evaluate(
+        """() => {
+            const editor = Array.from(document.querySelectorAll("[contenteditable='true']"))
+                .find(el => el.getBoundingClientRect().height >= 80);
+            if (!editor) return false;
+            editor.focus();
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            return true;
+        }"""
+    )
+    if not moved:
+        raise ToutiaoPublishError("Toutiao body editor not found")
+
+
 def _fill_body(page: Any, segments: list[BodySegment]) -> None:
     """逐段插入正文：标题用 '# ' inputRule，加粗用 Ctrl+B，图片用原有上传流程。"""
     if not segments:
@@ -239,29 +259,74 @@ def _fill_body(page: Any, segments: list[BodySegment]) -> None:
     record_publish_diagnostic(f"body fill: {len(paragraphs)} paragraphs")
     _dismiss_blocking_popups(page)
     _clear_body_editor(page)
-    _focus_body_editor(page)
+    _focus_body_editor_end(page)
 
     for i, para in enumerate(paragraphs):
         is_last = i == len(paragraphs) - 1
+        _focus_body_editor_end(page)
 
         if para.kind == "image":
             _dismiss_blocking_popups(page)
             record_publish_diagnostic(f"body image upload: asset_id={para.image_asset_id}")
             _paste_body_image_path(page, para.image_path, para.image_asset_id)
             if not is_last:
-                _focus_body_editor(page)
+                _focus_body_editor_end(page)
                 page.keyboard.press("Enter")
                 page.wait_for_timeout(100)
         elif para.kind == "heading":
             _insert_heading_paragraph(page, para.runs)
             if not is_last:
+                _focus_body_editor_end(page)
                 page.keyboard.press("Enter")
                 page.wait_for_timeout(100)
         else:
             _insert_text_paragraph(page, para.runs)
             if not is_last:
+                _focus_body_editor_end(page)
                 page.keyboard.press("Enter")
                 page.wait_for_timeout(100)
+    _verify_body_text_complete(page, paragraphs)
+
+
+def _body_editor_text(page: Any) -> str:
+    text = page.evaluate(
+        """() => {
+            const editor = Array.from(document.querySelectorAll("[contenteditable='true']"))
+                .find(el => el.getBoundingClientRect().height >= 80);
+            if (!editor) return null;
+            return editor.innerText || editor.textContent || "";
+        }"""
+    )
+    if text is None:
+        raise ToutiaoPublishError("Toutiao body editor not found")
+    return str(text)
+
+
+def _compact_body_text(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
+def _verify_body_text_complete(page: Any, paragraphs: list[BodyParagraph]) -> None:
+    expected_chunks = [
+        _compact_body_text("".join(text for text, _ in para.runs))
+        for para in paragraphs
+        if para.kind in ("text", "heading")
+    ]
+    expected_chunks = [chunk for chunk in expected_chunks if chunk]
+    if not expected_chunks:
+        return
+
+    actual = _compact_body_text(_body_editor_text(page))
+    cursor = 0
+    for chunk in expected_chunks:
+        index = actual.find(chunk, cursor)
+        if index < 0:
+            record_publish_diagnostic(
+                f"body verify failed: expected_chunks={len(expected_chunks)} actual_len={len(actual)}"
+            )
+            raise ToutiaoPublishError(f"正文写入不完整，缺失片段: {chunk[:80]}", _screenshot(page))
+        cursor = index + len(chunk)
+    record_publish_diagnostic(f"body verify ok: expected_chunks={len(expected_chunks)} actual_len={len(actual)}")
 
 
 def _clear_body_editor(page: Any) -> None:
