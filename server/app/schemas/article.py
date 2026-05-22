@@ -90,6 +90,7 @@ class ArticleRead(BaseModel):
     version: int
     body_assets: list[ArticleBodyAssetRead]
     published_count: int = 0  # 成功发布次数
+    ai_checking: bool = False
     created_at: datetime
     updated_at: datetime
 
