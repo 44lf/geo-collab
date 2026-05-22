@@ -9,9 +9,15 @@ import {
 export function EditorToolbar({
   editor,
   onImageUpload,
+  articleId: _articleId,
+  aiChecking,
+  onAiFormat,
 }: {
   editor: ReturnType<typeof useEditor>;
   onImageUpload: (files: File[]) => Promise<void>;
+  articleId: number;
+  aiChecking: boolean;
+  onAiFormat: () => void;
 }) {
   if (!editor) return null;
 
@@ -73,6 +79,17 @@ export function EditorToolbar({
         <ImagePlus size={16} />
         <input accept="image/*" type="file" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void onImageUpload(files); event.currentTarget.value = ""; }} />
       </label>
+
+      <span className="toolbarSep" />
+
+      <button
+        onClick={onAiFormat}
+        disabled={aiChecking}
+        title="AI 格式调整"
+        type="button"
+      >
+        {aiChecking ? "AI 调整中…" : "AI 格式"}
+      </button>
     </div>
   );
 }

@@ -297,6 +297,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
   const [groupPickerArticle, setGroupPickerArticle] = useState<ArticleSummary | null>(null);
+  const [aiChecking, setAiChecking] = useState(false);
   const [groupPickerSelectedId, setGroupPickerSelectedId] = useState<number | null>(null);
   const [confirmDeleteArticle, setConfirmDeleteArticle] = useState(false);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(false);
@@ -658,6 +659,13 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     await persistArticle();
   }
 
+  function handleAiFormat() {
+    if (aiChecking) return;
+    setAiChecking(true);
+    // TODO: implement AI format adjustment
+    setTimeout(() => setAiChecking(false), 0);
+  }
+
   async function deleteCurrentArticle() {
     if (!draft.id) return;
     setLoading(true);
@@ -984,7 +992,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
             {selectedArticle ? <span className="metaText">正文图片 {selectedArticle.body_assets.length} 张</span> : null}
           </section>
 
-          <EditorToolbar editor={editor} onImageUpload={handleBodyImageUpload} />
+          <EditorToolbar editor={editor} onImageUpload={handleBodyImageUpload} articleId={draft.id ?? 0} aiChecking={aiChecking} onAiFormat={handleAiFormat} />
           <div className="editorWrap">
             <EditorContent editor={editor} />
           </div>
