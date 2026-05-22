@@ -134,6 +134,7 @@ from server.app.modules.articles.ai_format import (
     _top_level_paragraphs,
     _paragraph_text,
     _apply_headings,
+    _derive_html_and_text,
 )
 
 
@@ -173,3 +174,17 @@ def test_apply_headings_converts_paragraph_to_h1():
     assert result["content"][0]["type"] == "heading"
     assert result["content"][0]["attrs"]["level"] == 1
     assert result["content"][1]["type"] == "paragraph"
+
+
+def test_derive_html_and_text_generates_correct_output():
+    doc = {
+        "type": "doc",
+        "content": [
+            {"type": "heading", "attrs": {"level": 1}, "content": [{"type": "text", "text": "Title"}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "Body"}]},
+        ],
+    }
+    html, text = _derive_html_and_text(doc)
+    assert html == "<h1>Title</h1><p>Body</p>"
+    assert "Title" in text
+    assert "Body" in text

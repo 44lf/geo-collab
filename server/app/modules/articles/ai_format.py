@@ -39,6 +39,55 @@ def _to_heading(node: dict, level: int = 1) -> dict:
     return {"type": "heading", "attrs": {"level": level}, "content": node.get("content", [])}
 
 
+def _node_text(node: dict) -> str:
+    """Extract plain text from a single block node's children."""
+    parts = []
+    for child in node.get("content") or []:
+        if not isinstance(child, dict):
+            continue
+        if child.get("type") == "text":
+            parts.append(child.get("text", ""))
+        elif child.get("type") == "hardBreak":
+            parts.append("\n")
+    return "".join(parts)
+
+
+def _node_html(node: dict) -> str:
+    """Render a single block node to simple HTML (heading or paragraph)."""
+    inner_parts = []
+    for child in node.get("content") or []:
+        if not isinstance(child, dict):
+            continue
+        if child.get("type") != "text":
+            continue
+        text = child.get("text", "")
+        marks = child.get("marks") or []
+        is_bold = any(isinstance(m, dict) and m.get("type") == "bold" for m in marks)
+        inner_parts.append(f"<strong>{text}</strong>" if is_bold else text)
+    inner = "".join(inner_parts)
+    node_type = node.get("type")
+    if node_type == "heading":
+        level = (node.get("attrs") or {}).get("level", 1)
+        return f"<h{level}>{inner}</h{level}>"
+    return f"<p>{inner}</p>"
+
+
+def _derive_html_and_text(content_json: dict) -> tuple[str, str]:
+    """Regenerate content_html and plain_text from updated content_json."""
+    html_parts: list[str] = []
+    text_parts: list[str] = []
+    for node in content_json.get("content") or []:
+        if not isinstance(node, dict):
+            continue
+        ntype = node.get("type")
+        if ntype in ("heading", "paragraph"):
+            html_parts.append(_node_html(node))
+            t = _node_text(node)
+            if t.strip():
+                text_parts.append(t)
+    return "".join(html_parts), "\n".join(text_parts)
+
+
 def _apply_headings(content_json: dict, heading_indices: set[int]) -> dict:
     content = list(content_json.get("content") or [])
     for i, node in enumerate(content):
@@ -85,7 +134,10 @@ def run_ai_format(article_id: int) -> None:
 
         if heading_indices:
             new_content_json = _apply_headings(content_json, heading_indices)
+            new_html, new_text = _derive_html_and_text(new_content_json)
             article.content_json = dumps_content_json(new_content_json)
+            article.content_html = new_html
+            article.plain_text = new_text
             article.version += 1
             article.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.commit()
