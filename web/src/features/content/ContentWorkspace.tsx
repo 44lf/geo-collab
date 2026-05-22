@@ -19,6 +19,7 @@ import {
   getArticle,
   listArticleGroups,
   listArticles,
+  triggerAiFormat,
   updateArticle,
   updateArticleCover,
   updateArticleGroup,
@@ -434,6 +435,27 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     void refreshGroups();
   }, []);
 
+  useEffect(() => {
+    if (!aiChecking || !draft?.id) return;
+    const interval = setInterval(async () => {
+      const res = await fetch(`/api/articles/${draft.id}`, { credentials: "include" });
+      if (!res.ok) return;
+      const data = await res.json() as { ai_checking?: boolean; content_json?: unknown };
+      if (!data.ai_checking) {
+        setAiChecking(false);
+        if (data.content_json) {
+          const displayDoc = normalizeEditorDocument(data.content_json, "display");
+          editor?.commands.setContent(displayDoc);
+        }
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [aiChecking, draft?.id, editor]);
+
+  useEffect(() => {
+    editor?.setEditable(!aiChecking);
+  }, [aiChecking, editor]);
+
   function resetDraft() {
     setDraft(makeEmptyDraft());
     setSelectedArticle(null);
@@ -467,6 +489,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         status: detail.status,
         version: detail.version,
       });
+      setAiChecking(detail.ai_checking ?? false);
       const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
       editor?.commands.setContent(displayDoc);
       const bodyState = editor
@@ -659,11 +682,10 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
     await persistArticle();
   }
 
-  function handleAiFormat() {
-    if (aiChecking) return;
+  async function handleAiFormat() {
+    if (!draft?.id) return;
+    await triggerAiFormat(draft.id);
     setAiChecking(true);
-    // TODO: implement AI format adjustment
-    setTimeout(() => setAiChecking(false), 0);
   }
 
   async function deleteCurrentArticle() {
