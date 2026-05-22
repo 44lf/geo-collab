@@ -77,10 +77,12 @@ def has_publishable_body(article: Any) -> bool:
     return bool(extract_body_image_nodes(loads_content_json(article.content_json)))
 
 
-def _append_segments(node: Any, segments: list[BodySegment], depth: int = 0) -> None:
+def _append_segments(
+    node: Any, segments: list[BodySegment], depth: int = 0, _hlevel: int | None = None
+) -> None:
     if isinstance(node, list):
         for child in node:
-            _append_segments(child, segments, depth)
+            _append_segments(child, segments, depth, _hlevel)
         return
     if not isinstance(node, dict):
         return
@@ -90,7 +92,9 @@ def _append_segments(node: Any, segments: list[BodySegment], depth: int = 0) -> 
     if node_type == "text":
         text = node.get("text")
         if isinstance(text, str) and text:
-            segments.append(BodySegment(kind="text", text=text))
+            marks = node.get("marks") or []
+            is_bold = any(isinstance(m, dict) and m.get("type") == "bold" for m in marks)
+            segments.append(BodySegment(kind="text", text=text, bold=is_bold, heading_level=_hlevel))
         return
 
     if node_type == "hardBreak":
@@ -103,6 +107,15 @@ def _append_segments(node: Any, segments: list[BodySegment], depth: int = 0) -> 
             segments.append(BodySegment(kind="image", image_asset_id=asset_id))
         return
 
+    if node_type == "heading":
+        level = int((node.get("attrs") or {}).get("level", 1))
+        content = node.get("content")
+        if isinstance(content, list):
+            for child in content:
+                _append_segments(child, segments, depth, _hlevel=level)
+        segments.append(BodySegment(kind="text", text="\n"))
+        return
+
     content = node.get("content")
     if isinstance(content, list):
         for child in content:
@@ -110,9 +123,10 @@ def _append_segments(node: Any, segments: list[BodySegment], depth: int = 0) -> 
                 child,
                 segments,
                 depth + (1 if node_type in ("orderedList", "bulletList") else 0),
+                _hlevel=None,
             )
 
-    if node_type in {"paragraph", "heading"}:
+    if node_type == "paragraph":
         segments.append(BodySegment(kind="text", text="\n"))
 
 
