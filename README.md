@@ -23,16 +23,25 @@ Docker 启动时自动执行 `alembic upgrade head`，无需手动迁移。
 ### 第一层：项目骨架
 1. **`server/app/core/config.py`** — 全局配置（数据目录、应用名等）
 2. **`server/app/db/session.py`** — 数据库连接方式（MySQL + SQLAlchemy）
-3. **`server/app/models/`** — 12 个 ORM 模型：Platform → Account → Article → PublishTask → PublishRecord，以及 ArticleGroup / Asset 等辅助表，加上 User 模型
+3. **各模块 `models.py`** — ORM 模型按领域分布：
+   - `modules/system/models.py` — User、Platform、WorkerHeartbeat
+   - `modules/accounts/models.py` — Account、AccountLoginSession、BrowserSession
+   - `modules/articles/models.py` — Article、ArticleGroup、Asset、Tag 等
+   - `modules/tasks/models.py` — PublishTask、PublishRecord、TaskLog 等
 
 ### 第二层：业务逻辑
-4. **`server/app/services/accounts.py`** — 账号登录 / 检测 / 导入导出，了解 storage_state 生命周期
-5. **`server/app/services/drivers/toutiao.py`** — Playwright 自动化发文，了解头条页面操作流程
-6. **`server/app/services/publish_runner.py`** — 通用发布编排（`run_publish`），了解 Xvfb session 管理
-7. **`server/app/services/tasks.py`** — 任务调度引擎，了解 publish 执行链路和状态机
+4. **`server/app/modules/accounts/service.py`** — 账号 CRUD；**`auth.py`** — 登录 / 检测 / 导入导出，了解 storage_state 生命周期
+5. **`server/app/modules/tasks/drivers/toutiao.py`** — Playwright 自动化发文，了解头条页面操作流程
+6. **`server/app/modules/tasks/runner.py`** — 通用发布编排（`run_publish`），了解 Xvfb session 管理
+7. **`server/app/modules/tasks/service.py`** + **`executor.py`** — 任务调度引擎，了解 publish 执行链路和状态机
 
 ### 第三层：API 接口
-8. **`server/app/api/routes/`** — 7 个路由模块（accounts, article_groups, articles, assets, publish_records, system, tasks），加上 auth 路由
+8. **各模块 `router.py`** — 路由按领域内聚：
+   - `modules/system/auth_router.py` + `system_router.py` — 认证与系统信息
+   - `modules/accounts/router.py` — 账号管理
+   - `modules/articles/router.py` — 文章、分组、资产、分块上传（四个 router 合一）
+   - `modules/tasks/router.py` — 任务与发布记录（两个 router 合一）
+   - `modules/ai_generation/router.py`、`modules/skills/router.py`、`modules/prompt_templates/router.py`
 
 ### 第四层：前端
 9. **`web/src/`** — React 前端，feature-split 结构（`features/content/`, `features/accounts/`, `features/tasks/`, `features/system/`），Tiptap 富文本编辑器，Lucide 图标
