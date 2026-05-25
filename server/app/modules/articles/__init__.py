@@ -1,4 +1,4 @@
-from server.app.modules.articles.asset_Store import (  # noqa: F401
+from server.app.modules.articles.store import (  # noqa: F401
     StoredAsset,
     asset_url,
     resolve_asset_path,
@@ -10,7 +10,7 @@ from server.app.modules.articles.asset_Store import (  # noqa: F401
     soft_delete_assets,
     get_asset_stats,
 )
-from server.app.modules.articles.tiptap_Parser import (  # noqa: F401
+from server.app.modules.articles.parser import (  # noqa: F401
     BodySegment,
     parse_body_segments,
     has_publishable_body,
@@ -18,7 +18,7 @@ from server.app.modules.articles.tiptap_Parser import (  # noqa: F401
     loads_content_json,
     dumps_content_json,
 )
-from server.app.modules.articles.article_Crud import (  # noqa: F401
+from server.app.modules.articles.service import (  # noqa: F401
     VALID_ARTICLE_STATUSES,
     validate_article_status,
     ensure_asset_exists,

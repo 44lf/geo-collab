@@ -4,20 +4,10 @@ from sqlalchemy.orm import Session
 
 from server.app.core.time import utcnow
 from server.app.db.base import Base
-from server.app.models import (
-    Account,
-    Article,
-    ArticleBodyAsset,
-    ArticleGroup,
-    ArticleGroupItem,
-    Asset,
-    Platform,
-    PublishRecord,
-    PublishTask,
-    PublishTaskAccount,
-    TaskLog,
-    User,
-)
+from server.app.modules.accounts.models import Account
+from server.app.modules.articles.models import Article, ArticleBodyAsset, ArticleGroup, ArticleGroupItem, Asset
+from server.app.modules.system.models import Platform, User
+from server.app.modules.tasks.models import PublishRecord, PublishTask, PublishTaskAccount, TaskLog
 from server.tests.utils import build_test_engine
 
 

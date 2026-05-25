@@ -13,7 +13,7 @@ Security boundary tests covering:
 from fastapi.testclient import TestClient
 
 from server.app.core.security import create_access_token
-from server.app.models.user import User
+from server.app.modules.system.models import User
 from server.tests.utils import build_test_app
 
 

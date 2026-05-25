@@ -1,4 +1,4 @@
-"""Tests for server.app.modules.tasks.publish_runner."""
+"""Tests for server.app.modules.tasks.runner."""
 from __future__ import annotations
 
 import types
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from server.app.modules.tasks.drivers.driver_Base import PublishPayload, PublishResult
+from server.app.modules.tasks.drivers.base import PublishPayload, PublishResult
 from server.app.modules.tasks.drivers.toutiao import (
     PublishFillResult,
     ToutiaoUserInputRequired,
@@ -92,55 +92,55 @@ def _patch_common(monkeypatch, tmp_path: Path, stub_session, pw_cm, context, pag
 
     # get_data_dir → tmp_path
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.get_data_dir",
+        "server.app.modules.tasks.runner.get_data_dir",
         lambda: tmp_path,
     )
 
     # account_key_from_state_path → ("testplat", "k1")
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.account_key_from_state_path",
+        "server.app.modules.tasks.runner.account_key_from_state_path",
         lambda state_path: ("testplat", "k1"),
     )
 
     # _build_payload → returns a stub PublishPayload without touching ORM
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner._build_payload",
+        "server.app.modules.tasks.runner._build_payload",
         lambda article, account, account_key, platform_code, state_path: stub_payload,
     )
 
     # profile_dir_for_key → a path that doesn't need to exist
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.profile_dir_for_key",
+        "server.app.modules.tasks.runner.profile_dir_for_key",
         lambda platform_code, account_key: tmp_path / "profile",
     )
 
     # get_or_create_account_session → returns stub_session directly
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.get_or_create_account_session",
+        "server.app.modules.tasks.runner.get_or_create_account_session",
         lambda platform_code, account_key: stub_session,
     )
 
     # stop_remote_browser_session → no-op (called on launch failure path)
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.stop_remote_browser_session",
+        "server.app.modules.tasks.runner.stop_remote_browser_session",
         lambda session_id: None,
     )
 
     # sync_playwright → pw_cm
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.sync_playwright",
+        "server.app.modules.tasks.runner.sync_playwright",
         lambda: pw_cm,
     )
 
     # launch_options → minimal dict so options["env"] assignment works
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.launch_options",
+        "server.app.modules.tasks.runner.launch_options",
         lambda channel, executable_path: {},
     )
 
     # attach_browser_handles → no-op
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.attach_browser_handles",
+        "server.app.modules.tasks.runner.attach_browser_handles",
         lambda *args, **kwargs: None,
     )
 
@@ -151,7 +151,7 @@ def _patch_common(monkeypatch, tmp_path: Path, stub_session, pw_cm, context, pag
 
 def test_run_publish_routes_by_platform_code(monkeypatch, tmp_path):
     """run_publish calls the driver matched by the platform code in state_path."""
-    from server.app.modules.tasks import publish_runner as publish_runner
+    from server.app.modules.tasks import runner as publish_runner
 
     stub_session = _make_stub_session()
     pw_cm, context, page = _make_stub_pw_context_page()
@@ -181,7 +181,7 @@ def test_run_publish_routes_by_platform_code(monkeypatch, tmp_path):
     stub_driver = _StubDriver()
 
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.get_driver",
+        "server.app.modules.tasks.runner.get_driver",
         lambda platform_code: stub_driver,
     )
 
@@ -200,7 +200,7 @@ def test_run_publish_routes_by_platform_code(monkeypatch, tmp_path):
 
 def test_run_publish_keeps_session_on_user_input_required(monkeypatch, tmp_path):
     """When driver.publish raises ToutiaoUserInputRequired, session is kept alive and exception has session_id/novnc_url."""
-    from server.app.modules.tasks import publish_runner as publish_runner
+    from server.app.modules.tasks import runner as publish_runner
 
     stub_session = _make_stub_session()
     pw_cm, context, page = _make_stub_pw_context_page()
@@ -222,14 +222,14 @@ def test_run_publish_keeps_session_on_user_input_required(monkeypatch, tmp_path)
     stub_driver = _StubDriver()
 
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.get_driver",
+        "server.app.modules.tasks.runner.get_driver",
         lambda platform_code: stub_driver,
     )
 
     kept_alive = []
 
     monkeypatch.setattr(
-        "server.app.modules.tasks.publish_runner.keep_session_alive",
+        "server.app.modules.tasks.runner.keep_session_alive",
         lambda session_id: kept_alive.append(session_id),
     )
 

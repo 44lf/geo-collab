@@ -1,6 +1,6 @@
 from __future__ import annotations
 import types
-from server.app.modules.articles.tiptap_Parser import parse_body_segments, BodySegment
+from server.app.modules.articles.parser import parse_body_segments, BodySegment
 
 
 def _article(content_json="", plain_text="", html="", body_assets=None):
@@ -113,7 +113,7 @@ def test_compact_does_not_merge_across_bold_boundary():
         BodySegment(kind="text", text="b", bold=True),
         BodySegment(kind="text", text="c", bold=False),
     ]
-    from server.app.modules.articles.tiptap_Parser import _compact
+    from server.app.modules.articles.parser import _compact
     result = _compact(segs)
     assert len(result) == 3
 
@@ -123,7 +123,7 @@ def test_compact_merges_same_bold_adjacent():
         BodySegment(kind="text", text="a", bold=True),
         BodySegment(kind="text", text="b", bold=True),
     ]
-    from server.app.modules.articles.tiptap_Parser import _compact
+    from server.app.modules.articles.parser import _compact
     result = _compact(segs)
     assert len(result) == 1
     assert result[0].text == "ab"
@@ -135,6 +135,6 @@ def test_compact_does_not_merge_across_heading_level_boundary():
         BodySegment(kind="text", text="a", heading_level=1),
         BodySegment(kind="text", text="b", heading_level=None),
     ]
-    from server.app.modules.articles.tiptap_Parser import _compact
+    from server.app.modules.articles.parser import _compact
     result = _compact(segs)
     assert len(result) == 2

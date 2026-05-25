@@ -37,23 +37,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from server.app.api.routes.accounts import router as accounts_router
-from server.app.api.routes.article_groups import router as article_groups_router
-from server.app.api.routes.articles import router as articles_router
-from server.app.api.routes.assets import router as assets_router
-from server.app.api.routes.auth import router as auth_router
-from server.app.api.routes.chunked_assets import router as chunked_assets_router
-from server.app.api.routes.generation import router as generation_router
-from server.app.api.routes.stock_images import router as stock_images_router, files_router as stock_files_router
-from server.app.api.routes.prompt_templates import router as prompt_templates_router
-from server.app.api.routes.publish_records import router as publish_records_router
-from server.app.api.routes.skills import router as skills_router
-from server.app.api.routes.system import router as system_router
-from server.app.api.routes.tasks import router as tasks_router
+from server.app.modules.system.auth_router import router as auth_router
+from server.app.modules.system.system_router import router as system_router
+from server.app.modules.accounts.router import router as accounts_router
+from server.app.modules.articles.router import (
+    articles_router,
+    article_groups_router,
+    assets_router,
+    chunked_assets_router,
+)
+from server.app.modules.tasks.router import tasks_router, publish_records_router
+from server.app.modules.ai_generation.router import router as generation_router
+from server.app.modules.image_library.router import router as stock_images_router, files_router as stock_files_router
+from server.app.modules.skills.router import router as skills_router
+from server.app.modules.prompt_templates.router import router as prompt_templates_router
 from server.app.core.config import get_settings
 from server.app.core.paths import ensure_data_dirs
 from server.app.core.security import get_current_user
-from server.app.models.user import User
+from server.app.modules.system.models import User
 from server.app.core.limiter import limiter
 from server.app.shared.errors import AccountError, ClientError, ConflictError, ValidationError
 
@@ -168,9 +169,9 @@ def create_app() -> FastAPI:
     app.include_router(stock_images_router, prefix="/api/image-library", tags=["image-library"], dependencies=[Depends(get_current_user)])
     app.include_router(stock_files_router, prefix="/api/stock-images", tags=["stock-images"])
 
-    # 为 AI 生文后台线程提供 SessionLocal（tasks.py 的生产路径走 executor.py 轮询，不需要；
+    # 为 AI 生文后台线程提供 SessionLocal（tasks 的生产路径走 executor.py 轮询，不需要；
     # generation 没有对应的 worker，只能靠路由内后台线程，因此必须在此处初始化）
-    import server.app.api.routes.generation as _gen_routes
+    import server.app.modules.ai_generation.router as _gen_routes
     _gen_routes.bg_session_factory = SessionLocal
 
     try:

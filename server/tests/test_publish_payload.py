@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from server.app.modules.articles.tiptap_Parser import BodySegment
-from server.app.modules.tasks.drivers.driver_Base import PublishError, PublishPayload, PublishResult
+from server.app.modules.articles.parser import BodySegment
+from server.app.modules.tasks.drivers.base import PublishError, PublishPayload, PublishResult
 
 
 def _make_payload(**overrides) -> PublishPayload:

@@ -4,7 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from playwright.sync_api import BrowserContext, Page
 
-from server.app.modules.tasks.drivers.driver_Base import PublishPayload, PublishResult
+from server.app.modules.tasks.drivers.base import PublishPayload, PublishResult
 
 
 @runtime_checkable

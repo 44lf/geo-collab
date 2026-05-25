@@ -20,7 +20,8 @@ from sqlalchemy import select, update as sa_update
 
 from server.app.core.time import utcnow
 from server.app.db.session import SessionLocal
-from server.app.models import PublishTask, WorkerHeartbeat
+from server.app.modules.tasks.models import PublishTask
+from server.app.modules.system.models import WorkerHeartbeat
 from server.app.modules.accounts import process_account_login_session_requests
 from server.app.modules.tasks import (
     TERMINAL_TASK_STATUSES,
@@ -49,7 +50,7 @@ def _handle_signal(signum, frame) -> None:
 def _claim_next_task(db) -> PublishTask | None:
     """Claim a pending task with pending records via optimistic locking. Returns the task or None."""
     from sqlalchemy import exists
-    from server.app.models.publish import PublishRecord
+    from server.app.modules.tasks.models import PublishRecord
 
     # Find a task with at least one pending record and no active worker claim
     candidate_id = db.execute(
@@ -148,7 +149,7 @@ def _startup(db) -> None:
 
 
 def _check_stuck_tasks(db) -> None:
-    from server.app.modules.tasks.task_Crud import (
+    from server.app.modules.tasks.service import (
         TERMINAL_TASK_STATUSES,
         aggregate_task_status,
         list_task_records,

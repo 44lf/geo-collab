@@ -1,5 +1,5 @@
 from pathlib import Path
-from server.app.modules.articles.tiptap_Parser import BodySegment
+from server.app.modules.articles.parser import BodySegment
 from server.app.modules.tasks.drivers.toutiao import BodyParagraph, _group_paragraphs
 
 

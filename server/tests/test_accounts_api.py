@@ -3,7 +3,7 @@ import threading
 import zipfile
 from io import BytesIO
 
-from server.app.models import Account
+from server.app.modules.accounts.models import Account
 from server.app.modules.accounts import RemoteBrowserSession
 from server.tests.utils import build_test_app
 
@@ -23,8 +23,8 @@ class FakeDriver:
 
 def install_fake_driver(monkeypatch) -> None:
     monkeypatch.setattr("server.app.api.routes.accounts.all_driver_codes", lambda: ["toutiao"])
-    monkeypatch.setattr("server.app.modules.accounts.account_Auth._get_driver", lambda platform_code: FakeDriver())
-    monkeypatch.setattr("server.app.modules.accounts.account_Crud._get_driver", lambda platform_code: FakeDriver())
+    monkeypatch.setattr("server.app.modules.accounts.auth._get_driver", lambda platform_code: FakeDriver())
+    monkeypatch.setattr("server.app.modules.accounts.service._get_driver", lambda platform_code: FakeDriver())
 
 
 def write_storage_state(data_dir, account_key: str = "demo") -> None:
@@ -34,7 +34,7 @@ def write_storage_state(data_dir, account_key: str = "demo") -> None:
 
 
 def test_start_login_browser_runs_impl_in_plain_thread(monkeypatch):
-    from server.app.modules.accounts import account_Auth
+    from server.app.modules.accounts import auth as account_Auth
 
     caller_thread = threading.get_ident()
     seen: dict[str, int] = {}
@@ -70,7 +70,7 @@ def test_login_page_loader_runs_in_background(monkeypatch):
             return None
 
     try:
-        from server.app.modules.accounts import account_Auth as accounts, browser_Session as browser_sessions
+        from server.app.modules.accounts import auth as accounts, browser as browser_sessions
 
         session = RemoteBrowserSession(
             id="loader-session",
@@ -145,8 +145,8 @@ def test_worker_finish_login_session_uses_existing_thread(monkeypatch):
             json={"display_name": "worker-finish-demo", "account_key": "demo", "use_browser": False},
         ).json()
 
-        from server.app.models import AccountLoginSession
-        from server.app.modules.accounts import account_Auth as accounts, browser_Session as browser_sessions
+        from server.app.modules.accounts.models import AccountLoginSession
+        from server.app.modules.accounts import auth as accounts, browser as browser_sessions
 
         db = test_app.session_factory()
         try:
@@ -285,7 +285,7 @@ def test_toutiao_remote_login_session_creates_unknown_account(monkeypatch):
     install_fake_driver(monkeypatch)
 
     monkeypatch.setattr(
-        "server.app.modules.accounts.account_Auth._start_login_browser_via_worker",
+        "server.app.modules.accounts.auth._start_login_browser_via_worker",
         lambda *_args, **_kwargs: "login-session-1",
     )
 
@@ -355,7 +355,7 @@ def test_finish_remote_login_session_saves_state_and_stops_session(monkeypatch):
             json={"display_name": "finish-demo", "account_key": "demo", "use_browser": False},
         ).json()
 
-        from server.app.modules.accounts import browser_Session as browser_sessions
+        from server.app.modules.accounts import browser as browser_sessions
 
         page = FakePage()
         context = FakeContext(page)

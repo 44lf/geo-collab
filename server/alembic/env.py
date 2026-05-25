@@ -5,7 +5,14 @@ from sqlalchemy import engine_from_config, pool
 
 from server.app.core.paths import ensure_data_dirs, get_database_url
 from server.app.db.base import Base
-from server.app import models  # noqa: F401
+import server.app.modules.system.models        # noqa: F401
+import server.app.modules.accounts.models      # noqa: F401
+import server.app.modules.articles.models      # noqa: F401
+import server.app.modules.tasks.models         # noqa: F401
+import server.app.modules.ai_generation.models # noqa: F401
+import server.app.modules.image_library.models # noqa: F401
+import server.app.modules.skills.models        # noqa: F401
+import server.app.modules.prompt_templates.models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_database_url())

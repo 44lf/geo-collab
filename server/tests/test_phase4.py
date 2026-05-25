@@ -11,7 +11,7 @@ from io import BytesIO
 import pytest
 
 from server.app.core.time import utcnow
-from server.app.models import PublishRecord, PublishTask, TaskLog
+from server.app.modules.tasks.models import PublishRecord, PublishTask, TaskLog
 from server.app.modules.tasks import recover_stuck_records
 from server.app.modules.tasks.drivers.toutiao import (
     ToutiaoPublishError,
@@ -96,7 +96,7 @@ class TestErrorTypeClassification:
             task_id = task_data["id"]
 
             monkeypatch.setattr(
-                "server.app.modules.tasks.task_Executor.build_publish_runner_for_record",
+                "server.app.modules.tasks.executor.build_publish_runner_for_record",
                 lambda _r: (lambda article, account, *, stop_before_publish=False: (_ for _ in ()).throw(
                     ToutiaoUserInputRequired("需要扫码", error_type="qr_scan_required")
                 )),
@@ -199,7 +199,7 @@ class TestManualInterventionEndpoints:
         test_app, record_id, task_id = self._setup_waiting_record(monkeypatch, "waiting_user_input")
         try:
             monkeypatch.setattr(
-                "server.app.modules.tasks.task_Executor.build_publish_runner_for_record",
+                "server.app.modules.tasks.executor.build_publish_runner_for_record",
                 lambda _r: (lambda article, account, *, stop_before_publish=False: (_ for _ in ()).throw(
                     Exception("stop immediately")
                 )),
@@ -252,12 +252,12 @@ class TestManualInterventionEndpoints:
 class TestZombieSessionDetection:
     def test_cleanup_zombie_sessions_is_callable(self):
         """_cleanup_zombie_sessions 函数存在且在没有活动 session 时不抛出。"""
-        from server.app.modules.accounts.browser_Session import _cleanup_zombie_sessions
+        from server.app.modules.accounts.browser import _cleanup_zombie_sessions
         _cleanup_zombie_sessions()  # should not raise
 
     def test_cleanup_zombie_sessions_skips_healthy_sessions(self, monkeypatch):
         """有活跃但进程健康的 session 时不应误清理。"""
-        from server.app.modules.accounts import browser_Session as bs
+        from server.app.modules.accounts import browser as bs
         import subprocess
         from dataclasses import dataclass, field
         from pathlib import Path

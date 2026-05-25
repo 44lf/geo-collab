@@ -30,7 +30,7 @@ def _fake_completion(content: str):
 
 
 def _wait_until_unlocked(test_app, article_id: int, timeout: float = 3.0) -> None:
-    from server.app.models.article import Article
+    from server.app.modules.articles.models import Article
 
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -51,7 +51,7 @@ def test_edit_locked_article_returns_409(monkeypatch):
         article = _create_article(client)
         article_id = article["id"]
 
-        from server.app.models.article import Article
+        from server.app.modules.articles.models import Article
 
         with test_app.session_factory() as db:
             db_article = db.get(Article, article_id)
@@ -78,7 +78,7 @@ def test_delete_locked_article_returns_409(monkeypatch):
         article = _create_article(client)
         article_id = article["id"]
 
-        from server.app.models.article import Article
+        from server.app.modules.articles.models import Article
 
         with test_app.session_factory() as db:
             db_article = db.get(Article, article_id)
@@ -102,7 +102,7 @@ def test_edit_expired_lock_allows_update(monkeypatch):
         article = _create_article(client)
         article_id = article["id"]
 
-        from server.app.models.article import Article
+        from server.app.modules.articles.models import Article
 
         expired_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=121)
 
@@ -131,7 +131,7 @@ def test_read_expired_lock_clears_ai_checking(monkeypatch):
         article = _create_article(client)
         article_id = article["id"]
 
-        from server.app.models.article import Article
+        from server.app.modules.articles.models import Article
 
         expired_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=121)
         with test_app.session_factory() as db:
@@ -252,7 +252,7 @@ def test_ai_format_empty_indices_releases_lock_without_changing_content(monkeypa
         article = _create_article(test_app.client)
         article_id = article["id"]
 
-        from server.app.models.article import Article
+        from server.app.modules.articles.models import Article
         from server.app.modules.articles.ai_format import run_ai_format
 
         lock_started_at = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
@@ -288,7 +288,7 @@ def test_ai_format_button_path_does_not_trigger_image_insertion(monkeypatch):
         article = _create_article(test_app.client)
         article_id = article["id"]
 
-        from server.app.models import Article, StockCategory
+        from server.app.modules.articles.models import Article, StockCategory
 
         with test_app.session_factory() as db:
             category = StockCategory(name="covers", bucket_name="covers")

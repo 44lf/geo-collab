@@ -10,7 +10,7 @@ import json
 import os
 
 from server.app.db.session import SessionLocal
-from server.app.models import User
+from server.app.modules.system.models import User
 
 
 def main() -> None:

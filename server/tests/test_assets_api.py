@@ -1,7 +1,7 @@
 import base64
 import hashlib
 
-from server.app.models import Asset  # noqa: F401
+from server.app.modules.articles.models import Asset  # noqa: F401
 from server.tests.utils import build_test_app
 
 PNG_1X1 = base64.b64decode(

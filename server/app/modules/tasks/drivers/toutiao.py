@@ -10,8 +10,8 @@ from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
 
-from server.app.modules.articles.tiptap_Parser import BodySegment
-from server.app.modules.tasks.drivers.driver_Base import PublishError, PublishPayload, PublishResult, UserInputRequired
+from server.app.modules.articles.parser import BodySegment
+from server.app.modules.tasks.drivers.base import PublishError, PublishPayload, PublishResult, UserInputRequired
 from server.app.shared.diagnostics import publish_step, record_publish_diagnostic
 
 TOUTIAO_PUBLISH_URL = "https://mp.toutiao.com/profile_v4/graphic/publish"

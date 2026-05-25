@@ -1,4 +1,4 @@
-from server.app.modules.accounts.browser_Session import (  # noqa: F401
+from server.app.modules.accounts.browser import (  # noqa: F401
     ManagedProcess,
     RemoteBrowserSession,
     associate_record_with_session,
@@ -14,7 +14,7 @@ from server.app.modules.accounts.browser_Session import (  # noqa: F401
     start_remote_browser_session,
     stop_remote_browser_session,
 )
-from server.app.modules.accounts.account_Crud import (  # noqa: F401
+from server.app.modules.accounts.service import (  # noqa: F401
     normalize_account_key,
     state_dir_for_key,
     state_path_for_key,
@@ -29,7 +29,7 @@ from server.app.modules.accounts.account_Crud import (  # noqa: F401
     rename_account,
     delete_account,
 )
-from server.app.modules.accounts.account_Auth import (  # noqa: F401
+from server.app.modules.accounts.auth import (  # noqa: F401
     BrowserCheckResult,
     AccountBrowserSessionResult,
     LOGIN_STATUS_PENDING,

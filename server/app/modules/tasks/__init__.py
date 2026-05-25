@@ -1,4 +1,4 @@
-from server.app.modules.tasks.task_Crud import (  # noqa: F401
+from server.app.modules.tasks.service import (  # noqa: F401
     ACTIVE_RECORD_STATUSES,
     CAN_RETRY_TASK_STATUSES,
     PAUSED_RECORD_STATUSES,
@@ -22,7 +22,7 @@ from server.app.modules.tasks.task_Crud import (  # noqa: F401
     resolve_user_input_record,
     retry_record,
 )
-from server.app.modules.tasks.task_Executor import (  # noqa: F401
+from server.app.modules.tasks.executor import (  # noqa: F401
     MAX_CONCURRENT_RECORDS,
     build_publish_runner_for_record,
     cancel_task,

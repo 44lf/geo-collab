@@ -1,4 +1,6 @@
-from server.app.models import Account, Article, PublishRecord, PublishTask, PublishTaskAccount, TaskLog
+from server.app.modules.accounts.models import Account
+from server.app.modules.articles.models import Article
+from server.app.modules.tasks.models import PublishRecord, PublishTask, PublishTaskAccount, TaskLog
 from server.app.modules.accounts import get_or_create_platform
 from server.tests.utils import build_test_app
 

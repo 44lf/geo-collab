@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from server.app.models import Account, Platform, PublishRecord, PublishTask, PublishTaskAccount
+from server.app.modules.accounts.models import Account
+from server.app.modules.system.models import Platform
+from server.app.modules.tasks.models import PublishRecord, PublishTask, PublishTaskAccount
 from server.tests.utils import build_test_app
 
 

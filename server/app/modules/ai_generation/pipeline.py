@@ -119,9 +119,9 @@ def _write_one_article(
     """在独立线程中生成一篇文章并写库，返回 article_id 或 None（失败）。"""
     import litellm
     from server.app.core.config import get_settings
-    from server.app.modules.ai_generation.md_converter import markdown_to_html, markdown_to_tiptap
-    from server.app.modules.articles.article_Crud import create_article
-    from server.app.schemas.article import ArticleCreate
+    from server.app.modules.ai_generation.converter import markdown_to_html, markdown_to_tiptap
+    from server.app.modules.articles.service import create_article
+    from server.app.modules.articles.schemas import ArticleCreate
 
     settings = get_settings()
     _inject_api_key(settings.ai_api_key)
@@ -215,7 +215,7 @@ def parallel_write_node(state: PipelineState) -> dict:
 # ── 节点：finalize ────────────────────────────────────────────────────────────
 
 def finalize_node(state: PipelineState) -> dict:
-    from server.app.modules.ai_generation.generation_Crud import update_session_status
+    from server.app.modules.ai_generation.service import update_session_status
 
     db = state["session_factory"]()
     try:
@@ -261,9 +261,9 @@ def _inject_api_key(api_key: str) -> None:
 
 def run_pipeline(db: Any, session_id: int, *, session_factory: Any) -> None:
     """由后台线程调用；db 仅用于读取会话元数据和设置 running 状态。"""
-    from server.app.modules.ai_generation.generation_Crud import get_session, update_session_status
-    from server.app.modules.skills.skill_Crud import get_skill
-    from server.app.models.skill import PromptTemplate
+    from server.app.modules.ai_generation.service import get_session, update_session_status
+    from server.app.modules.skills.service import get_skill
+    from server.app.modules.prompt_templates.models import PromptTemplate
 
     gen_session = get_session(db, session_id)
     if gen_session is None:

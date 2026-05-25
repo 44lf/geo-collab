@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from server.app.core.config import get_settings
-from server.app.modules.articles.tiptap_Parser import dumps_content_json, loads_content_json
+from server.app.modules.articles.parser import dumps_content_json, loads_content_json
 
 logger = logging.getLogger(__name__)
 

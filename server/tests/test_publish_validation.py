@@ -89,7 +89,7 @@ def test_empty_body_fails_publish(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.modules.tasks.task_Executor.build_publish_runner_for_record",
+            "server.app.modules.tasks.executor.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -123,7 +123,7 @@ def test_image_only_body_is_publishable(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.modules.tasks.task_Executor.build_publish_runner_for_record",
+            "server.app.modules.tasks.executor.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -175,7 +175,7 @@ def test_no_cover_fails_publish(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.modules.tasks.task_Executor.build_publish_runner_for_record",
+            "server.app.modules.tasks.executor.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         article_id = _create_article(client, "Test Article", plain_text="Some body text", cover_asset_id=None)
@@ -209,7 +209,7 @@ def test_empty_title_fails_publish(monkeypatch):
 
     try:
         monkeypatch.setattr(
-            "server.app.modules.tasks.task_Executor.build_publish_runner_for_record",
+            "server.app.modules.tasks.executor.build_publish_runner_for_record",
             lambda record: FakePublisher(),
         )
         cover_id = _upload_cover_image(client)
@@ -217,7 +217,7 @@ def test_empty_title_fails_publish(monkeypatch):
         account_id = _create_account(client, test_app.data_dir, "account-z", "Account Z")
 
         with test_app.session_factory() as db:
-            from server.app.models import Article
+            from server.app.modules.articles.models import Article
             article = db.get(Article, article_id)
             assert article is not None
             article.title = ""

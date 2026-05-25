@@ -31,7 +31,7 @@ def pick_image_id(query: ImageQuery, db: Session) -> int | None:
     当前实现：ORDER BY RAND()。
     未来升级：改这一个函数实现 AI 语义选图 / AI 生图，调用方不感知变化。
     """
-    from server.app.models.stock_image import StockImage
+    from server.app.modules.image_library.models import StockImage
 
     stmt = select(StockImage.id).where(StockImage.category_id == query.category_id)
     if query.excluded_ids:
@@ -43,7 +43,7 @@ def pick_image_id(query: ImageQuery, db: Session) -> int | None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def fetch_image_by_id(image_id: int, db: Session) -> StockImageRef | None:
-    from server.app.models.stock_image import StockImage
+    from server.app.modules.image_library.models import StockImage
 
     img = db.get(StockImage, image_id)
     if img is None:

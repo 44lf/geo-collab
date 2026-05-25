@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, Request
 
 from jose import jwt
 
-from server.app.models.user import User
+from server.app.modules.system.models import User
 
 JWT_ALGORITHM = "HS256"
 

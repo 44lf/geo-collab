@@ -44,7 +44,7 @@ def _create_publishable_task(test_app) -> int:
 def test_production_execute_leaves_task_for_worker_claim(monkeypatch):
     test_app = build_test_app(monkeypatch)
     try:
-        from server.app.api.routes import tasks as task_routes
+        from server.app.modules.tasks import router as task_routes
         from server.worker import executor
 
         monkeypatch.setattr(task_routes, "bg_session_factory", None)

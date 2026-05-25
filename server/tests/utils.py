@@ -113,7 +113,7 @@ def build_test_app(monkeypatch) -> TestApp:
     from server.app.db.session import get_db
     from server.app.main import create_app
 
-    monkeypatch.setattr("server.app.api.routes.tasks.bg_session_factory", TestingSessionLocal)
+    monkeypatch.setattr("server.app.modules.tasks.router.bg_session_factory", TestingSessionLocal)
     monkeypatch.setattr("server.app.db.session.SessionLocal", TestingSessionLocal)
 
     app = create_app()
@@ -124,7 +124,7 @@ def build_test_app(monkeypatch) -> TestApp:
     from server.app.core.security import create_access_token
 
     with TestingSessionLocal() as db:
-        from server.app.models.user import User
+        from server.app.modules.system.models import User
 
         user = User(
             username="testadmin",

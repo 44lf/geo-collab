@@ -1,5 +1,5 @@
 from server.app.core.paths import DATA_SUBDIRS, ensure_data_dirs
-from server.app.schemas.system import SystemStatus
+from server.app.modules.system.schemas import SystemStatus
 
 
 # 获取系统基础状态（目录、版本等），不依赖数据库
