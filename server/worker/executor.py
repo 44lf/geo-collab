@@ -23,6 +23,7 @@ from server.app.db.session import SessionLocal
 from server.app.modules.tasks.models import PublishTask
 from server.app.modules.system.models import WorkerHeartbeat
 from server.app.modules.accounts import process_account_login_session_requests
+import server.app.modules.image_library.models  # noqa: F401  # 确保 StockCategory 注册到 mapper registry（Article.stock_category 关系依赖它）
 from server.app.modules.tasks import (
     TERMINAL_TASK_STATUSES,
     execute_task,
