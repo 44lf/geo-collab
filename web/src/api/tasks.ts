@@ -25,8 +25,8 @@ export function previewTaskAssignment(payload: TaskPreviewPayload): Promise<Assi
   return api<AssignmentPreview>("/api/tasks/preview", { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function executeTask(taskId: number): Promise<Task> {
-  return api<Task>(`/api/tasks/${taskId}/execute`, { method: "POST" });
+export function executeTask(taskId: number): Promise<{ queued: boolean }> {
+  return api<{ queued: boolean }>(`/api/tasks/${taskId}/execute`, { method: "POST" });
 }
 
 export function cancelTask(taskId: number): Promise<Task> {

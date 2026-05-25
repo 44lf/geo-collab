@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select, update as _upd
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -110,12 +111,16 @@ def preview_task_assignment_endpoint(
     return preview_task_assignment(db, payload, user_id=current_user.id, role=current_user.role)
 
 
-@tasks_router.post("/{task_id}/execute", status_code=202)
+class _ExecuteResponse(BaseModel):
+    queued: bool
+
+
+@tasks_router.post("/{task_id}/execute", status_code=202, response_model=_ExecuteResponse)
 def start_task_execution(
     task_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> dict:
+) -> _ExecuteResponse:
     from server.app.core.time import utcnow as _utcnow
     task = _verify_task_ownership(get_task(db, task_id), current_user)
     if task.status in TERMINAL_TASK_STATUSES:
@@ -152,7 +157,7 @@ def start_task_execution(
         )
         db.commit()
 
-    return {"queued": True}
+    return _ExecuteResponse(queued=True)
 
 
 @tasks_router.post("/{task_id}/cancel", response_model=TaskRead)

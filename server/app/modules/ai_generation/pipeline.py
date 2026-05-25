@@ -100,12 +100,17 @@ def planner_node(state: PipelineState) -> dict:
     try:
         task_specs = json.loads(raw.strip())
         if not isinstance(task_specs, list):
+            logger.warning("Planner output is not a list: %s", raw[:200])
             task_specs = []
     except json.JSONDecodeError:
         logger.warning("Planner output is not valid JSON: %s", raw[:200])
         task_specs = []
 
-    return {"task_specs": task_specs}
+    errors: list[str] = []
+    if not task_specs:
+        errors = ["规划阶段未产出有效任务规格（LLM 输出为空或格式无效）"]
+
+    return {"task_specs": task_specs, "errors": errors}
 
 
 # ── 节点：parallel_write ──────────────────────────────────────────────────────
@@ -217,13 +222,19 @@ def parallel_write_node(state: PipelineState) -> dict:
 def finalize_node(state: PipelineState) -> dict:
     from server.app.modules.ai_generation.service import update_session_status
 
+    article_ids = state["article_ids"]
+    errors = state["errors"]
+    status = "done" if article_ids else "failed"
+    error_message = "; ".join(errors) if errors else None
+
     db = state["session_factory"]()
     try:
         update_session_status(
             db,
             state["session_id"],
-            status="done",
-            article_ids=state["article_ids"],
+            status=status,
+            article_ids=article_ids,
+            error_message=error_message,
         )
         db.commit()
     except Exception:
