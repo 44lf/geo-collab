@@ -429,7 +429,7 @@ def _call_litellm_completion(
     )
 
 
-def _maybe_insert_images(content_json: dict, parsed: dict, article: Any, db: Any) -> tuple[dict, int]:
+def _legacy_maybe_insert_images_old_unused(content_json: dict, parsed: dict, article: Any, db: Any) -> tuple[dict, int]:
 
     if has_images_in_content(content_json):
         return content_json, 0
