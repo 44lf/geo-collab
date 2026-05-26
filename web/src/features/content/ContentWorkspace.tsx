@@ -45,7 +45,7 @@ function makeEmptyDraft(): Draft {
     cover_asset_id: null,
     status: "draft",
     version: null,
-    stock_category_id: null,
+    stock_category_ids: [],
   };
 }
 
@@ -451,7 +451,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       cover_asset_id: detail.cover_asset_id,
       status: detail.status,
       version: detail.version,
-      stock_category_id: detail.stock_category_id ?? null,
+      stock_category_ids: detail.stock_category_ids ?? [],
     });
 
     const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
@@ -577,7 +577,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       cover_asset_id: article.cover_asset_id,
       status: article.status,
       version: article.version,
-      stock_category_id: null,
+      stock_category_ids: [],
     });
     setLoading(true);
     setStatusText("加载中");
@@ -591,7 +591,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         cover_asset_id: detail.cover_asset_id,
         status: detail.status,
         version: detail.version,
-        stock_category_id: detail.stock_category_id ?? null,
+        stock_category_ids: detail.stock_category_ids ?? [],
       });
       setAiChecking(detail.ai_checking ?? false);
       setAiCheckStartedAt(detail.ai_checking ? Date.now() : null);
@@ -623,7 +623,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
       cover_asset_id: saved.cover_asset_id,
       status: saved.status,
       version: saved.version,
-      stock_category_id: saved.stock_category_id ?? null,
+      stock_category_ids: saved.stock_category_ids ?? [],
     });
     savedStateRef.current = {
       title: saved.title?.trim() ?? "",
@@ -658,7 +658,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
         word_count: countWords(editor.getText()),
         status: draft.status,
         version: draft.version,
-        stock_category_id: draft.stock_category_id,
+        stock_category_ids: draft.stock_category_ids,
       };
       const articleId = draft.id;
       const saved = articleId
@@ -1140,18 +1140,29 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
               </select>
             </label>
             {stockCategories.length > 0 && (
-              <label>
-                配图栏目
-                <select
-                  value={draft.stock_category_id ?? ""}
-                  onChange={(e) => setDraft({ ...draft, stock_category_id: e.target.value ? Number(e.target.value) : null })}
-                >
-                  <option value="">— 不自动配图 —</option>
-                  {stockCategories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-              </label>
+              <div>
+                <span style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 4 }}>配图栏目</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
+                  {stockCategories.map((cat) => {
+                    const checked = draft.stock_category_ids.includes(cat.id);
+                    return (
+                      <label key={cat.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, cursor: "pointer", fontWeight: "normal" }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...draft.stock_category_ids, cat.id]
+                              : draft.stock_category_ids.filter((id) => id !== cat.id);
+                            setDraft({ ...draft, stock_category_ids: next });
+                          }}
+                        />
+                        {cat.name}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
             )}
             <label>
               AI 格式预设
@@ -1189,7 +1200,7 @@ export function ContentWorkspace({ dirtyCheckRef }: Props = {}) {
             aiChecking={aiChecking}
             aiFormatRemainingSeconds={aiFormatRemainingSeconds}
             onAiFormat={handleAiFormat}
-            stockCategorySelected={!!draft.stock_category_id}
+            stockCategorySelected={draft.stock_category_ids.length > 0}
           />
           <div className="editorWrap">
             <EditorContent editor={editor} />

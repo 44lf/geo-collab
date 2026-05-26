@@ -71,7 +71,9 @@ export type Article = ArticleSummary & {
   content_html: string;
   plain_text: string;
   body_assets: ArticleBodyAsset[];
+  /** @deprecated 使用 stock_category_ids */
   stock_category_id: number | null;
+  stock_category_ids: number[];
   ai_checking: boolean;
   ai_format_error: string | null;
 };
@@ -119,7 +121,7 @@ export type Draft = {
   cover_asset_id: string | null;
   status: string;
   version: number | null;
-  stock_category_id: number | null;
+  stock_category_ids: number[];
 };
 
 export type TaskAccountRead = {
@@ -225,7 +227,7 @@ export type ArticleUpdatePayload = {
   word_count?: number;
   status?: string;
   version?: number | null;
-  stock_category_id?: number | null;
+  stock_category_ids?: number[];
   client_request_id?: string;
 };
 
