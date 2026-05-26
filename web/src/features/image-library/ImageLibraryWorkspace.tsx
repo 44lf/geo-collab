@@ -55,7 +55,7 @@ export function ImageLibraryWorkspace() {
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [lightboxIndex, images.length]);
+  }, [lightboxIndex, images]);
 
   useEffect(() => {
     listCategories()
@@ -69,6 +69,7 @@ export function ImageLibraryWorkspace() {
   }, []);
 
   useEffect(() => {
+    setLightboxIndex(null);
     if (selectedCategoryId === null) {
       setImages([]);
       return;
