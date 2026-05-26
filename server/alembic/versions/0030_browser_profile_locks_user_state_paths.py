@@ -13,6 +13,7 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import inspect as sa_inspect
 
 
 revision: str = "0030"
@@ -25,29 +26,39 @@ LOCK_NAME = "geo_migration_0030_browser_state_paths"
 
 
 def upgrade() -> None:
-    op.create_table(
-        "browser_profile_locks",
-        sa.Column("profile_key", sa.String(length=255), nullable=False),
-        sa.Column("owner_kind", sa.String(length=40), nullable=False),
-        sa.Column("owner_id", sa.String(length=80), nullable=False),
-        sa.Column("worker_id", sa.String(length=100), nullable=True),
-        sa.Column("queue_reason", sa.String(length=500), nullable=True),
-        sa.Column("acquired_at", sa.DateTime(), nullable=False),
-        sa.Column("heartbeat_at", sa.DateTime(), nullable=False),
-        sa.Column("lease_until", sa.DateTime(), nullable=False),
-        sa.PrimaryKeyConstraint("profile_key"),
-    )
-    op.create_index(op.f("ix_browser_profile_locks_worker_id"), "browser_profile_locks", ["worker_id"], unique=False)
-    op.create_index(op.f("ix_browser_profile_locks_lease_until"), "browser_profile_locks", ["lease_until"], unique=False)
+    bind = op.get_bind()
+    inspector = sa_inspect(bind)
+
+    if "browser_profile_locks" not in inspector.get_table_names():
+        op.create_table(
+            "browser_profile_locks",
+            sa.Column("profile_key", sa.String(length=255), nullable=False),
+            sa.Column("owner_kind", sa.String(length=40), nullable=False),
+            sa.Column("owner_id", sa.String(length=80), nullable=False),
+            sa.Column("worker_id", sa.String(length=100), nullable=True),
+            sa.Column("queue_reason", sa.String(length=500), nullable=True),
+            sa.Column("acquired_at", sa.DateTime(), nullable=False),
+            sa.Column("heartbeat_at", sa.DateTime(), nullable=False),
+            sa.Column("lease_until", sa.DateTime(), nullable=False),
+            sa.PrimaryKeyConstraint("profile_key"),
+        )
+        op.create_index(op.f("ix_browser_profile_locks_worker_id"), "browser_profile_locks", ["worker_id"], unique=False)
+        op.create_index(op.f("ix_browser_profile_locks_lease_until"), "browser_profile_locks", ["lease_until"], unique=False)
 
     with op.batch_alter_table("account_login_sessions", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("queue_reason", sa.String(length=500), nullable=True))
+        cols = {c["name"] for c in inspector.get_columns("account_login_sessions")}
+        if "queue_reason" not in cols:
+            batch_op.add_column(sa.Column("queue_reason", sa.String(length=500), nullable=True))
 
     with op.batch_alter_table("browser_sessions", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("profile_key", sa.String(length=255), nullable=True))
+        cols = {c["name"] for c in inspector.get_columns("browser_sessions")}
+        if "profile_key" not in cols:
+            batch_op.add_column(sa.Column("profile_key", sa.String(length=255), nullable=True))
 
     with op.batch_alter_table("publish_records", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("queue_reason", sa.String(length=500), nullable=True))
+        cols = {c["name"] for c in inspector.get_columns("publish_records")}
+        if "queue_reason" not in cols:
+            batch_op.add_column(sa.Column("queue_reason", sa.String(length=500), nullable=True))
 
     _migrate_account_state_paths()
 
