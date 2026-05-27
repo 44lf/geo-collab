@@ -187,6 +187,10 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
       toast("用户名和密码不能为空", "error");
       return;
     }
+    if (password.length < 8) {
+      toast("初始密码长度至少 8 位", "error");
+      return;
+    }
     setSaving(true);
     try {
       await api("/api/auth/users", {
@@ -233,7 +237,7 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="输入初始密码"
+            placeholder="输入初始密码 (至少8位)"
           />
         </label>
         <label style={labelStyle}>
@@ -258,6 +262,10 @@ function ResetPasswordModal({ user, onClose, onReset }: { user: UserRecord; onCl
     e.preventDefault();
     if (!newPassword.trim()) {
       toast("新密码不能为空", "error");
+      return;
+    }
+    if (newPassword.length < 8) {
+      toast("新密码长度至少 8 位", "error");
       return;
     }
     setSaving(true);
@@ -296,7 +304,7 @@ function ResetPasswordModal({ user, onClose, onReset }: { user: UserRecord; onCl
             type="password"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="输入新密码"
+            placeholder="输入新密码 (至少8位)"
             autoFocus
           />
         </label>

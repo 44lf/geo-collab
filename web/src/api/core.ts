@@ -50,7 +50,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       502: "服务器网关错误",
       503: "服务暂时不可用",
     };
-    throw new Error(payload.detail || statusText[response.status] || `服务器错误（${response.status}）`);
+    const detailMessage = typeof payload.detail === "string" ? payload.detail : "";
+    throw new Error(detailMessage || statusText[response.status] || `服务器错误（${response.status}）`);
   }
   if (response.status === 204) {
     return undefined as T;

@@ -13,8 +13,8 @@ export function ChangePasswordPage() {
     e.preventDefault();
     setError("");
 
-    if (newPassword.length < 6) {
-      setError("新密码长度至少 6 位");
+    if (newPassword.length < 8) {
+      setError("新密码长度至少 8 位");
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -61,7 +61,7 @@ export function ChangePasswordPage() {
           <input
             className="authInput"
             type="password"
-            placeholder="新密码 (至少6位)"
+            placeholder="新密码 (至少8位)"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             required
