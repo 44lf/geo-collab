@@ -26,10 +26,11 @@ def upgrade() -> None:
         return
     cols = {c["name"] for c in inspector.get_columns("skills")}
     if "content" not in cols:
-        op.add_column(
-            "skills",
-            sa.Column("content", sa.Text(), nullable=False, server_default=""),
-        )
+        # MySQL 不允许 TEXT 列有字面 DEFAULT（错误 1101）。
+        # 分三步：先加 nullable 列，回填空串，再改为 NOT NULL。
+        op.add_column("skills", sa.Column("content", sa.Text(), nullable=True))
+        op.execute("UPDATE skills SET content = '' WHERE content IS NULL")
+        op.alter_column("skills", "content", existing_type=sa.Text(), nullable=False)
 
 
 def downgrade() -> None:
