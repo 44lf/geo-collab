@@ -51,6 +51,7 @@ from server.app.modules.articles.uploader import (
     MAGIC_BYTES_CHECK_SIZE,
     get_upload_manager,
 )
+from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.articles import (
     create_article,
     delete_article,
@@ -161,11 +162,22 @@ def read_articles(
 @articles_router.post("", response_model=ArticleRead)
 def create_article_endpoint(
     payload: ArticleCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ArticleRead:
     try:
-        return to_article_read(create_article(db, current_user.id, payload))
+        created = create_article(db, current_user.id, payload)
+        add_audit_entry(
+            db,
+            user=current_user,
+            action="article.create",
+            target_type="article",
+            target_id=created.id,
+            payload={"title": created.title},
+            request=request,
+        )
+        return to_article_read(created)
     except IntegrityError as exc:
         db.rollback()
         if payload.client_request_id:
@@ -196,23 +208,46 @@ def read_article(
 def update_article_endpoint(
     article_id: int,
     payload: ArticleUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ArticleRead:
     article = _verify_article_ownership(get_article(db, article_id), current_user)
     _check_not_ai_locked(db, article)
-    return to_article_read(update_article(db, article, payload))
+    changed_fields = sorted(payload.model_dump(exclude_unset=True).keys())
+    updated = update_article(db, article, payload)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="article.update",
+        target_type="article",
+        target_id=article_id,
+        payload={"changed_fields": changed_fields},
+        request=request,
+    )
+    return to_article_read(updated)
 
 
 @articles_router.delete("/{article_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_article_endpoint(
     article_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> Response:
     article = _verify_article_ownership(get_article(db, article_id), current_user)
     _check_not_ai_locked(db, article)
+    article_title = article.title
     delete_article(db, article)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="article.delete",
+        target_type="article",
+        target_id=article_id,
+        payload={"title": article_title},
+        request=request,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -220,18 +255,30 @@ def delete_article_endpoint(
 def update_article_cover(
     article_id: int,
     payload: ArticleCoverUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ArticleRead:
     article = _verify_article_ownership(get_article(db, article_id), current_user)
     if payload.version is not None and article.version != payload.version:
         raise ConflictError("文章已被修改，请刷新后再保存")
-    return to_article_read(set_article_cover(db, article, payload.cover_asset_id))
+    updated = set_article_cover(db, article, payload.cover_asset_id)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="article.cover.update",
+        target_type="article",
+        target_id=article_id,
+        payload={"asset_id": payload.cover_asset_id},
+        request=request,
+    )
+    return to_article_read(updated)
 
 
 @articles_router.post("/{article_id}/ai-format", status_code=202)
 def trigger_ai_format_endpoint(
     article_id: int,
+    request: Request,
     payload: AIFormatRequest | None = Body(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -289,6 +336,15 @@ def trigger_ai_format_endpoint(
                 pass
 
     threading.Thread(target=_run, daemon=True).start()
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="article.ai_format.trigger",
+        target_type="article",
+        target_id=article_id,
+        payload=None,
+        request=request,
+    )
     return {"status": "started"}
 
 
@@ -318,6 +374,7 @@ def read_groups(
 @article_groups_router.post("", response_model=ArticleGroupRead)
 def create_group_endpoint(
     payload: ArticleGroupCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ArticleGroupRead:
@@ -326,6 +383,15 @@ def create_group_endpoint(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="分组名称已存在") from exc
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="article_group.create",
+        target_type="article_group",
+        target_id=group.id,
+        payload={"name": group.name},
+        request=request,
+    )
     return to_group_read(group)
 
 
@@ -343,29 +409,51 @@ def read_group(
 def update_group_endpoint(
     group_id: int,
     payload: ArticleGroupUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ArticleGroupRead:
     group = _verify_group_ownership(get_group(db, group_id), current_user)
+    changed_fields = sorted(payload.model_dump(exclude_unset=True).keys())
     try:
         updated = update_group(db, group, payload)
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="分组名称已存在") from exc
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="article_group.update",
+        target_type="article_group",
+        target_id=group_id,
+        payload={"changed_fields": changed_fields},
+        request=request,
+    )
     return to_group_read(updated)
 
 
 @article_groups_router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_group_endpoint(
     group_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> Response:
     group = _verify_group_ownership(get_group(db, group_id), current_user)
+    group_name = group.name
     try:
         delete_group(db, group)
     except ClientError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="article_group.delete",
+        target_type="article_group",
+        target_id=group_id,
+        payload={"name": group_name},
+        request=request,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -373,11 +461,22 @@ def delete_group_endpoint(
 def update_group_items(
     group_id: int,
     payload: ArticleGroupItemsUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ArticleGroupRead:
     group = _verify_group_ownership(get_group(db, group_id), current_user)
-    return to_group_read(replace_group_items(db, group, payload))
+    updated = replace_group_items(db, group, payload)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="article_group.items.replace",
+        target_type="article_group",
+        target_id=group_id,
+        payload={"item_count": len(payload.items)},
+        request=request,
+    )
+    return to_group_read(updated)
 
 
 # ── Asset helpers ─────────────────────────────────────────────────────────────
@@ -437,12 +536,22 @@ def asset_stats(
 
 @assets_router.post("/cleanup-orphans")
 def cleanup_orphan_assets(
+    request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ) -> dict:
     """将所有孤儿资产（未被任何文章引用）标记为逻辑删除。不删除磁盘文件。"""
     orphan_ids = find_orphan_asset_ids(db)
     marked = soft_delete_assets(db, orphan_ids)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="asset.cleanup_orphans",
+        target_type="asset",
+        target_id=None,
+        payload={"deleted_count": marked},
+        request=request,
+    )
     return {"orphan_count": len(orphan_ids), "marked_deleted": marked}
 
 

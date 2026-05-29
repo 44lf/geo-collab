@@ -1,7 +1,7 @@
 import { FileText, Images, MessagesSquare, MonitorCog, RadioTower, Send, Sparkles } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "admin";
+export type NavKey = "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "admin" | "audit-logs";
 
 export type PromptScope = "generation" | "ai_format";
 

@@ -1,10 +1,11 @@
 """Current-user settings routes."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from server.app.core.security import get_current_user, invalidate_user_cache
 from server.app.db.session import get_db
+from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.prompt_templates.service import get_visible_prompt_template
 from server.app.modules.system.models import User
 
@@ -22,6 +23,7 @@ class UserSettingsRead(BaseModel):
 @router.patch("/me/settings", response_model=UserSettingsRead)
 def update_my_settings(
     payload: UserSettingsUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> UserSettingsRead:
@@ -41,4 +43,13 @@ def update_my_settings(
     user.ai_format_preset_id = payload.ai_format_preset_id
     db.flush()
     invalidate_user_cache(user.id)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="user.settings.update",
+        target_type="user",
+        target_id=current_user.id,
+        payload={"ai_format_preset_id": payload.ai_format_preset_id},
+        request=request,
+    )
     return UserSettingsRead(ai_format_preset_id=user.ai_format_preset_id)

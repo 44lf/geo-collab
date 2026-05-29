@@ -4,7 +4,7 @@ import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, update as _upd
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from server.app.core.security import get_current_user
 from server.app.db.session import get_db
+from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.tasks.models import PublishRecord, PublishTask
 from server.app.modules.system.models import User
 from server.app.modules.tasks.schemas import (
@@ -76,11 +77,26 @@ def read_tasks(
 @tasks_router.post("", response_model=TaskRead)
 def create_task_endpoint(
     payload: TaskCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> TaskRead:
     try:
-        return to_task_read(create_task(db, current_user.id, payload, role=current_user.role))
+        new_task = create_task(db, current_user.id, payload, role=current_user.role)
+        add_audit_entry(
+            db,
+            user=current_user,
+            action="task.create",
+            target_type="task",
+            target_id=new_task.id,
+            payload={
+                "name": getattr(payload, "name", None),
+                "platform_code": getattr(payload, "platform_code", None),
+                "account_ids": list(getattr(payload, "account_ids", []) or []),
+            },
+            request=request,
+        )
+        return to_task_read(new_task)
     except IntegrityError as exc:
         db.rollback()
         if payload.client_request_id:
@@ -113,6 +129,7 @@ class _ExecuteResponse(BaseModel):
 @tasks_router.post("/{task_id}/execute", status_code=202, response_model=_ExecuteResponse)
 def start_task_execution(
     task_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> _ExecuteResponse:
@@ -152,17 +169,37 @@ def start_task_execution(
         )
         db.commit()
 
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="task.execute.start",
+        target_type="task",
+        target_id=task_id,
+        payload={"stop_before_publish": task.stop_before_publish},
+        request=request,
+    )
     return _ExecuteResponse(queued=True)
 
 
 @tasks_router.post("/{task_id}/cancel", response_model=TaskRead)
 def cancel_existing_task(
     task_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> TaskRead:
     task = _verify_task_ownership(get_task(db, task_id), current_user)
-    return to_task_read(cancel_task(db, task))
+    cancelled = cancel_task(db, task)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="task.cancel",
+        target_type="task",
+        target_id=task_id,
+        payload=None,
+        request=request,
+    )
+    return to_task_read(cancelled)
 
 
 @tasks_router.get("/{task_id}/logs", response_model=list[TaskLogRead])
@@ -310,12 +347,23 @@ def _start_background_execute(task_id: int) -> None:
 def manual_confirm_record_endpoint(
     record_id: int,
     payload: ManualConfirmInput,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PublishRecordRead:
     record = _verify_record_ownership(get_record(db, record_id), current_user, db)
     result = manual_confirm_record(db, record, payload.outcome, payload.publish_url, payload.error_message)
     db.commit()
+
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="publish_record.manual_confirm",
+        target_type="publish_record",
+        target_id=record_id,
+        payload=None,
+        request=request,
+    )
 
     task = get_task(db, record.task_id)
     if task is not None and task.status not in TERMINAL_TASK_STATUSES:
@@ -327,12 +375,23 @@ def manual_confirm_record_endpoint(
 @publish_records_router.post("/{record_id}/resolve-user-input", response_model=PublishRecordRead)
 def resolve_user_input_record_endpoint(
     record_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PublishRecordRead:
     record = _verify_record_ownership(get_record(db, record_id), current_user, db)
     result = resolve_user_input_record(db, record)
     db.commit()
+
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="publish_record.resolve_user_input",
+        target_type="publish_record",
+        target_id=record_id,
+        payload=None,
+        request=request,
+    )
 
     task = get_task(db, record.task_id)
     if task is not None and task.status not in TERMINAL_TASK_STATUSES:
@@ -344,11 +403,21 @@ def resolve_user_input_record_endpoint(
 @publish_records_router.post("/{record_id}/retry", response_model=PublishRecordRead)
 def retry_record_endpoint(
     record_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PublishRecordRead:
     record = _verify_record_ownership(get_record(db, record_id), current_user, db)
     result = retry_record(db, record)
     db.commit()
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="publish_record.retry",
+        target_type="publish_record",
+        target_id=record_id,
+        payload={"new_record_id": result.id},
+        request=request,
+    )
     _start_background_execute(record.task_id)
     return to_record_read(result)

@@ -14,7 +14,8 @@ import { AuthProvider, useAuth } from "./features/auth/AuthContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { ChangePasswordPage } from "./features/auth/ChangePasswordPage";
 import { UsersWorkspace } from "./features/auth/UsersWorkspace";
-import { LogOut, Users } from "lucide-react";
+import { AuditLogsWorkspace } from "./features/system/AuditLogsWorkspace";
+import { LogOut, ScrollText, Users } from "lucide-react";
 import "./styles.css";
 
 function AppShell() {
@@ -87,6 +88,17 @@ function AppShell() {
                 <span className="navDot" />
               </button>
             )}
+            {user.role === "admin" && (
+              <button
+                className={`navItem ${activeNav === "audit-logs" ? "active" : ""}`}
+                type="button"
+                onClick={() => handleNavClick("audit-logs")}
+              >
+                <ScrollText size={17} />
+                <span>审计日志</span>
+                <span className="navDot" />
+              </button>
+            )}
           </nav>
           <div className="sidebarUser">
             <span className="sidebarUsername">{user.username}</span>
@@ -148,6 +160,13 @@ function AppShell() {
               <div style={{ display: activeNav === "admin" ? undefined : "none" }}>
                 <ErrorBoundary fallback={<p role="alert">用户管理出错，请刷新重试</p>}>
                   <UsersWorkspace />
+                </ErrorBoundary>
+              </div>
+            )}
+            {user.role === "admin" && visitedTabs.has("audit-logs") && (
+              <div style={{ display: activeNav === "audit-logs" ? undefined : "none" }}>
+                <ErrorBoundary fallback={<p role="alert">审计日志出错，请刷新重试</p>}>
+                  <AuditLogsWorkspace />
                 </ErrorBoundary>
               </div>
             )}

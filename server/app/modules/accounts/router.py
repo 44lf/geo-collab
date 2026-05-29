@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
 from server.app.modules.accounts.models import Account as AccountModel
+from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.system.models import User
 from server.app.modules.accounts.schemas import (
     AccountBrowserSessionFinishRead,
@@ -88,23 +89,45 @@ def read_accounts(
 def login_platform_account(
     platform_code: str,
     payload: PlatformLoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountRead:
     platform_code = _verify_platform_code(platform_code)
-    return to_account_read(register_account_from_storage_state(db, current_user.id, platform_code, payload))
+    account = register_account_from_storage_state(db, current_user.id, platform_code, payload)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.create",
+        target_type="account",
+        target_id=account.id,
+        payload={"platform_code": platform_code, "display_name": account.display_name},
+        request=request,
+    )
+    return to_account_read(account)
 
 
 # NOTE: /{account_id:int}/login-session routes MUST appear before /{platform_code}/login-session
 @router.post("/{account_id:int}/login-session", response_model=AccountBrowserSessionRead)
 def start_existing_account_login_session_endpoint(
     account_id: int,
+    request: Request,
     payload: AccountCheckRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountBrowserSessionRead:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
-    return _to_browser_session_read(start_account_login_session(db, account, payload or AccountCheckRequest()))
+    result = start_account_login_session(db, account, payload or AccountCheckRequest())
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.login_session.start",
+        target_type="account",
+        target_id=account_id,
+        payload={"session_id": result.session_id},
+        request=request,
+    )
+    return _to_browser_session_read(result)
 
 
 @router.get("/{account_id:int}/login-session/{session_id}/status", response_model=LoginSessionStatusRead)
@@ -131,11 +154,21 @@ def get_login_session_status_endpoint(
 def finish_existing_account_login_session_endpoint(
     account_id: int,
     session_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountBrowserSessionFinishRead:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
     updated, result = finish_account_login_session(db, account, session_id)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.login_session.finish",
+        target_type="account",
+        target_id=account_id,
+        payload={"session_id": session_id, "result": {"logged_in": result.logged_in}},
+        request=request,
+    )
     return AccountBrowserSessionFinishRead(
         account=to_account_read(updated),
         logged_in=result.logged_in,
@@ -148,11 +181,21 @@ def finish_existing_account_login_session_endpoint(
 def stop_existing_account_login_session_endpoint(
     account_id: int,
     session_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
     stop_account_login_session(db, account, session_id)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.login_session.abort",
+        target_type="account",
+        target_id=account_id,
+        payload={"session_id": session_id},
+        request=request,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -160,20 +203,43 @@ def stop_existing_account_login_session_endpoint(
 def start_platform_login_session_endpoint(
     platform_code: str,
     payload: PlatformLoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountBrowserSessionRead:
     platform_code = _verify_platform_code(platform_code)
-    return _to_browser_session_read(start_login_session(db, current_user.id, platform_code, payload))
+    result = start_login_session(db, current_user.id, platform_code, payload)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.login_session.start",
+        target_type="account",
+        target_id=None,
+        payload={"platform_code": platform_code, "session_id": result.session_id},
+        request=request,
+    )
+    return _to_browser_session_read(result)
 
 
 @router.post("/export")
 def export_accounts(
+    request: Request,
     payload: AccountExportRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> FileResponse:
-    export_path = export_accounts_auth_package(db, payload or AccountExportRequest())
+    effective_payload = payload or AccountExportRequest()
+    export_path = export_accounts_auth_package(db, effective_payload)
+    account_ids = list(getattr(effective_payload, "account_ids", None) or [])
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.export",
+        target_type="account",
+        target_id=None,
+        payload={"account_ids": account_ids, "count": len(account_ids)},
+        request=request,
+    )
     return FileResponse(
         export_path,
         media_type="application/zip",
@@ -183,6 +249,7 @@ def export_accounts(
 
 @router.post("/import")
 async def import_accounts(
+    request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -218,50 +285,102 @@ async def import_accounts(
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="无效的 ZIP 文件")
 
-    return import_accounts_auth_package(db, current_user.id, zip_bytes)
+    result = import_accounts_auth_package(db, current_user.id, zip_bytes)
+    imported_count = len(result.get("imported", []) or [])
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.import",
+        target_type="account",
+        target_id=None,
+        payload={"imported_count": imported_count},
+        request=request,
+    )
+    return result
 
 
 @router.post("/{account_id:int}/check", response_model=AccountRead)
 def check_existing_account(
     account_id: int,
+    request: Request,
     payload: AccountCheckRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountRead:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
-    return to_account_read(check_account(db, account, payload or AccountCheckRequest()))
+    updated = check_account(db, account, payload or AccountCheckRequest())
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.check",
+        target_type="account",
+        target_id=account_id,
+        payload={"result": {"status": getattr(updated, "status", None)}},
+        request=request,
+    )
+    return to_account_read(updated)
 
 
 @router.post("/{account_id:int}/relogin", response_model=AccountRead)
 def relogin_existing_account(
     account_id: int,
+    request: Request,
     payload: AccountCheckRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountRead:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
-    return to_account_read(relogin_account(db, account, payload or AccountCheckRequest()))
+    updated = relogin_account(db, account, payload or AccountCheckRequest())
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.relogin",
+        target_type="account",
+        target_id=account_id,
+        payload=None,
+        request=request,
+    )
+    return to_account_read(updated)
 
 
 @router.patch("/{account_id:int}", response_model=AccountRead)
 def rename_existing_account(
     account_id: int,
     payload: AccountRenameRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccountRead:
     account = _verify_account_ownership(get_account(db, account_id), current_user)
-    return to_account_read(rename_account(db, account, payload.display_name))
+    old_display_name = account.display_name
+    updated = rename_account(db, account, payload.display_name)
+    new_display_name = updated.display_name
+    if old_display_name != new_display_name:
+        add_audit_entry(
+            db,
+            user=current_user,
+            action="account.update",
+            target_type="account",
+            target_id=account_id,
+            payload={
+                "before": {"display_name": old_display_name},
+                "after": {"display_name": new_display_name},
+            },
+            request=request,
+        )
+    return to_account_read(updated)
 
 
 @router.delete("/{account_id:int}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_existing_account(
     account_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> Response:
     from server.app.shared.errors import ClientError
     account = _verify_account_ownership(get_account(db, account_id), current_user)
+    display_name = account.display_name
     try:
         delete_account(db, account)
         db.commit()
@@ -271,4 +390,13 @@ def delete_existing_account(
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="删除账号失败: " + str(exc)) from exc
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="account.delete",
+        target_type="account",
+        target_id=account_id,
+        payload={"display_name": display_name},
+        request=request,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

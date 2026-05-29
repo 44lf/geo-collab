@@ -3,12 +3,13 @@ import logging
 import threading
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from server.app.core.security import get_current_user
 from server.app.db.session import get_db
+from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.system.models import User
 from server.app.modules.ai_generation import question_bank as qb
 from server.app.modules.ai_generation.service import create_session, get_session
@@ -33,6 +34,7 @@ bg_session_factory: Any = None
 @router.post("/sessions", status_code=202)
 def start_generation(
     payload: GenerationSessionCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> JSONResponse:
@@ -109,6 +111,17 @@ def start_generation(
 
     session_id = session.id
 
+    topic_count = len(item_ids) if item_ids else (auto_count_to_use or 0)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="generation_session.create",
+        target_type="generation_session",
+        target_id=session_id,
+        payload={"topic_count": topic_count, "skill_id": payload.skill_id},
+        request=request,
+    )
+
     if bg_session_factory is None:
         logger.error(
             "bg_session_factory 未初始化，AI 生文后台线程将不会运行（session_id=%d）",
@@ -184,6 +197,7 @@ def list_question_pools(
 @router.post("/question-pools", response_model=QuestionPoolRead, status_code=201)
 def create_question_pool(
     payload: QuestionPoolCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
@@ -195,18 +209,41 @@ def create_question_pool(
         feishu_table_id=payload.feishu_table_id,
     )
     db.commit()
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="question_pool.create",
+        target_type="question_pool",
+        target_id=pool.id,
+        payload={"name": pool.name},
+        request=request,
+    )
     return _pool_to_read(pool, 0)
 
 
 @router.post("/question-pools/{pool_id}/sync", response_model=SyncResult)
 def sync_question_pool(
     pool_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
     pool = _get_owned_pool(db, pool_id, current_user)
     result = qb.sync_pool(db, pool)
     db.commit()
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="question_pool.sync",
+        target_type="question_pool",
+        target_id=pool_id,
+        payload={
+            "total": result.get("total"),
+            "added": result.get("added"),
+            "updated": result.get("updated"),
+        },
+        request=request,
+    )
     return SyncResult(**result)
 
 

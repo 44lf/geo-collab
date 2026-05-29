@@ -1,11 +1,12 @@
 """Prompt template routes."""
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from server.app.core.security import get_current_user
 from server.app.db.session import get_db
+from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.prompt_templates.schemas import (
     PromptScope,
     PromptTemplateCreate,
@@ -50,11 +51,12 @@ def read_prompt_templates(
 @router.post("", response_model=PromptTemplateRead, status_code=201)
 def create_prompt_template_route(
     payload: PromptTemplateCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
     _ensure_system_allowed(payload.is_system, current_user)
-    return create_prompt_template(
+    template = create_prompt_template(
         db,
         name=payload.name,
         content=payload.content,
@@ -62,12 +64,23 @@ def create_prompt_template_route(
         user_id=current_user.id,
         is_system=payload.is_system,
     )
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="prompt_template.create",
+        target_type="prompt_template",
+        target_id=template.id,
+        payload={"name": template.name},
+        request=request,
+    )
+    return template
 
 
 @router.put("/{template_id}", response_model=PromptTemplateRead)
 def update_prompt_template_route(
     template_id: int,
     payload: PromptTemplateUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
@@ -76,7 +89,7 @@ def update_prompt_template_route(
         raise HTTPException(status_code=404, detail="Prompt template not found")
     _ensure_can_modify(template, current_user)
     _ensure_system_allowed(payload.is_system, current_user)
-    return update_prompt_template(
+    updated = update_prompt_template(
         db,
         template,
         name=payload.name,
@@ -84,12 +97,23 @@ def update_prompt_template_route(
         scope=payload.scope,
         is_system=payload.is_system,
     )
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="prompt_template.update",
+        target_type="prompt_template",
+        target_id=template_id,
+        payload={"name": payload.name},
+        request=request,
+    )
+    return updated
 
 
 @router.patch("/{template_id}", response_model=PromptTemplateRead)
 def patch_prompt_template_route(
     template_id: int,
     payload: PromptTemplatePatch,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
@@ -98,18 +122,29 @@ def patch_prompt_template_route(
         raise HTTPException(status_code=404, detail="Prompt template not found")
     _ensure_can_modify(template, current_user)
     _ensure_system_allowed(payload.is_system, current_user)
-    return patch_prompt_template(
+    result = patch_prompt_template(
         db,
         template,
         is_enabled=payload.is_enabled,
         scope=payload.scope,
         is_system=payload.is_system,
     )
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="prompt_template.enable_toggle",
+        target_type="prompt_template",
+        target_id=template_id,
+        payload={"is_enabled": payload.is_enabled},
+        request=request,
+    )
+    return result
 
 
 @router.delete("/{template_id}", status_code=204)
 def delete_prompt_template_route(
     template_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
@@ -117,4 +152,14 @@ def delete_prompt_template_route(
     if template is None:
         raise HTTPException(status_code=404, detail="Prompt template not found")
     _ensure_can_modify(template, current_user)
+    template_name = template.name
     delete_prompt_template(db, template)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="prompt_template.delete",
+        target_type="prompt_template",
+        target_id=template_id,
+        payload={"name": template_name},
+        request=request,
+    )

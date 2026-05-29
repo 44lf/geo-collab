@@ -7,13 +7,14 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from server.app.core.security import get_current_user
 from server.app.db.session import get_db
+from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.image_library.models import StockCategory, StockImage
 from server.app.modules.system.models import User
 from server.app.modules.image_library import store as minio_store
@@ -141,8 +142,9 @@ def _to_image_read(img: StockImage) -> StockImageRead:
 @router.post("/categories", response_model=CategoryRead, status_code=201)
 def create_category(
     payload: CategoryCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Any:
     existing = db.query(StockCategory).filter(StockCategory.bucket_name == payload.bucket_name).first()
     if existing:
@@ -160,6 +162,15 @@ def create_category(
     db.add(cat)
     db.commit()
     db.refresh(cat)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="stock_category.create",
+        target_type="stock_category",
+        target_id=cat.id,
+        payload={"name": cat.name},
+        request=request,
+    )
     return _to_category_read(cat)
 
 
@@ -176,8 +187,9 @@ def list_categories(
 def update_category(
     category_id: int,
     payload: CategoryUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Any:
     cat = db.get(StockCategory, category_id)
     if cat is None:
@@ -193,6 +205,15 @@ def update_category(
 
     db.commit()
     db.refresh(cat)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="stock_category.update",
+        target_type="stock_category",
+        target_id=category_id,
+        payload={"name": cat.name},
+        request=request,
+    )
     return _to_category_read(cat)
 
 
@@ -203,12 +224,13 @@ ALLOWED_IMAGE_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 @router.post("/images", response_model=StockImageRead, status_code=201)
 async def upload_image(
+    request: Request,
     category_id: int,
     tags: str = "",
     description: str | None = None,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Any:
     cat = db.get(StockCategory, category_id)
     if cat is None:
@@ -245,6 +267,15 @@ async def upload_image(
     db.add(img)
     db.commit()
     db.refresh(img)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="stock_image.create",
+        target_type="stock_image",
+        target_id=img.id,
+        payload={"category_id": category_id, "filename": filename},
+        request=request,
+    )
     return _to_image_read(img)
 
 
@@ -291,12 +322,14 @@ def serve_image_file(
 @router.delete("/images/{image_id}", status_code=204)
 def delete_image(
     image_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> None:
     img = db.get(StockImage, image_id)
     if img is None:
         raise HTTPException(status_code=404, detail="图片不存在")
+    img_filename = img.filename
     cat = db.get(StockCategory, img.category_id)
     if cat:
         try:
@@ -305,6 +338,15 @@ def delete_image(
             pass
     db.delete(img)
     db.commit()
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="stock_image.delete",
+        target_type="stock_image",
+        target_id=image_id,
+        payload={"filename": img_filename},
+        request=request,
+    )
 
 
 class ImageUpdate(BaseModel):
@@ -316,17 +358,30 @@ class ImageUpdate(BaseModel):
 def update_image(
     image_id: int,
     payload: ImageUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Any:
     img = db.get(StockImage, image_id)
     if img is None:
         raise HTTPException(status_code=404, detail="图片不存在")
 
+    changed_fields: list[str] = []
     if payload.tags is not None:
         img.tags = [t.strip() for t in payload.tags.split(",") if t.strip()]
+        changed_fields.append("tags")
     if payload.description is not None:
         img.description = payload.description
+        changed_fields.append("description")
     db.commit()
     db.refresh(img)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="stock_image.update",
+        target_type="stock_image",
+        target_id=image_id,
+        payload={"changed_fields": changed_fields},
+        request=request,
+    )
     return _to_image_read(img)
