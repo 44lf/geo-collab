@@ -56,21 +56,22 @@ def test_add_audit_entry_writes_row(monkeypatch):
     try:
         with test_app.session_factory() as db:
             admin = db.query(User).filter(User.username == "testadmin").one()
+            admin_id = admin.id  # 先捞出来，避免 session 关闭后 detached
             add_audit_entry(
                 db,
                 user=admin,
                 action="test.helper",
                 target_type="user",
-                target_id=admin.id,
+                target_id=admin_id,
                 payload={"foo": "bar"},
             )
 
         with test_app.session_factory() as db:
             row = db.query(AuditLog).filter(AuditLog.action == "test.helper").one()
-            assert row.user_id == admin.id
+            assert row.user_id == admin_id
             assert row.username == "testadmin"
             assert row.target_type == "user"
-            assert row.target_id == str(admin.id)
+            assert row.target_id == str(admin_id)
             assert row.payload_json == {"foo": "bar"}
             assert row.created_at is not None
     finally:
