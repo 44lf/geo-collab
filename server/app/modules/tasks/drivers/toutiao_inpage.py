@@ -160,7 +160,7 @@ class ToutiaoInPageDriver:
         payload: PublishPayload,
         stop_before_publish: bool,
     ) -> PublishResult:
-        content_html = body_segments_to_toutiao_html(payload.body_segments)
+        content_html, _image_order = body_segments_to_toutiao_html(payload.body_segments)
         page.goto(PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
         if not _wait_editor_ready(page):
             raise UserInputRequired(
