@@ -1,0 +1,3963 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GEO 产品方案 · 全集（9 sections）</title>
+  <style>
+    :root {
+      --border: #e2e8f0;
+      --bg: #fafafa;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+        "Helvetica Neue", Arial, sans-serif;
+      margin: 0 auto;
+      padding: 40px 32px 80px;
+      background: #f8fafc;
+      color: #0f172a;
+      line-height: 1.6;
+      max-width: 1280px;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin: 0 0 8px;
+    }
+
+    h2 {
+      font-size: 22px;
+      font-weight: 800;
+      margin: 0 0 4px;
+      color: #0f172a;
+    }
+
+    h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 18px 0 8px;
+    }
+
+    h4 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #475569;
+      margin: 0 0 10px;
+      letter-spacing: 0.3px;
+    }
+
+    p {
+      margin: 6px 0;
+    }
+
+    ul {
+      padding-left: 20px;
+    }
+
+    .subtitle {
+      color: #64748b;
+      font-size: 13px;
+      margin: 0 0 20px;
+    }
+
+    .section-wrap {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 32px;
+      margin: 28px 0;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    .toc {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 28px;
+      margin: 20px 0 32px;
+    }
+
+    .toc h2 {
+      font-size: 14px;
+      margin: 0 0 12px;
+      color: #475569;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .toc ol {
+      margin: 0;
+      padding-left: 22px;
+      columns: 2;
+      column-gap: 28px;
+      font-size: 14px;
+      line-height: 1.9;
+    }
+
+    .toc a {
+      color: #1e40af;
+      text-decoration: none;
+    }
+
+    .toc a:hover {
+      text-decoration: underline;
+    }
+
+    .doc-header {
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 18px;
+      margin-bottom: 8px;
+    }
+
+    .doc-header .meta {
+      color: #64748b;
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="doc-header">
+    <h1>GEO 产品方案 · 完整版</h1>
+    <div class="meta">工作流引擎为内核 · 6 大子系统 · 9 个章节 · 数据闭环</div>
+  </div>
+
+  <nav class="toc">
+    <h2>目录</h2>
+    <ol>
+      <li><a href="#sec1">总体架构</a></li>
+      <li><a href="#sec2">监测层（Sensor Layer）</a></li>
+      <li><a href="#sec3">内容生产层</a></li>
+      <li><a href="#sec4">分发层</a></li>
+      <li><a href="#sec5">归因层 — 痛点 1 解法</a></li>
+      <li><a href="#sec6">数据回收 &amp; 决策中枢</a></li>
+      <li><a href="#sec7">视频自动化流水线 — 痛点 2</a></li>
+      <li><a href="#sec8">分阶段路线图</a></li>
+      <li><a href="#sec9">关键决策 &amp; 风险地图</a></li>
+    </ol>
+  </nav>
+
+  <section class="section-wrap" id="sec1">
+    <h2>Section 1 / 9 · 总体架构</h2>
+    <p class="subtitle">工作流引擎为内核 · 6 大子系统 · 数据闭环</p>
+
+    <style>
+      .arch-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+        margin: 24px 0;
+      }
+
+      .arch-layer {
+        border: 2px solid var(--border, #ddd);
+        border-radius: 12px;
+        padding: 18px 22px;
+        background: var(--bg, #fafafa);
+        position: relative;
+      }
+
+      .arch-layer.core {
+        border-color: #10b981;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(16, 185, 129, 0.02));
+      }
+
+      .arch-layer.pain {
+        border-color: #ef4444;
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.06), rgba(239, 68, 68, 0.02));
+      }
+
+      .arch-layer.phase2 {
+        border-color: #94a3b8;
+        border-style: dashed;
+        opacity: 0.7;
+      }
+
+      .arch-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #64748b;
+        margin-bottom: 6px;
+      }
+
+      .arch-title {
+        font-size: 16px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .arch-desc {
+        font-size: 13px;
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      .arch-flow {
+        text-align: center;
+        color: #94a3b8;
+        font-size: 18px;
+        margin: -6px 0;
+      }
+
+      .arch-modules {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+
+      .arch-mod {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-family: monospace;
+      }
+
+      .badge {
+        display: inline-block;
+        background: #ef4444;
+        color: #fff;
+        font-size: 9px;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 3px;
+        margin-left: 8px;
+        vertical-align: middle;
+      }
+
+      .badge.phase2 {
+        background: #64748b;
+      }
+
+      .badge.core {
+        background: #10b981;
+      }
+    </style>
+
+    <div class="arch-grid">
+
+      <div class="arch-layer">
+        <div class="arch-label">Layer 1 · 输入 / 监测</div>
+        <div class="arch-title">① 监测层 (Sensor Layer) - 目前人工几乎100%</div>
+        <div class="arch-desc">每日扫描多 AI 引擎 × 目标关键词，输出 "提及率 / 排名 / 是否被引 / 引用源" 时序数据，作为闭环的"输入信号"</div>
+        <div class="arch-modules">
+          <div class="arch-mod">国内: 豆包/文心/通义/Kimi/智谱/腾讯元宝</div>
+          <div class="arch-mod">海外: ChatGPT/Claude/Gemini/Perplexity</div>
+          <div class="arch-mod">关键词宇宙</div>
+        </div>
+      </div>
+
+      <div class="arch-flow">↓ 数据驱动选题</div>
+
+      <div class="arch-layer core">
+        <div class="arch-label">Layer 2 · 内核</div>
+        <div class="arch-title">② 工作流引擎 (Workflow Engine) <span class="badge core">CORE</span></div>
+        <div class="arch-desc">所有子系统的功能都封装为"节点"，运营可视化拖拽组合 GEO 策略。一期节点都是确定性规则；二期可替换为 Agent 节点。</div>
+        <div class="arch-modules">
+          <div class="arch-mod">节点编排器</div>
+          <div class="arch-mod">调度器</div>
+          <div class="arch-mod">运营 Web 控制台</div>
+          <div class="arch-mod">节点市场</div>
+        </div>
+      </div>
+
+      <div class="arch-flow">↓ 编排节点执行</div>
+
+      <div class="arch-layer">
+        <div class="arch-label">Layer 3 · 生产</div>
+        <div class="arch-title">③ 内容生产层 (Production) - 人工率80%</div>
+        <div class="arch-desc">基于监测信号 + 选题策略生成多模态内容；一期文/图，二期加视频</div>
+        <div class="arch-modules">
+          <div class="arch-mod">选题节点</div>
+          <div class="arch-mod">文章节点 (LLM)</div>
+          <div class="arch-mod">图片节点</div>
+          <div class="arch-mod">视频节点 <span class="badge phase2">P2</span></div>
+          <div class="arch-mod">审核节点 (人工+规则)</div>
+        </div>
+      </div>
+
+      <div class="arch-flow">↓</div>
+
+      <div class="arch-layer">
+        <div class="arch-label">Layer 4 · 分发</div>
+        <div class="arch-title">④ 分发层 (Distribution) - 理论上可做到90%自动化</div>
+        <div class="arch-desc">多平台账号池 + 发布通道（官方 API + 浏览器自动化）+ 风控规避</div>
+        <div class="arch-modules">
+          <div class="arch-mod">国内: 头条/知乎/小红书/微信公众号/百家号/抖音</div>
+          <div class="arch-mod">海外: Medium/Reddit/Quora/X (1-2 个 MVP)</div>
+          <div class="arch-mod">账号池</div>
+          <div class="arch-mod">风控</div>
+        </div>
+      </div>
+
+      <div class="arch-flow">↓</div>
+
+      <div class="arch-layer pain">
+        <div class="arch-label">Layer 5 · 痛点 1 解法</div>
+        <div class="arch-title">⑤ 归因层 (Attribution) <span class="badge">PAIN POINT 1</span></div>
+        <div class="arch-desc"><b>分层归因方案</b>：露出归因 + 中转归因（Web 落地页）+ 时序桥接 + 实验对照 + 用户自报 — 多手段交叉验证</div>
+        <div class="arch-modules">
+          <div class="arch-mod">L1 露出归因</div>
+          <div class="arch-mod">L2 落地页 UTM 中转</div>
+          <div class="arch-mod">L3 时序桥接</div>
+          <div class="arch-mod">L4 实验对照 (A/B)</div>
+          <div class="arch-mod">L5 用户自报</div>
+        </div>
+      </div>
+
+      <div class="arch-flow">↓ ROI / 效能反推</div>
+
+      <div class="arch-layer">
+        <div class="arch-label">Layer 6 · 决策</div>
+        <div class="arch-title">⑥ 数据回收 & 决策中枢 (Decision Hub)</div>
+        <div class="arch-desc">汇总监测/分发/归因/转化数据 → 算 ROI、识别高效内容模板、反推下一轮选题策略 → 回流到 Layer 1 形成闭环</div>
+        <div class="arch-modules">
+          <div class="arch-mod">数据仓库</div>
+          <div class="arch-mod">ROI 仪表盘</div>
+          <div class="arch-mod">内容效能模型</div>
+          <div class="arch-mod">策略反推器</div>
+        </div>
+      </div>
+
+      <div class="arch-flow" style="color:#10b981;font-weight:600">↑ 闭环回流至 Layer 1 监测信号 / Layer 2 工作流策略</div>
+
+    </div>
+
+    <div class="section" style="background:#f1f5f9;padding:16px;border-radius:8px;margin-top:24px">
+      <h3 style="margin-top:0">这张图传达的 3 个关键设计决策</h3>
+      <ul style="margin:8px 0;line-height:1.7">
+        <li><b>工作流引擎是内核（不是数据库、不是 LLM）</b> — 所有子系统都是它的节点；这是 A 路线"工作流节点搭建"的精确落地</li>
+        <li><b>归因层是独立 Layer 5</b>，不嵌在数据回收里 — 痛点 1 要单独建模，做"分层归因"而不是单一指标</li>
+        <li><b>视频在 Layer 3 内但标 P2</b>，二期才接入；一期 Layer 3 只跑文/图</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section-wrap" id="sec2">
+    <h2>Section 2 / 9 · 监测层（Sensor Layer）</h2>
+    <p class="subtitle">每日扫描多 AI 引擎 × 关键词宇宙 · 输出可量化提及率数据</p>
+
+    <style>
+      .grid-2col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin: 16px 0;
+      }
+
+      .panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        background: #fff;
+      }
+
+      .panel h4 {
+        margin: 0 0 10px 0;
+        font-size: 13px;
+        color: #475569;
+        letter-spacing: 0.5px;
+      }
+
+      .engine-row {
+        display: flex;
+        align-items: center;
+        padding: 6px 0;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 13px;
+      }
+
+      .engine-row:last-child {
+        border-bottom: none;
+      }
+
+      .engine-name {
+        flex: 1;
+        font-weight: 600;
+      }
+
+      .engine-mode {
+        font-family: monospace;
+        font-size: 11px;
+        color: #64748b;
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 3px;
+      }
+
+      .engine-mode.api {
+        background: #d1fae5;
+        color: #065f46;
+      }
+
+      .engine-mode.web {
+        background: #fef3c7;
+        color: #92400e;
+      }
+
+      .badge-p2 {
+        background: #94a3b8;
+        color: #fff;
+        font-size: 9px;
+        padding: 2px 5px;
+        border-radius: 3px;
+        margin-left: 6px;
+      }
+
+      .keyword-tree {
+        font-family: monospace;
+        font-size: 12px;
+        line-height: 1.7;
+        padding: 12px;
+        background: #f8fafc;
+        border-radius: 6px;
+      }
+
+      .keyword-tree .l1 {
+        color: #1e40af;
+        font-weight: 700;
+      }
+
+      .keyword-tree .l2 {
+        color: #5b21b6;
+        padding-left: 16px;
+      }
+
+      .keyword-tree .l3 {
+        color: #065f46;
+        padding-left: 32px;
+      }
+
+      .keyword-tree .l4 {
+        color: #92400e;
+        padding-left: 48px;
+      }
+
+      .data-shape {
+        font-family: monospace;
+        font-size: 11px;
+        line-height: 1.6;
+        padding: 12px;
+        background: #1e293b;
+        color: #e2e8f0;
+        border-radius: 6px;
+        overflow-x: auto;
+      }
+
+      .data-shape .k {
+        color: #93c5fd;
+      }
+
+      .data-shape .s {
+        color: #fcd34d;
+      }
+
+      .data-shape .n {
+        color: #f9a8d4;
+      }
+
+      .data-shape .c {
+        color: #6ee7b7;
+      }
+
+      .decision {
+        border-left: 3px solid #f59e0b;
+        padding: 10px 14px;
+        background: #fffbeb;
+        margin: 10px 0;
+        border-radius: 0 6px 6px 0;
+      }
+
+      .decision b {
+        color: #92400e;
+      }
+    </style>
+
+    <div class="grid-2col">
+
+      <div class="panel">
+        <h4>2.1 · AI 引擎清单（一期）</h4>
+        <div style="font-size:11px;color:#64748b;margin-bottom:6px;font-weight:600">国内 · 全做（7 个）</div>
+        <div class="engine-row">
+          <div class="engine-name">豆包</div>
+          <div class="engine-mode web">Web 自动化</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">通义千问</div>
+          <div class="engine-mode web">Web 自动化</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">文心一言</div>
+          <div class="engine-mode web">Web 自动化</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">Kimi</div>
+          <div class="engine-mode api">API + Web</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">智谱清言</div>
+          <div class="engine-mode api">API</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">腾讯元宝</div>
+          <div class="engine-mode web">Web 自动化</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">讯飞星火</div>
+          <div class="engine-mode api">API</div>
+        </div>
+
+        <div style="font-size:11px;color:#64748b;margin:14px 0 6px;font-weight:600">海外 · MVP 监测（5 个）</div>
+        <div class="engine-row">
+          <div class="engine-name">ChatGPT</div>
+          <div class="engine-mode api">API</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">Gemini</div>
+          <div class="engine-mode api">API</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">Claude</div>
+          <div class="engine-mode api">API</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">Perplexity ⭐</div>
+          <div class="engine-mode api">API + Web</div>
+        </div>
+        <div class="engine-row">
+          <div class="engine-name">Copilot</div>
+          <div class="engine-mode web">Web</div>
+        </div>
+
+        <div style="font-size:10px;color:#94a3b8;margin-top:10px">⭐ Perplexity 是 GEO 重点 — 引用透明、被搜索类查询场景占比高</div>
+      </div>
+
+      <div class="panel">
+        <h4>2.2 · 关键词宇宙（4 层）</h4>
+        <div class="keyword-tree">
+          <div class="l1">L1 · 品牌词 (~50-100)</div>
+          <div class="l2">└─ "XX 是什么"</div>
+          <div class="l2">└─ "XX 怎么样"</div>
+          <div class="l2">└─ "XX vs YY"</div>
+          <div class="l1">L2 · 类目词 (~200-500)</div>
+          <div class="l2">└─ "最好的 [品类] App"</div>
+          <div class="l2">└─ "[品类] 推荐"</div>
+          <div class="l1">L3 · 场景词 (~500-2000)</div>
+          <div class="l2">└─ "如何 [场景需求]"</div>
+          <div class="l2">└─ "[场景] 怎么办"</div>
+          <div class="l1">L4 · 长尾词 (~2000-10000)</div>
+          <div class="l2">└─ 精准但低频</div>
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-top:10px">
+          <b>构建方式</b>：种子词手工录入 → LLM 自动扩展 → 反向挖掘（从 AI 回答反推）→ 百度指数/巨量算数/Google Trends 补充
+        </div>
+      </div>
+
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h4>2.3 · 输出数据结构（每次扫描的"测点"）</h4>
+      <div class="data-shape">
+        {<br>
+        &nbsp;&nbsp;<span class="k">"engine"</span>: <span class="s">"豆包"</span>,<br>
+        &nbsp;&nbsp;<span class="k">"query"</span>: <span class="s">"最好用的 XX App"</span>,<br>
+        &nbsp;&nbsp;<span class="k">"query_layer"</span>: <span class="s">"类目词"</span>,<br>
+        &nbsp;&nbsp;<span class="k">"timestamp"</span>: <span class="s">"2026-05-28T02:00:00Z"</span>,<br>
+        &nbsp;&nbsp;<span class="k">"response_text"</span>: <span class="s">"..."</span>, <span class="c">//
+          完整回答留存</span><br>
+        &nbsp;&nbsp;<span class="k">"mentions"</span>: [<span class="s">"我们产品 A"</span>, <span class="s">"竞品 B"</span>,
+        <span class="s">"竞品 C"</span>],<br>
+        &nbsp;&nbsp;<span class="k">"brand_position"</span>: <span class="n">2</span>, <span class="c">// 第 2
+          个被提到</span><br>
+        &nbsp;&nbsp;<span class="k">"citations"</span>: [{<span class="k">"url"</span>: <span class="s">"..."</span>,
+        <span class="k">"title"</span>: <span class="s">"..."</span>}],<br>
+        &nbsp;&nbsp;<span class="k">"citation_is_ours"</span>: <span class="n">true</span>, <span class="c">//
+          引用源是不是我们投放的内容（GEO 命中关键指标）</span><br>
+        &nbsp;&nbsp;<span class="k">"sentiment"</span>: <span class="s">"neutral"</span>, <span class="c">//
+          提及态度</span><br>
+        &nbsp;&nbsp;<span class="k">"competitive_set"</span>: [<span class="s">"竞品 B"</span>, <span class="s">"竞品
+          C"</span>],<br>
+        &nbsp;&nbsp;<span class="k">"raw_screenshot"</span>: <span class="s">"s3://..."</span> <span class="c">// 截图存证
+          (合规/审计)</span><br>
+        }
+      </div>
+    </div>
+
+    <div class="grid-2col" style="margin-top:16px">
+      <div class="panel">
+        <h4>2.4 · 扫描频率</h4>
+        <ul style="margin:6px 0;font-size:13px;line-height:1.6">
+          <li><b>L1 品牌词</b>：每日 3 次（早/午/晚），近实时</li>
+          <li><b>L2 类目词</b>：每日 1 次（凌晨 2-4 点错峰）</li>
+          <li><b>L3 场景词</b>：每 3 天 1 次</li>
+          <li><b>L4 长尾词</b>：每周 1 次轮转扫</li>
+          <li><b>触发式</b>：新内容发布后 24h / 72h 触发针对性回扫，看是否被引用</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h4>2.5 · 输出消费者（数据回流）</h4>
+        <ul style="margin:6px 0;font-size:13px;line-height:1.6">
+          <li>→ <b>工作流-选题节点</b>：哪些关键词需补内容</li>
+          <li>→ <b>决策中枢-仪表盘</b>：提及率趋势</li>
+          <li>→ <b>归因层-L1 露出归因</b>：基础数据</li>
+          <li>→ <b>内容生产-审核节点</b>：竞品同场分析</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="decision">
+      <b>⚠ 待用户决策项 D2 · 待 sign-off</b>
+      <ul style="margin:6px 0 0;font-size:13px">
+        <li><b>D2.1 · 一期引擎数</b>：默认国内 7 + 海外 5 = 12 个。砍到 6 个（国内 4 + 海外 2）能省 ~1.5 月工程量。是否要砍？</li>
+        <li><b>D2.2 · 抓取方案</b>：默认自研 Playwright + 账号池。<u>可选</u>：集成第三方 GEO 工具（如 Profound / Otterly /
+          Goodie）做海外部分，国内仍自研。集成方案省 1 个月但有月度费用 $200-500。</li>
+        <li><b>D2.3 · 关键词宇宙初始规模</b>：默认 ~1500 个（50+300+800+350），一期目标量级。是否合理？还是要更大/更小？</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section-wrap" id="sec3">
+    <h2>Section 3 / 9 · 内容生产层</h2>
+    <p class="subtitle">节点化生产流水线 · 一期文 + 图 · 视频在 Section 7</p>
+
+    <style>
+      .pipeline {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+        margin: 20px 0;
+        overflow-x: auto;
+        padding: 4px 0;
+      }
+
+      .node {
+        flex: 0 0 130px;
+        background: #fff;
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px;
+        text-align: center;
+        position: relative;
+        font-size: 12px;
+      }
+
+      .node.input {
+        border-color: #3b82f6;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.05), #fff);
+      }
+
+      .node.llm {
+        border-color: #8b5cf6;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.05), #fff);
+      }
+
+      .node.geo {
+        border-color: #10b981;
+        background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), #fff);
+      }
+
+      .node.review {
+        border-color: #f59e0b;
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), #fff);
+      }
+
+      .node.output {
+        border-color: #64748b;
+        background: #f8fafc;
+      }
+
+      .arrow {
+        flex: 0 0 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #94a3b8;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .node-icon {
+        font-size: 18px;
+        margin-bottom: 4px;
+      }
+
+      .node-title {
+        font-weight: 700;
+        margin-bottom: 4px;
+        font-size: 12px;
+      }
+
+      .node-desc {
+        font-size: 10px;
+        color: #64748b;
+        line-height: 1.4;
+      }
+
+      .node-mark {
+        position: absolute;
+        top: -8px;
+        right: -6px;
+        background: #10b981;
+        color: #fff;
+        font-size: 8px;
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-weight: 700;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin: 16px 0;
+      }
+
+      .panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        background: #fff;
+      }
+
+      .panel h4 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        color: #475569;
+        letter-spacing: 0.3px;
+      }
+
+      .vs {
+        background: #f8fafc;
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+
+      .vs-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        padding: 4px 0;
+        border-bottom: 1px dashed #e2e8f0;
+      }
+
+      .vs-row:last-child {
+        border-bottom: none;
+      }
+
+      .vs-bad {
+        color: #94a3b8;
+        text-decoration: line-through;
+      }
+
+      .vs-good {
+        color: #065f46;
+        font-weight: 600;
+      }
+
+      .model-row {
+        display: flex;
+        align-items: center;
+        padding: 5px 0;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 12px;
+      }
+
+      .model-row:last-child {
+        border-bottom: none;
+      }
+
+      .model-tag {
+        font-family: monospace;
+        font-size: 10px;
+        padding: 2px 6px;
+        background: #f1f5f9;
+        border-radius: 3px;
+        margin-right: 6px;
+      }
+
+      .decision {
+        border-left: 3px solid #f59e0b;
+        padding: 10px 14px;
+        background: #fffbeb;
+        margin: 10px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 13px;
+      }
+
+      .decision b {
+        color: #92400e;
+      }
+
+      .template-card {
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 8px;
+        font-size: 12px;
+      }
+
+      .template-card .name {
+        font-weight: 700;
+        color: #1e40af;
+      }
+
+      .template-card .meta {
+        font-family: monospace;
+        font-size: 10px;
+        color: #64748b;
+      }
+    </style>
+
+    <div class="panel" style="margin-top:16px">
+      <h4>3.1 · 节点化生产流水线（一期）</h4>
+      <div class="pipeline">
+        <div class="node input">
+          <div class="node-icon">📡</div>
+          <div class="node-title">监测信号触发</div>
+          <div class="node-desc">L1/L2 关键词 hit rate 低→触发选题</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node">
+          <div class="node-icon">🎯</div>
+          <div class="node-title">选题节点</div>
+          <div class="node-desc">基于监测+模板库选关键词组合</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node llm">
+          <div class="node-icon">📝</div>
+          <div class="node-title">大纲节点</div>
+          <div class="node-desc">LLM 出大纲（GEO 结构化）</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node llm">
+          <div class="node-icon">✍️</div>
+          <div class="node-title">正文节点</div>
+          <div class="node-desc">主笔模型生成正文</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node geo">
+          <div class="node-icon">🔍</div>
+          <div class="node-title">GEO 优化节点</div>
+          <div class="node-mark">CORE</div>
+          <div class="node-desc">结构化引用 / 实体锚点 / FAQ 块</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node llm">
+          <div class="node-icon">🖼️</div>
+          <div class="node-title">配图节点</div>
+          <div class="node-desc">即梦/MJ/SDXL 生图</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node review">
+          <div class="node-icon">🛡️</div>
+          <div class="node-title">审核节点</div>
+          <div class="node-desc">规则+人工抽检</div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node output">
+          <div class="node-icon">💾</div>
+          <div class="node-title">资产快照</div>
+          <div class="node-desc">版本化存档（模板/模型/prompt）</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:6px">所有节点都是工作流引擎的可编排单元，可拖拽组合、版本化、热替换</div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h4>3.2 · GEO 内容 vs 普通 AIGC 文章</h4>
+        <div class="vs">
+          <div class="vs-row">
+            <div>普通 AIGC</div>
+            <div>GEO 优化</div>
+          </div>
+          <div class="vs-row">
+            <div class="vs-bad">流畅自然段</div>
+            <div class="vs-good">结构化段落 + 明确标题</div>
+          </div>
+          <div class="vs-row">
+            <div class="vs-bad">隐式提及品牌</div>
+            <div class="vs-good">实体锚点（明确"XX 产品"）</div>
+          </div>
+          <div class="vs-row">
+            <div class="vs-bad">长文论述</div>
+            <div class="vs-good">FAQ Q&A 块 + 列表</div>
+          </div>
+          <div class="vs-row">
+            <div class="vs-bad">无引用</div>
+            <div class="vs-good">权威引用 + 时效标签</div>
+          </div>
+          <div class="vs-row">
+            <div class="vs-bad">SEO 关键词堆砌</div>
+            <div class="vs-good">语义自然 + 实体覆盖</div>
+          </div>
+          <div class="vs-row">
+            <div class="vs-bad">单一视角</div>
+            <div class="vs-good">多维度对比（含竞品）</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-top:6px">
+          "GEO 优化节点"专门做这一道转换，是和普通 AIGC 工具最大的差异点
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>3.3 · Prompt 模板库（节点输入）</h4>
+        <div class="template-card">
+          <div class="name">tpl/product-evaluation/v2</div>
+          <div class="meta">type: 测评类 · 适用 L1+L2 · hit rate 28%</div>
+          <div style="font-size:11px;margin-top:4px">"我是 [品类] 测评博主，从 5 个维度对比 [品牌列表]..."</div>
+        </div>
+        <div class="template-card">
+          <div class="name">tpl/how-to-guide/v3</div>
+          <div class="meta">type: 教程攻略 · 适用 L3 · hit rate 41%</div>
+          <div style="font-size:11px;margin-top:4px">"5 步学会 [场景]，附实操截图..."</div>
+        </div>
+        <div class="template-card">
+          <div class="name">tpl/faq-collection/v1</div>
+          <div class="meta">type: 问答合集 · 适用 L3+L4 · hit rate 35%</div>
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-top:6px">
+          模板有 metadata：适用关键词层级 / 目标引擎 / 历史 hit rate；工作流可按规则自动选模板，也可运营手选
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>3.4 · 多模型组合（按职责分工）</h4>
+      <div class="model-row">
+        <div class="model-tag">大纲</div>
+        <div>Claude Opus 4.7 · Gemini 2.5 Pro · DeepSeek V3 — 长 context 强、结构化输出好</div>
+      </div>
+      <div class="model-row">
+        <div class="model-tag">主笔</div>
+        <div>Claude Sonnet 4.6 · 通义千问 Max · DeepSeek V3 — 写作质量 + 成本平衡</div>
+      </div>
+      <div class="model-row">
+        <div class="model-tag">润色</div>
+        <div>Gemini 2.5 Flash · 豆包 Pro · Kimi — 快速 + 本土化语感</div>
+      </div>
+      <div class="model-row">
+        <div class="model-tag">配图</div>
+        <div>即梦 (国内) · Midjourney V7 · Flux Pro · SDXL — 一期默认即梦+Flux</div>
+      </div>
+      <div class="model-row">
+        <div class="model-tag">RAG 知识</div>
+        <div>自建向量库（产品文档 + 已发内容 + 行业资料）→ 写作时检索注入</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h4>3.5 · 审核节点（关键）</h4>
+        <ul style="font-size:12px;line-height:1.6;margin:6px 0">
+          <li><b>L1 自动规则</b>：敏感词 / 风险词 / 数据校验（不能虚构数据）</li>
+          <li><b>L2 事实校验</b>：RAG 比对自建知识库</li>
+          <li><b>L3 竞品对比合规</b>：避免不当贬低竞品（法务红线）</li>
+          <li><b>L4 人工抽检</b>：高 stakes 内容 100%审；其他按 10-20% 抽样</li>
+          <li><b>反馈回流</b>：被打回稿子作为负样本 → prompt 优化</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h4>3.6 · 资产版本快照（每篇内容）</h4>
+        <div
+          style="font-family:monospace;font-size:11px;background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;line-height:1.6">
+          content_id: ct_20260528_001<br>
+          template: tpl/product-evaluation/v2<br>
+          models: {outline: claude-opus-4-7,<br>
+          &nbsp;&nbsp;body: claude-sonnet-4-6,<br>
+          &nbsp;&nbsp;polish: doubao-pro}<br>
+          prompt_version: pv_38<br>
+          target_keywords: [...]<br>
+          reviewer: auto+human<br>
+          geo_features: [faq_block, entity_anchor]
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-top:6px">用于事后归因"什么样的内容 hit rate 最高"</div>
+      </div>
+    </div>
+
+    <div class="decision">
+      <b>⚠ 待 sign-off 决策项 D3.x</b>
+      <ul style="margin:6px 0 0">
+        <li><b>D3.1 · 主笔模型</b>：默认 Claude Sonnet 4.6 + DeepSeek V3 双轨（中英分工 + 成本备份）。是否同意？还是想用其他（如 GPT-5 / 通义 Max-Pro / 豆包
+          Pro）？</li>
+        <li><b>D3.2 · RAG 知识库</b>：默认要做，自建向量库放产品文档+历史已发内容。<u>替代</u>：跳过 RAG（成本高），用 prompt 内嵌少量上下文。</li>
+        <li><b>D3.3 · 审核策略</b>：默认"自动规则 + 人工抽检 10-20%"。是否够？还是要"100% 人审"（运营成本翻 5 倍）？</li>
+        <li><b>D3.4 · AI 内容标记</b>：是否对外标"AI 生成"？目前各平台政策不同（小红书要求标，头条不强制）。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section-wrap" id="sec4">
+    <h2>Section 4 / 9 · 分发层</h2>
+    <p class="subtitle">"平台 → 训练源 → AI 引擎" 三段关系链 · 分发是为了喂数据给目标 AI</p>
+
+    <style>
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin: 16px 0;
+      }
+
+      .panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        background: #fff;
+      }
+
+      .panel h4 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        color: #475569;
+        letter-spacing: 0.3px;
+      }
+
+      .platform-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr 70px 60px;
+        gap: 8px;
+        align-items: center;
+        padding: 7px 4px;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 12px;
+      }
+
+      .platform-row:last-child {
+        border-bottom: none;
+      }
+
+      .platform-row.head {
+        font-weight: 700;
+        color: #64748b;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .platform-name {
+        font-weight: 600;
+      }
+
+      .feed-arrow {
+        color: #8b5cf6;
+        font-size: 11px;
+      }
+
+      .feed-target {
+        color: #475569;
+        font-size: 11px;
+      }
+
+      .api-tag {
+        font-family: monospace;
+        font-size: 10px;
+        padding: 2px 5px;
+        border-radius: 3px;
+        text-align: center;
+      }
+
+      .api-tag.api {
+        background: #d1fae5;
+        color: #065f46;
+      }
+
+      .api-tag.web {
+        background: #fef3c7;
+        color: #92400e;
+      }
+
+      .api-tag.mix {
+        background: #ede9fe;
+        color: #5b21b6;
+      }
+
+      .priority-tag {
+        font-size: 9px;
+        padding: 2px 5px;
+        border-radius: 3px;
+        text-align: center;
+        font-weight: 700;
+      }
+
+      .priority-tag.p1 {
+        background: #ef4444;
+        color: #fff;
+      }
+
+      .priority-tag.p2 {
+        background: #f59e0b;
+        color: #fff;
+      }
+
+      .priority-tag.p3 {
+        background: #64748b;
+        color: #fff;
+      }
+
+      .matrix {
+        font-family: monospace;
+        font-size: 11px;
+        line-height: 1.7;
+      }
+
+      .matrix-cell {
+        display: inline-block;
+        min-width: 60px;
+        padding: 3px 6px;
+        margin: 2px;
+        background: #f1f5f9;
+        border-radius: 4px;
+      }
+
+      .matrix-cell.live {
+        background: #d1fae5;
+        color: #065f46;
+      }
+
+      .matrix-cell.warn {
+        background: #fef3c7;
+        color: #92400e;
+      }
+
+      .matrix-cell.danger {
+        background: #fecaca;
+        color: #991b1b;
+      }
+
+      .risk-item {
+        padding: 8px 12px;
+        background: #fef2f2;
+        border-left: 3px solid #ef4444;
+        margin-bottom: 6px;
+        border-radius: 0 6px 6px 0;
+        font-size: 12px;
+      }
+
+      .decision {
+        border-left: 3px solid #f59e0b;
+        padding: 10px 14px;
+        background: #fffbeb;
+        margin: 10px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 13px;
+      }
+
+      .decision b {
+        color: #92400e;
+      }
+    </style>
+
+    <div class="panel" style="margin-top:16px">
+      <h4>4.1 · 平台 → 训练源 → AI 引擎 关系链（一期）</h4>
+
+      <div style="font-size:11px;color:#64748b;margin:6px 0 8px;font-weight:600">国内（一期主战场）</div>
+      <div class="platform-row head">
+        <div>平台</div>
+        <div>训练源 / 影响 AI 引擎</div>
+        <div>接入方式</div>
+        <div>优先级</div>
+      </div>
+      <div class="platform-row">
+        <div class="platform-name">头条号 ⭐</div>
+        <div class="feed-target">→ 豆包（直接训练源）</div>
+        <div class="api-tag api">API</div>
+        <div class="priority-tag p1">P1</div>
+      </div>
+      <div class="platform-row">
+        <div class="platform-name">知乎 ⭐</div>
+        <div class="feed-target">→ Kimi / 通义 / 文心（高引用率）</div>
+        <div class="api-tag mix">部分 API</div>
+        <div class="priority-tag p1">P1</div>
+      </div>
+      <div class="platform-row">
+        <div class="platform-name">小红书</div>
+        <div class="feed-target">→ 通义 / 豆包（生活/消费类）</div>
+        <div class="api-tag web">Web 自动化</div>
+        <div class="priority-tag p1">P1</div>
+      </div>
+      <div class="platform-row">
+        <div class="platform-name">百家号</div>
+        <div class="feed-target">→ 文心（直接训练源）</div>
+        <div class="api-tag api">API</div>
+        <div class="priority-tag p1">P1</div>
+      </div>
+      <div class="platform-row">
+        <div class="platform-name">微信公众号</div>
+        <div class="feed-target">→ 腾讯元宝（直接训练源）</div>
+        <div class="api-tag web">Web + 安全风控严</div>
+        <div class="priority-tag p2">P2</div>
+      </div>
+      <div class="platform-row">
+        <div class="platform-name">CSDN / 掘金 (技术类)</div>
+        <div class="feed-target">→ 多引擎（技术问答高引用）</div>
+        <div class="api-tag api">API</div>
+        <div class="priority-tag p2">P2</div>
+      </div>
+
+      <div style="font-size:11px;color:#64748b;margin:14px 0 8px;font-weight:600">海外（一期 MVP · 2 个）</div>
+      <div class="platform-row">
+        <div class="platform-name">Medium ⭐</div>
+        <div class="feed-target">→ ChatGPT / Claude / Perplexity 高引用</div>
+        <div class="api-tag api">API</div>
+        <div class="priority-tag p1">P1</div>
+      </div>
+      <div class="platform-row">
+        <div class="platform-name">Reddit ⭐</div>
+        <div class="feed-target">→ Perplexity 极高引用（核心源）</div>
+        <div class="api-tag api">API</div>
+        <div class="priority-tag p1">P1</div>
+      </div>
+
+      <div style="font-size:11px;color:#94a3b8;margin-top:10px">
+        <b>选择逻辑</b>：不是"哪个平台流量大"，是"哪个平台的内容会被目标 AI 引擎吸收"。Reddit 之所以 P1 是因为 Perplexity 高频引用 Reddit；Medium 之所以 P1 是因为
+        ChatGPT/Claude 训练源中 Medium 占比高
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h4>4.2 · 账号池矩阵</h4>
+        <div class="matrix">
+          <div style="margin-bottom:6px">每平台部署多账号 · 不同人设</div>
+          <div>头条号:</div>
+          <div class="matrix-cell live">测评号 ×2</div>
+          <div class="matrix-cell live">教程号 ×2</div>
+          <div class="matrix-cell live">行业号 ×1</div>
+          <div style="margin-top:8px">知乎:</div>
+          <div class="matrix-cell live">深度作者 ×2</div>
+          <div class="matrix-cell live">问答号 ×3</div>
+          <div style="margin-top:8px">小红书:</div>
+          <div class="matrix-cell warn">达人号 ×3</div>
+          <div class="matrix-cell warn">素人号 ×3</div>
+          <div style="margin-top:8px">百家号:</div>
+          <div class="matrix-cell live">认证号 ×2</div>
+          <div style="margin-top:8px">微信:</div>
+          <div class="matrix-cell danger">服务号 ×1</div>
+          <div class="matrix-cell danger">订阅号 ×2</div>
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-top:8px">
+          <span style="color:#065f46">绿=低风险</span> ·
+          <span style="color:#92400e">黄=需要养号</span> ·
+          <span style="color:#991b1b">红=高合规要求</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>4.3 · 风控规避（关键）</h4>
+        <div class="risk-item">
+          <b>频率控制</b>：每账号每日发布上限，时间分散（非整点、避高峰）
+        </div>
+        <div class="risk-item">
+          <b>内容差异化</b>：同主题不同账号 → 不同改写版（标题/开头/示例图都换）
+        </div>
+        <div class="risk-item">
+          <b>IP/设备隔离</b>：每账号独立代理 + 浏览器指纹隔离
+        </div>
+        <div class="risk-item">
+          <b>账号健康度</b>：每周扫描互动率/异常提示，分级预警
+        </div>
+        <div class="risk-item">
+          <b>平台规则适配</b>：小红书 18 字标题、知乎话题、头条头图比例等
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>4.4 · 平台适配器节点（统一接口）</h4>
+      <div
+        style="font-family:monospace;font-size:12px;background:#1e293b;color:#e2e8f0;padding:12px;border-radius:6px;line-height:1.6">
+        <span style="color:#94a3b8">// 每个平台 = 一个适配器节点</span><br>
+        DistributionNode {<br>
+        &nbsp;&nbsp;<span style="color:#93c5fd">platform</span>: <span style="color:#fcd34d">"toutiao"</span> | <span
+          style="color:#fcd34d">"zhihu"</span> | <span style="color:#fcd34d">"medium"</span> | ...,<br>
+        &nbsp;&nbsp;<span style="color:#93c5fd">account</span>: AccountRef <span style="color:#6ee7b7">//
+          从账号池中选</span>,<br>
+        &nbsp;&nbsp;<span style="color:#93c5fd">content</span>: ContentAsset <span style="color:#6ee7b7">//
+          来自生产层</span>,<br>
+        &nbsp;&nbsp;<span style="color:#93c5fd">schedule_at</span>: Timestamp,<br>
+        &nbsp;&nbsp;<span style="color:#93c5fd">fallback</span>: <span style="color:#fcd34d">"retry"</span> | <span
+          style="color:#fcd34d">"degrade-platform"</span> | <span style="color:#fcd34d">"abort"</span>,<br>
+        }<br>
+        <br>
+        <span style="color:#94a3b8">// 输出</span><br>
+        { publish_id, platform_url, account_used, status, screenshot }
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:8px">运营在工作流编辑器里拖拽"分发节点"，配置目标平台/账号/时间；可链式"先头条→3小时后知乎→次日小红书"
+      </div>
+    </div>
+
+    <div class="decision">
+      <b>⚠ 待 sign-off 决策项 D4.x</b>
+      <ul style="margin:6px 0 0">
+        <li><b>D4.1 · 一期国内平台数</b>：默认 P1 4 个（头条 / 知乎 / 小红书 / 百家号）+ P2 2 个（微信 / CSDN）= 6 个。微信公众号风控严，要不要砍掉一期？</li>
+        <li><b>D4.2 · 海外 MVP 选哪 2 个</b>：默认 Medium + Reddit（GEO 抓手最强）。<u>替代</u>：Quora（问答 + Perplexity 也吸）/ LinkedIn（B2B
+          但你是 C 端）。</li>
+        <li><b>D4.3 · 账号池规模</b>：默认每平台 5-8 账号。若要更大规模（每平台 15+）需要单独的"养号系统"工程（约 +1 月）。</li>
+        <li><b>D4.4 · 内容差异化策略</b>：默认"同主题 2-3 个改写版"。<u>不开启</u>：生产量减半但同主题集中发布有封号风险。</li>
+        <li><b>D4.5 · 微信公众号</b>：风控特别严，是一期就上还是二期？建议二期，因为对应的腾讯元宝引擎权重相对低。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section-wrap" id="sec5">
+    <h2>Section 5 / 9 · 归因层 — 痛点 1 解法</h2>
+    <p class="subtitle">5 层归因模型 · 单层都不够 · 组合验证才能给出"置信归因"</p>
+
+    <style>
+      .layer-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin: 16px 0;
+      }
+
+      .layer-card {
+        border-radius: 8px;
+        padding: 14px 18px;
+        display: grid;
+        grid-template-columns: 80px 1fr 90px 110px;
+        gap: 12px;
+        align-items: center;
+        border: 2px solid;
+        background: #fff;
+      }
+
+      .layer-card .l-num {
+        font-size: 28px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .layer-card .l-body h3 {
+        margin: 0 0 4px;
+        font-size: 14px;
+      }
+
+      .layer-card .l-body p {
+        margin: 0;
+        font-size: 11px;
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      .layer-card .l-conf {
+        font-size: 10px;
+      }
+
+      .layer-card .l-conf-bar {
+        background: #f1f5f9;
+        border-radius: 4px;
+        height: 6px;
+        margin-top: 4px;
+        overflow: hidden;
+      }
+
+      .layer-card .l-conf-fill {
+        height: 100%;
+      }
+
+      .layer-card .l-weight {
+        font-family: monospace;
+        font-size: 18px;
+        font-weight: 700;
+        text-align: center;
+      }
+
+      .l1 {
+        border-color: #3b82f6;
+      }
+
+      .l1 .l-num {
+        color: #3b82f6;
+      }
+
+      .l1 .l-conf-fill {
+        background: #3b82f6;
+      }
+
+      .l2 {
+        border-color: #10b981;
+      }
+
+      .l2 .l-num {
+        color: #10b981;
+      }
+
+      .l2 .l-conf-fill {
+        background: #10b981;
+      }
+
+      .l3 {
+        border-color: #8b5cf6;
+      }
+
+      .l3 .l-num {
+        color: #8b5cf6;
+      }
+
+      .l3 .l-conf-fill {
+        background: #8b5cf6;
+      }
+
+      .l4 {
+        border-color: #ef4444;
+      }
+
+      .l4 .l-num {
+        color: #ef4444;
+      }
+
+      .l4 .l-conf-fill {
+        background: #ef4444;
+      }
+
+      .l5 {
+        border-color: #f59e0b;
+      }
+
+      .l5 .l-num {
+        color: #f59e0b;
+      }
+
+      .l5 .l-conf-fill {
+        background: #f59e0b;
+      }
+
+      .funnel {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 24px 0;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .funnel-step {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px 12px;
+        text-align: center;
+        font-size: 11px;
+        min-width: 100px;
+        position: relative;
+      }
+
+      .funnel-step .ic {
+        font-size: 16px;
+        margin-bottom: 4px;
+      }
+
+      .funnel-step .name {
+        font-weight: 700;
+        font-size: 11px;
+      }
+
+      .funnel-step .layer-mark {
+        position: absolute;
+        top: -8px;
+        right: -6px;
+        font-size: 9px;
+        padding: 2px 5px;
+        border-radius: 3px;
+        font-weight: 700;
+        color: #fff;
+      }
+
+      .funnel-arrow {
+        color: #94a3b8;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin: 16px 0;
+      }
+
+      .panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        background: #fff;
+      }
+
+      .panel h4 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        color: #475569;
+      }
+
+      .formula {
+        font-family: monospace;
+        font-size: 12px;
+        background: #1e293b;
+        color: #e2e8f0;
+        padding: 14px;
+        border-radius: 6px;
+        line-height: 1.7;
+      }
+
+      .formula .k {
+        color: #93c5fd;
+      }
+
+      .formula .n {
+        color: #fcd34d;
+      }
+
+      .formula .c {
+        color: #6ee7b7;
+      }
+
+      .decision {
+        border-left: 3px solid #f59e0b;
+        padding: 10px 14px;
+        background: #fffbeb;
+        margin: 10px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 13px;
+      }
+
+      .decision b {
+        color: #92400e;
+      }
+    </style>
+
+    <div class="panel" style="margin-top:16px">
+      <h4>5.1 · 用户从"看到 GEO 内容"到"下载 App"的完整漏斗</h4>
+      <div class="funnel">
+        <div class="funnel-step">
+          <div class="ic">💬</div>
+          <div class="name">用户问 AI</div>
+          <div style="color:#94a3b8;font-size:10px">"哪个 App 好用"</div>
+        </div>
+        <div class="funnel-arrow">→</div>
+        <div class="funnel-step">
+          <div class="ic">🤖</div>
+          <div class="name">AI 回答含品牌</div>
+          <div class="layer-mark" style="background:#3b82f6">L1</div>
+          <div style="color:#94a3b8;font-size:10px">引用我们内容</div>
+        </div>
+        <div class="funnel-arrow">→</div>
+        <div class="funnel-step">
+          <div class="ic">🔍</div>
+          <div class="name">用户去搜品牌</div>
+          <div class="layer-mark" style="background:#8b5cf6">L3</div>
+          <div style="color:#94a3b8;font-size:10px">巨量/百度搜索↑</div>
+        </div>
+        <div class="funnel-arrow">→</div>
+        <div class="funnel-step">
+          <div class="ic">🌐</div>
+          <div class="name">官网/落地页</div>
+          <div class="layer-mark" style="background:#10b981">L2</div>
+          <div style="color:#94a3b8;font-size:10px">UTM 中转</div>
+        </div>
+        <div class="funnel-arrow">→</div>
+        <div class="funnel-step">
+          <div class="ic">📱</div>
+          <div class="name">应用商店</div>
+          <div style="color:#94a3b8;font-size:10px">下载 · 断层</div>
+        </div>
+        <div class="funnel-arrow">→</div>
+        <div class="funnel-step">
+          <div class="ic">🎉</div>
+          <div class="name">激活注册</div>
+          <div class="layer-mark" style="background:#f59e0b">L5</div>
+          <div style="color:#94a3b8;font-size:10px">用户自报</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:6px;text-align:center">
+        用户路径上每个节点都有"信号"可抓 · L1-L5 分别抓不同节点 · L4 实验对照全局校准
+      </div>
+    </div>
+
+    <h3 style="margin-top:20px">5.2 · 5 层归因模型（按"证据强度 × 工程量"分层）</h3>
+
+    <div class="layer-stack">
+      <div class="layer-card l1">
+        <div class="l-num">L1</div>
+        <div class="l-body">
+          <h3>露出归因（必做 · 复用监测层）</h3>
+          <p><b>测什么</b>：AI 引擎里"我是否被提及/引用"的频率与位置｜<b>怎么测</b>：监测层的 mentions / brand_position / citation_is_ours</p>
+          <p style="color:#dc2626;margin-top:4px">⚠ 限制：只能说"被看到"，不能说"带来下载"</p>
+        </div>
+        <div class="l-conf">证据强度
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:20%"></div>
+          </div>
+          工程量
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:10%"></div>
+          </div>
+        </div>
+        <div class="l-weight">权重<br />0.10</div>
+      </div>
+
+      <div class="layer-card l2">
+        <div class="l-num">L2</div>
+        <div class="l-body">
+          <h3>中转归因（关键 · Web 落地页为锚点）</h3>
+          <p><b>测什么</b>：用户从 AI → 我们 Web → 应用商店的跳转｜<b>怎么测</b>：GEO 内容嵌入"专属落地页 URL（带 UTM）" → 落地页区分来源 → 落地页跳应用商店时打 deep link
+            / 渠道码</p>
+          <p style="color:#065f46;margin-top:4px">✓ 你的业务 B（Web）天然吃这层；A（App）通过 Web 中转得到强信号</p>
+        </div>
+        <div class="l-conf">证据强度
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:75%"></div>
+          </div>
+          工程量
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:40%"></div>
+          </div>
+        </div>
+        <div class="l-weight">权重<br />0.30</div>
+      </div>
+
+      <div class="layer-card l3">
+        <div class="l-num">L3</div>
+        <div class="l-body">
+          <h3>时序桥接（统计关联 · 关键管理指标）</h3>
+          <p><b>测什么</b>：GEO 投放节奏 vs 下载/注册曲线的时序相关性｜<b>怎么测</b>：24h/72h/7d 窗口异常增量分析；同类目近期无投放时段对照；品牌搜索量（巨量算数 / 百度指数）的耦合度</p>
+          <p style="color:#7c2d12;margin-top:4px">⚠ 是关联不是因果 — 但对管理层算 ROI 够用</p>
+        </div>
+        <div class="l-conf">证据强度
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:55%"></div>
+          </div>
+          工程量
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:30%"></div>
+          </div>
+        </div>
+        <div class="l-weight">权重<br />0.20</div>
+      </div>
+
+      <div class="layer-card l4">
+        <div class="l-num">L4</div>
+        <div class="l-body">
+          <h3>实验对照（因果金标 · 工程量大但回报最高）</h3>
+          <p><b>测什么</b>：GEO 投放对下载的因果效应｜<b>怎么测</b>：(a) 关键词组 A 重投/B 对照 (b) 平台 A 周/B 周 (c) 时间断点 — 暂停 GEO 一周看 baseline 跌幅
+          </p>
+          <p style="color:#065f46;margin-top:4px">✓ 唯一能给出"每 N 篇 GEO 内容 → +M 下载"的方法</p>
+        </div>
+        <div class="l-conf">证据强度
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:95%"></div>
+          </div>
+          工程量
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:65%"></div>
+          </div>
+        </div>
+        <div class="l-weight">权重<br />0.30</div>
+      </div>
+
+      <div class="layer-card l5">
+        <div class="l-num">L5</div>
+        <div class="l-body">
+          <h3>用户自报（用户视角验证 · 唯一直接证据）</h3>
+          <p><b>测什么</b>：用户主动说"我从 AI 推荐知道你的"｜<b>怎么测</b>：(a) App 新人引导问卷"你从哪听说我们？"含"豆包/Kimi/ChatGPT/AI 推荐" (b) 邀请码引导 (c)
+            用户访谈</p>
+          <p style="color:#7c2d12;margin-top:4px">⚠ 用户记忆模糊 — 但是唯一能直接验证"AI 引荐"的</p>
+        </div>
+        <div class="l-conf">证据强度
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:60%"></div>
+          </div>
+          工程量
+          <div class="l-conf-bar">
+            <div class="l-conf-fill" style="width:25%"></div>
+          </div>
+        </div>
+        <div class="l-weight">权重<br />0.10</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h4>5.3 · 综合归因评分公式</h4>
+        <div class="formula">
+          <span class="c">// 每篇 GEO 内容的归因分数</span><br>
+          attribution_score(content_c) =<br>
+          &nbsp;&nbsp;<span class="n">0.10</span> × L1_exposure_rate(c)<br>
+          &nbsp;&nbsp;+ <span class="n">0.30</span> × L2_utm_conversion(c)<br>
+          &nbsp;&nbsp;+ <span class="n">0.20</span> × L3_time_correlation(c)<br>
+          &nbsp;&nbsp;+ <span class="n">0.30</span> × L4_experiment_lift(c)<br>
+          &nbsp;&nbsp;+ <span class="n">0.10</span> × L5_user_recall(c)<br>
+          <br>
+          <span class="c">// 输出："这篇内容带来 X 个下载，置信度 Y%"</span><br>
+          { downloads: ~127, confidence: 0.82 }
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-top:8px">权重不是固定的 — 一期先用经验值，二期接入 ML 模型校准</div>
+      </div>
+
+      <div class="panel">
+        <h4>5.4 · 关键工程组件</h4>
+        <ul style="font-size:12px;line-height:1.7;margin:6px 0">
+          <li><b>专属落地页系统</b>（L2 锚点）：每篇 GEO 内容自动生成一个 短链/landing.geo/xxxx 落地页，带 UTM 参数和来源识别</li>
+          <li><b>UTM 设计规范</b>：utm_source=geo · utm_medium={platform} · utm_campaign={content_id} ·
+            utm_content={engine_target}</li>
+          <li><b>渠道码 / 邀请码</b>：落地页扫码或输入码下载，码与内容绑定</li>
+          <li><b>实验调度器</b>（L4 核心）：自动安排 A/B 关键词组、暂停周期、对照组隔离</li>
+          <li><b>归因数据仓库</b>：汇总 5 层数据 → 算分 → 输出报告</li>
+          <li><b>归因 SDK 接入</b>（D1 待确认）：如果 App 已接 AppsFlyer/Adjust，可大幅提升 L2/L4 精度</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>5.5 · 一期 / 二期 分阶段实施</h4>
+      <div
+        style="font-family:monospace;font-size:11px;line-height:1.8;background:#f8fafc;padding:12px;border-radius:6px">
+        <span style="color:#065f46;font-weight:700">一期 (6-9 个月)：</span><br>
+        &nbsp;&nbsp;✓ L1 露出归因（复用监测层数据）<br>
+        &nbsp;&nbsp;✓ L2 中转归因（落地页 + UTM，必做）<br>
+        &nbsp;&nbsp;✓ L3 时序桥接（统计关联）<br>
+        &nbsp;&nbsp;◇ L5 用户自报（首启动问卷一期就上，简单）<br>
+        <br>
+        <span style="color:#dc2626;font-weight:700">二期 (9-15 个月)：</span><br>
+        &nbsp;&nbsp;✓ L4 实验对照（需要积累 baseline 数据后才好做）<br>
+        &nbsp;&nbsp;✓ ML 权重校准模型<br>
+        &nbsp;&nbsp;✓ 第三方归因 SDK 深度集成（取决于 D1）
+      </div>
+    </div>
+
+    <div class="decision">
+      <b>⚠ 待 sign-off 决策项 D5.x</b>
+      <ul style="margin:6px 0 0">
+        <li><b>D5.1 · 第三方归因 SDK</b>：取决于 D1（待你回去问数据同学）。如果 App 已接 AppsFlyer/Adjust，L2/L4 精度大幅提升；如果没接，要不要本项目推动接入？</li>
+        <li><b>D5.2 · L4 实验对照</b>：默认二期做（需 baseline）。<u>激进</u>：一期就做（多 1 个月工程）。</li>
+        <li><b>D5.3 · L5 用户自报</b>：默认一期做（首启动问卷）。需要客户端配合 1 次发版改动，跟你们 App 团队对得上吗？</li>
+        <li><b>D5.4 · 归因结果置信度阈值</b>：默认 0.6 以上认为"是 GEO 带来的"；&lt;0.4 标"自然量"；中间标"不确定"。是否合理？</li>
+        <li><b>D5.5 · 中转落地页域名</b>：建议独立域名（如 geo.yourbrand.com）便于 UTM 追踪和 A/B。需要新申请域名吗？</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section-wrap" id="sec6">
+    <h2>Section 6 / 9 · 数据回收 & 决策中枢</h2>
+    <p class="subtitle">大脑层 · 汇总 5 层数据 → 反推策略 → 回流工作流</p>
+
+    <style>
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin: 16px 0;
+      }
+
+      .panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        background: #fff;
+      }
+
+      .panel h4 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        color: #475569;
+        letter-spacing: 0.3px;
+      }
+
+      .data-flow {
+        display: grid;
+        grid-template-columns: 1fr 28px 1.15fr 28px 1fr;
+        gap: 10px;
+        align-items: stretch;
+        margin: 16px 0;
+      }
+
+      @media (max-width: 880px) {
+        .data-flow {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+
+        .data-flow .df-arrow {
+          transform: rotate(90deg);
+          padding: 4px 0;
+        }
+      }
+
+      .df-col {
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: #fff;
+        border: 2px solid #e2e8f0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .df-col.input {
+        border-color: #3b82f6;
+        background: linear-gradient(180deg, rgba(59, 130, 246, 0.06), #fff);
+      }
+
+      .df-col.core {
+        border-color: #10b981;
+        background: linear-gradient(180deg, rgba(16, 185, 129, 0.07), #fff);
+      }
+
+      .df-col.output {
+        border-color: #8b5cf6;
+        background: linear-gradient(180deg, rgba(139, 92, 246, 0.06), #fff);
+      }
+
+      .df-col h5 {
+        margin: 0 -14px 10px;
+        padding: 6px 14px 8px;
+        font-size: 10px;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+        font-weight: 700;
+        border-bottom: 1px dashed #e2e8f0;
+      }
+
+      .df-col.input h5 {
+        color: #2563eb;
+      }
+
+      .df-col.core h5 {
+        color: #059669;
+      }
+
+      .df-col.output h5 {
+        color: #7c3aed;
+      }
+
+      .df-item {
+        padding: 6px 8px;
+        margin-bottom: 4px;
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(0, 0, 0, 0.04);
+        border-radius: 4px;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+
+      .df-item:last-child {
+        margin-bottom: 0;
+      }
+
+      .df-arrow {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        color: #94a3b8;
+        font-weight: 700;
+      }
+
+      .dash-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin: 12px 0;
+      }
+
+      .dash-card {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 12px;
+        background: linear-gradient(135deg, #fff, #f8fafc);
+      }
+
+      .dash-card .ic {
+        font-size: 22px;
+        margin-bottom: 4px;
+      }
+
+      .dash-card .name {
+        font-weight: 700;
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+
+      .dash-card .desc {
+        font-size: 10px;
+        color: #64748b;
+        line-height: 1.4;
+      }
+
+      .loop {
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        padding: 16px;
+        background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
+        border-radius: 10px;
+        margin: 12px 0;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .loop-step {
+        text-align: center;
+        font-size: 11px;
+        min-width: 90px;
+      }
+
+      .loop-step .ic {
+        font-size: 20px;
+        margin-bottom: 4px;
+      }
+
+      .loop-arrow {
+        color: #10b981;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .formula {
+        font-family: monospace;
+        font-size: 12px;
+        background: #1e293b;
+        color: #e2e8f0;
+        padding: 12px;
+        border-radius: 6px;
+        line-height: 1.7;
+      }
+
+      .formula .k {
+        color: #93c5fd;
+      }
+
+      .formula .n {
+        color: #fcd34d;
+      }
+
+      .formula .c {
+        color: #6ee7b7;
+      }
+
+      .decision {
+        border-left: 3px solid #f59e0b;
+        padding: 10px 14px;
+        background: #fffbeb;
+        margin: 10px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 13px;
+      }
+
+      .decision b {
+        color: #92400e;
+      }
+    </style>
+
+    <div class="panel">
+      <h4>6.1 · 数据流（输入 → 仓库 → 输出）</h4>
+      <div class="data-flow">
+
+        <div class="df-col input">
+          <h5>数据源（汇入）</h5>
+          <div class="df-item">📡 监测层 · 每日扫描结果</div>
+          <div class="df-item">✍️ 生产层 · 内容资产快照</div>
+          <div class="df-item">📤 分发层 · 发布记录</div>
+          <div class="df-item">🎯 归因层 · L1-L5 评分</div>
+          <div class="df-item">💼 业务系统 · 下载/注册/留存</div>
+          <div class="df-item">📊 外部 · 百度指数/巨量算数</div>
+        </div>
+
+        <div class="df-arrow">→</div>
+
+        <div class="df-col core">
+          <h5>数据仓库</h5>
+          <div class="df-item"><b>事实表</b>: content_facts / publish_facts / scan_facts / download_facts</div>
+          <div class="df-item"><b>维度表</b>: keywords / engines / platforms / accounts / templates</div>
+          <div class="df-item"><b>物化视图</b>: daily_geo_dashboard / content_roi / keyword_funnel / engine_heatmap</div>
+          <div class="df-item" style="background:#dcfce7;color:#065f46"><b>技术栈</b>: 一期 Postgres + TimescaleDB；二期可升
+            ClickHouse</div>
+        </div>
+
+        <div class="df-arrow">→</div>
+
+        <div class="df-col output">
+          <h5>输出（消费者）</h5>
+          <div class="df-item">📊 5 个核心仪表盘</div>
+          <div class="df-item">🤖 内容效能反推模型</div>
+          <div class="df-item">🎮 策略反推器 → 工作流</div>
+          <div class="df-item">💰 ROI 计算器 → 月报</div>
+          <div class="df-item">🔔 告警系统</div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>6.2 · 5 个核心仪表盘（运营 Web 控制台）</h4>
+      <div class="dash-grid">
+        <div class="dash-card">
+          <div class="ic">🌐</div>
+          <div class="name">① GEO 总览</div>
+          <div class="desc">今日提及率 / 6 引擎热度图 / TOP5 内容 / 漏斗瀑布 / 同比环比</div>
+        </div>
+        <div class="dash-card">
+          <div class="ic">📝</div>
+          <div class="name">② 内容效能榜</div>
+          <div class="desc">按 hit rate 排序 / template/model 分组对比 / 高效内容 GEO 特征</div>
+        </div>
+        <div class="dash-card">
+          <div class="ic">🔑</div>
+          <div class="name">③ 关键词效能榜</div>
+          <div class="desc">易中关键词 / 竞品占位 / 待补量关键词 / 4 层穿透</div>
+        </div>
+        <div class="dash-card">
+          <div class="ic">📤</div>
+          <div class="name">④ 平台 ROI 榜</div>
+          <div class="desc">各平台 hit rate / 账号健康度 / 风控告警 / 平台收益率</div>
+        </div>
+        <div class="dash-card">
+          <div class="ic">🎯</div>
+          <div class="name">⑤ 归因报告</div>
+          <div class="desc">L1-L5 明细 / 综合分数分布 / 月度 ROI（给老板看）</div>
+        </div>
+        <div class="dash-card" style="background:linear-gradient(135deg,#fef3c7,#fffbeb);border-color:#fbbf24">
+          <div class="ic">⚙️</div>
+          <div class="name">⑥ 工作流编辑器</div>
+          <div class="desc">运营拖拽节点 / 编排 GEO 策略 / 模板市场 / 实时执行状态</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h4>6.3 · 内容效能反推模型</h4>
+        <div class="formula">
+          <span class="c">// 一期：统计聚合 + 决策树</span><br>
+          hit_rate(group) = avg(attribution_score)<br>
+          &nbsp;&nbsp;by template × model × keyword_layer<br>
+          &nbsp;&nbsp;&nbsp;&nbsp; × geo_features<br>
+          <br>
+          <span class="c">// 输出示例</span><br>
+          {<br>
+          &nbsp;&nbsp;<span class="k">"top_combo"</span>: {<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;<span class="k">template</span>: <span
+            style="color:#fcd34d">"tpl/faq-collection/v1"</span>,<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;<span class="k">model</span>: <span
+            style="color:#fcd34d">"claude-sonnet-4-6"</span>,<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;<span class="k">layer</span>: <span style="color:#fcd34d">"L3 场景词"</span>,<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;<span class="k">features</span>: [<span style="color:#fcd34d">"faq_block"</span>],<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;<span class="k">hit_rate</span>: <span class="n">0.47</span><br>
+          &nbsp;&nbsp;}<br>
+          }<br>
+          <br>
+          <span class="c">// 二期：ML 模型 (GBDT) 输出特征重要性</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>6.4 · 策略反推器（→ 工作流）</h4>
+        <ul style="font-size:12px;line-height:1.7;margin:6px 0">
+          <li><b>选题节点</b>调整：「L3 场景词 hit rate &gt; L2 类目词 → 选题更偏 L3」</li>
+          <li><b>模板优先级</b>调整：「FAQ-collection v1 hit 41% → 列为首选」</li>
+          <li><b>分发策略</b>调整：「Reddit+Medium 对 Perplexity 协同 → 海外重投 Reddit」</li>
+          <li><b>关键词宇宙</b>扩展：「'XX 怎么办' 高 hit → 自动扩展同类长尾词」</li>
+          <li><b>账号配比</b>调整：「头条测评号 hit 高 → 增加测评号占比」</li>
+        </ul>
+        <div style="font-size:11px;color:#64748b;margin-top:8px">
+          <b>反推动作</b>：自动推荐 + 运营 confirm（一期不允许全自动改策略 —— A 路线的"可审计"原则）
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>6.5 · ROI 计算器（给老板看的"为什么投 GEO"）</h4>
+      <div class="formula">
+        <span class="c">// 月度 GEO 投入</span><br>
+        COST_monthly =<br>
+        &nbsp;&nbsp;engineering_cost + content_production_cost (LLM API + 图片 + 视频)<br>
+        &nbsp;&nbsp;+ distribution_cost (账号 + 风控 + 代理 + 平台费)<br>
+        &nbsp;&nbsp;+ ops_human_cost (运营 + 审核)<br>
+        <br>
+        <span class="c">// 月度 GEO 产出</span><br>
+        REVENUE_monthly =<br>
+        &nbsp;&nbsp;Σ(attributed_downloads × avg_LTV)<br>
+        &nbsp;&nbsp;+ Σ(attributed_registers × avg_register_value)<br>
+        &nbsp;&nbsp;+ brand_search_lift (品牌词搜索量提升的折现)<br>
+        <br>
+        <span class="c">// 月度 ROI</span><br>
+        ROI = (REVENUE - COST) / COST<br>
+        <br>
+        <span class="c">// 输出</span><br>
+        { monthly_roi: <span class="n">1.8</span>, payback_period_months: <span class="n">4.2</span> }
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>6.6 · 闭环回流（这一层让整个系统"自我优化"）</h4>
+      <div class="loop">
+        <div class="loop-step">
+          <div class="ic">📡</div>
+          <div><b>监测</b></div>
+          <div style="color:#64748b">扫描 AI 引擎</div>
+        </div>
+        <div class="loop-arrow">→</div>
+        <div class="loop-step">
+          <div class="ic">✍️</div>
+          <div><b>生产</b></div>
+          <div style="color:#64748b">基于反推策略</div>
+        </div>
+        <div class="loop-arrow">→</div>
+        <div class="loop-step">
+          <div class="ic">📤</div>
+          <div><b>分发</b></div>
+          <div style="color:#64748b">按 ROI 配比</div>
+        </div>
+        <div class="loop-arrow">→</div>
+        <div class="loop-step">
+          <div class="ic">🎯</div>
+          <div><b>归因</b></div>
+          <div style="color:#64748b">5 层评分</div>
+        </div>
+        <div class="loop-arrow">→</div>
+        <div class="loop-step">
+          <div class="ic">🧠</div>
+          <div><b>决策</b></div>
+          <div style="color:#64748b">反推策略</div>
+        </div>
+        <div class="loop-arrow">↺</div>
+      </div>
+      <div style="font-size:11px;color:#64748b;text-align:center;margin-top:6px">
+        每周 1 次自动反推 · 每月 1 次大策略评审 · 一期决策需运营 confirm，二期可升级为自动执行（升级到 B 路线时）
+      </div>
+    </div>
+
+    <div class="decision">
+      <b>⚠ 待 sign-off 决策项 D6.x</b>
+      <ul style="margin:6px 0 0">
+        <li><b>D6.1 · 数据仓库选型</b>：默认 Postgres + TimescaleDB（轻量、团队熟）。<u>备选</u>：ClickHouse（量大时性能好但运维重）/ DuckDB（极简但单机）。</li>
+        <li><b>D6.2 · 仪表盘自建 vs BI</b>：默认<b>核心 5 个仪表盘自建</b>（Web 控制台一部分）+ 高级分析借用 Metabase / Superset（开源 BI 接
+          Postgres）。是否合理？</li>
+        <li><b>D6.3 · ML 反推模型</b>：一期纯统计 + 决策树 / 二期上 GBDT。是否同意？</li>
+        <li><b>D6.4 · 与公司 BI 集成</b>：业务下载/注册数据要从公司 BI 来。一期是<u>定时拉取</u>（cron）还是<u>主动推送</u>（依赖 BI 团队配合）？取决于 D1 数据基础。</li>
+        <li><b>D6.5 · 反推策略的"自动 vs 半自动"</b>：默认半自动（推荐 + 运营 confirm）。是否要保留全手动模式作为安全阀？</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section-wrap" id="sec7">
+    <h2>Section 7 / 9 · 视频自动化流水线 — 痛点 2</h2>
+    <p class="subtitle">二期落地 · 一期预留接口 · 50-100× 成本降低 + 5-10× 产能提升</p>
+
+    <style>
+      .pipeline-v {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 6px;
+        margin: 16px 0;
+      }
+
+      .vnode {
+        background: #fff;
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px 8px;
+        text-align: center;
+        font-size: 11px;
+        position: relative;
+      }
+
+      .vnode .ic {
+        font-size: 18px;
+        margin-bottom: 4px;
+      }
+
+      .vnode .name {
+        font-weight: 700;
+      }
+
+      .vnode .desc {
+        color: #64748b;
+        font-size: 9px;
+        margin-top: 3px;
+        line-height: 1.3;
+      }
+
+      .vnode.script {
+        border-color: #8b5cf6;
+        background: linear-gradient(135deg, #f5f3ff, #fff);
+      }
+
+      .vnode.audio {
+        border-color: #06b6d4;
+        background: linear-gradient(135deg, #ecfeff, #fff);
+      }
+
+      .vnode.visual {
+        border-color: #f59e0b;
+        background: linear-gradient(135deg, #fffbeb, #fff);
+      }
+
+      .vnode.edit {
+        border-color: #10b981;
+        background: linear-gradient(135deg, #ecfdf5, #fff);
+      }
+
+      .vnode.sub {
+        border-color: #ec4899;
+        background: linear-gradient(135deg, #fdf2f8, #fff);
+      }
+
+      .vnode.review {
+        border-color: #ef4444;
+        background: linear-gradient(135deg, #fef2f2, #fff);
+      }
+
+      .vnode.dist {
+        border-color: #64748b;
+        background: linear-gradient(135deg, #f1f5f9, #fff);
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin: 16px 0;
+      }
+
+      .grid-3 {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+        margin: 12px 0;
+      }
+
+      .panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        background: #fff;
+      }
+
+      .panel h4 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        color: #475569;
+      }
+
+      .mode-card {
+        border: 2px solid;
+        border-radius: 10px;
+        padding: 14px;
+        background: #fff;
+      }
+
+      .mode-card.A {
+        border-color: #10b981;
+      }
+
+      .mode-card.B {
+        border-color: #3b82f6;
+      }
+
+      .mode-card.C {
+        border-color: #64748b;
+        opacity: 0.85;
+      }
+
+      .mode-card .tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 10px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .mode-card .name {
+        font-weight: 700;
+        font-size: 14px;
+        margin-bottom: 6px;
+      }
+
+      .mode-card .metrics {
+        font-size: 11px;
+        line-height: 1.7;
+      }
+
+      .mode-card .metric-row {
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .stars {
+        color: #f59e0b;
+        font-size: 12px;
+      }
+
+      .platform-row {
+        display: grid;
+        grid-template-columns: 90px 70px 60px 1fr 60px;
+        gap: 8px;
+        padding: 6px 4px;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 12px;
+        align-items: center;
+      }
+
+      .platform-row:last-child {
+        border-bottom: none;
+      }
+
+      .platform-row.head {
+        font-weight: 700;
+        color: #64748b;
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+
+      .ratio {
+        font-family: monospace;
+        padding: 2px 6px;
+        background: #f1f5f9;
+        border-radius: 3px;
+        font-size: 10px;
+      }
+
+      .cost-compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding: 14px;
+        background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
+        border-radius: 8px;
+        margin: 12px 0;
+      }
+
+      .cost-side {
+        text-align: center;
+      }
+
+      .cost-side .label {
+        font-size: 11px;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-weight: 700;
+      }
+
+      .cost-side .val {
+        font-size: 24px;
+        font-weight: 900;
+        margin: 6px 0;
+      }
+
+      .cost-side.before .val {
+        color: #dc2626;
+      }
+
+      .cost-side.after .val {
+        color: #059669;
+      }
+
+      .cost-side .desc {
+        font-size: 11px;
+        color: #64748b;
+      }
+
+      .geo-card {
+        padding: 10px;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        margin-bottom: 6px;
+        font-size: 12px;
+      }
+
+      .geo-card b {
+        color: #1e40af;
+      }
+
+      .decision {
+        border-left: 3px solid #f59e0b;
+        padding: 10px 14px;
+        background: #fffbeb;
+        margin: 10px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 13px;
+      }
+
+      .decision b {
+        color: #92400e;
+      }
+    </style>
+
+    <div class="panel">
+      <h4>7.1 · 视频流水线（8 节点，复用工作流引擎）</h4>
+      <div class="pipeline-v">
+        <div class="vnode script">
+          <div class="ic">📋</div>
+          <div class="name">选题/脚本</div>
+          <div class="desc">LLM 出脚本(分场景+台词+视觉描述)</div>
+        </div>
+        <div class="vnode audio">
+          <div class="ic">🎙️</div>
+          <div class="name">配音(TTS)</div>
+          <div class="desc">火山/讯飞/ElevenLabs/MiniMax</div>
+        </div>
+        <div class="vnode visual">
+          <div class="ic">🎬</div>
+          <div class="name">视觉素材</div>
+          <div class="desc">数字人 / 实拍 / AI 生成</div>
+        </div>
+        <div class="vnode edit">
+          <div class="ic">✂️</div>
+          <div class="name">自动剪辑</div>
+          <div class="desc">FFmpeg / CapCut / 阿里云剪辑</div>
+        </div>
+        <div class="vnode sub">
+          <div class="ic">💬</div>
+          <div class="name">字幕</div>
+          <div class="desc">自动+风格化+GEO 优化</div>
+        </div>
+        <div class="vnode review">
+          <div class="ic">🛡️</div>
+          <div class="name">审核</div>
+          <div class="desc">规则+人工(更严)</div>
+        </div>
+        <div class="vnode dist">
+          <div class="ic">📺</div>
+          <div class="name">多平台输出</div>
+          <div class="desc">同源转多版本</div>
+        </div>
+        <div class="vnode dist">
+          <div class="ic">📤</div>
+          <div class="name">分发</div>
+          <div class="desc">复用 Section 4 分发层</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:6px;text-align:center">
+        每个节点都是工作流引擎的可插拔单元 · 与一期文章/图片节点共享同一架构
+      </div>
+    </div>
+
+    <h3 style="margin-top:20px">7.2 · 视觉生成的 3 种模式（成本/可控性/质量 三角）</h3>
+    <div class="grid-3">
+      <div class="mode-card A">
+        <span class="tag" style="background:#d1fae5;color:#065f46">推荐 MVP</span>
+        <div class="name">A · 竞品换皮</div>
+        <div style="font-size:11px;color:#64748b;margin-bottom:6px">HeyGen / D-ID / 即梦/腾讯智影/字节火山</div>
+        <div class="metrics">
+          <div class="metric-row"><span>成本</span><span class="stars">★★★</span></div>
+          <div class="metric-row"><span>可控性</span><span class="stars">★★★★★</span></div>
+          <div class="metric-row"><span>质量</span><span class="stars">★★★★</span></div>
+          <div class="metric-row"><span>适用</span><span style="font-size:10px">教程/测评</span></div>
+        </div>
+      </div>
+
+      <div class="mode-card B">
+        <span class="tag" style="background:#dbeafe;color:#1e40af">第二阶段</span>
+        <div class="name">B · 实拍素材剪辑</div>
+        <div style="font-size:11px;color:#64748b;margin-bottom:6px">素材库 + AI 智能剪辑</div>
+        <div class="metrics">
+          <div class="metric-row"><span>成本</span><span class="stars">★★</span></div>
+          <div class="metric-row"><span>可控性</span><span class="stars">★★★</span></div>
+          <div class="metric-row"><span>质量</span><span class="stars">★★★★★</span></div>
+          <div class="metric-row"><span>适用</span><span style="font-size:10px">行业资讯</span></div>
+        </div>
+      </div>
+
+      <div class="mode-card C">
+        <span class="tag" style="background:#f1f5f9;color:#475569">试点</span>
+        <div class="name">C · 纯 AI 视频生成</div>
+        <div style="font-size:11px;color:#64748b;margin-bottom:6px">Sora / Runway Gen-4 / 可灵 / 即梦</div>
+        <div class="metrics">
+          <div class="metric-row"><span>成本</span><span class="stars">★★★★</span></div>
+          <div class="metric-row"><span>可控性</span><span class="stars">★★</span></div>
+          <div class="metric-row"><span>质量</span><span class="stars">★★★(不稳定)</span></div>
+          <div class="metric-row"><span>适用</span><span style="font-size:10px">创意短视频</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>7.3 · 多平台适配（同一视频源 → 自动转 6+ 版本）</h4>
+      <div class="platform-row head">
+        <div>平台</div>
+        <div>时长</div>
+        <div>比例</div>
+        <div>风格特点</div>
+        <div>优先级</div>
+      </div>
+      <div class="platform-row">
+        <div><b>抖音</b></div>
+        <div>15-60s</div>
+        <div class="ratio">9:16</div>
+        <div>快节奏 / 黄金 3 秒抓眼球 / 强字幕</div>
+        <div style="color:#dc2626;font-weight:700">P1</div>
+      </div>
+      <div class="platform-row">
+        <div><b>视频号</b></div>
+        <div>15-90s</div>
+        <div class="ratio">9:16</div>
+        <div>微信生态 / 偏温和叙事</div>
+        <div style="color:#dc2626;font-weight:700">P1</div>
+      </div>
+      <div class="platform-row">
+        <div><b>小红书</b></div>
+        <div>30-90s</div>
+        <div class="ratio">9:16</div>
+        <div>美感导向 / 封面重要 / 标题 18 字</div>
+        <div style="color:#dc2626;font-weight:700">P1</div>
+      </div>
+      <div class="platform-row">
+        <div><b>B 站</b></div>
+        <div>1-10min</div>
+        <div class="ratio">16:9</div>
+        <div>长内容 / 弹幕互动 / 二次元友好</div>
+        <div style="color:#f59e0b;font-weight:700">P2</div>
+      </div>
+      <div class="platform-row">
+        <div><b>YouTube</b></div>
+        <div>1-15min</div>
+        <div class="ratio">16:9</div>
+        <div>SEO 标题 / 章节标记 / 海外</div>
+        <div style="color:#f59e0b;font-weight:700">P2</div>
+      </div>
+      <div class="platform-row">
+        <div><b>TikTok</b></div>
+        <div>15-60s</div>
+        <div class="ratio">9:16</div>
+        <div>海外节奏 / 字幕英文</div>
+        <div style="color:#64748b">P3</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>7.4 · 视频 GEO 特征工程（视频时代的 GEO）</h4>
+      <div style="font-size:12px;color:#64748b;margin-bottom:8px">
+        视频本身现在还不被 AI 直接"看"，AI 主要抓<b>元数据</b>（标题/描述/字幕）。2026 年起，多模态 AI（Gemini 多模态 / Sora 训练源）开始抓关键帧 + 字幕轨道。GEO 优化要兼顾两者。
+      </div>
+      <div class="geo-card">
+        <b>标题 / 封面</b>：实体明确（"XX App 怎么用"）+ 类目关键词 + 抓眼球开头
+      </div>
+      <div class="geo-card">
+        <b>字幕轨道</b>（关键）：完整 + 实体锚点 + 时间戳标记 — 这是 AI 训练的主要抓取点
+      </div>
+      <div class="geo-card">
+        <b>描述</b>：FAQ 块 + 引用源 + 章节标记（Chapter 0:00 - 0:30 引言 ...）
+      </div>
+      <div class="geo-card">
+        <b>关键帧</b>：清晰的品牌露出帧（Logo / UI 截图 / 产品名字幕条）
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>7.5 · 自动化收益（vs 手工）</h4>
+      <div class="cost-compare">
+        <div class="cost-side before">
+          <div class="label">手工生产</div>
+          <div class="val">¥300-500</div>
+          <div class="desc">单条 3 分钟视频 · 1 剪辑师 1 天产 2-3 条</div>
+        </div>
+        <div class="cost-side after">
+          <div class="label">自动化（模式 A）</div>
+          <div class="val">¥5-15</div>
+          <div class="desc">单条 3 分钟视频 · 自动产 100+ 条/日</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:#64748b;text-align:center;margin-top:8px">
+        成本降低 <b style="color:#059669">50-100×</b> · 产能提升 <b style="color:#059669">5-10×</b> · 用户痛点 2 的本质解法
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>7.6 · 一期预留 / 二期上线节奏</h4>
+      <div
+        style="font-family:monospace;font-size:11px;line-height:1.8;background:#f8fafc;padding:12px;border-radius:6px">
+        <span style="color:#3b82f6;font-weight:700">一期预留（第 1-9 月期间）：</span><br>
+        &nbsp;&nbsp;✓ 工作流引擎预留"视频节点"接口（VideoNode interface）<br>
+        &nbsp;&nbsp;✓ 分发层适配器预留视频平台（抖音 / 视频号 / B 站 / YouTube）<br>
+        &nbsp;&nbsp;✓ 数据仓库 schema 预留视频资产字段<br>
+        &nbsp;&nbsp;✓ 归因层 L1 监测器扩展到视频引擎（豆包视频问答 / Gemini 多模态）<br>
+        <br>
+        <span style="color:#10b981;font-weight:700">二期实施（第 10-15 月）：</span><br>
+        &nbsp;&nbsp;月 10-11：数字人模式 MVP（最容易、最稳）<br>
+        &nbsp;&nbsp;月 11-12：多平台适配引擎（同视频转 6 版本）<br>
+        &nbsp;&nbsp;月 13-14：实拍剪辑模式 + 素材库<br>
+        &nbsp;&nbsp;月 14-15：纯 AI 视频试点（Sora/可灵）+ 视频 GEO 归因接入<br>
+        <br>
+        <span style="color:#94a3b8">三期或更后期：</span><br>
+        &nbsp;&nbsp;Agent 化 (路线 B 升级时把视频选题/脚本节点改 Agent)
+      </div>
+    </div>
+
+    <div class="decision">
+      <b>⚠ 待 sign-off 决策项 D7.x</b>
+      <ul style="margin:6px 0 0">
+        <li><b>D7.1 · 视觉生成模式优先级</b>：默认 A→B→C（数字人 → 实拍剪辑 → 纯 AI）。是否同意？</li>
+        <li><b>D7.2 · 数字人服务选型</b>：默认<u>国内 HeyGen 替代品（即梦数字人 / 腾讯智影 / 字节火山引擎数字人）</u> + 海外 HeyGen。</li>
+        <li><b>D7.3 · 剪辑引擎</b>：默认<u>FFmpeg 自研基础剪辑 + 阿里云智能剪辑</u>（CapCut API 国内限制多）。是否合理？</li>
+        <li><b>D7.4 · 一期预留接口</b>：默认要做（工作量约 +0.5 月）。如果跳过，二期接入时要重构一期架构（成本翻倍）。建议保留。</li>
+        <li><b>D7.5 · TTS 服务</b>：默认<u>火山引擎 + MiniMax（国内）</u> + ElevenLabs（海外）。是否合理？</li>
+        <li><b>D7.6 · 视频审核策略</b>：视频比文章审核更严（合规/版权/肖像权），是否需要 100% 人审？还是分级抽检？</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section-wrap" id="sec8">
+    <h2>Section 8 / 9 · 分阶段路线图</h2>
+    <p class="subtitle">6 阶段 · 15 个月 · 每阶段硬退出门槛 · 团队 3-5 开发 + 2-3 运营</p>
+
+    <style>
+      .gantt {
+        margin: 16px 0;
+      }
+
+      .gantt-header {
+        display: grid;
+        grid-template-columns: 100px repeat(15, 1fr);
+        gap: 0;
+        font-size: 9px;
+        color: #64748b;
+        text-align: center;
+        padding: 4px 0;
+        border-bottom: 1px solid #e2e8f0;
+      }
+
+      .gantt-row {
+        display: grid;
+        grid-template-columns: 100px repeat(15, 1fr);
+        gap: 0;
+        align-items: center;
+        padding: 4px 0;
+        border-bottom: 1px solid #f1f5f9;
+      }
+
+      .gantt-label {
+        font-size: 10px;
+        font-weight: 700;
+        padding-right: 8px;
+      }
+
+      .gantt-bar {
+        height: 18px;
+        border-radius: 3px;
+        font-size: 9px;
+        color: #fff;
+        padding: 2px 6px;
+        line-height: 14px;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+
+      .b0 {
+        background: #94a3b8;
+      }
+
+      .b1 {
+        background: #3b82f6;
+      }
+
+      .b2 {
+        background: #06b6d4;
+      }
+
+      .b3 {
+        background: #10b981;
+      }
+
+      .b4 {
+        background: #f59e0b;
+      }
+
+      .b5 {
+        background: #8b5cf6;
+      }
+
+      .b6 {
+        background: #ec4899;
+      }
+
+      .gantt-cell {
+        grid-column-end: span 1;
+      }
+
+      .stage-card {
+        border: 2px solid;
+        border-radius: 10px;
+        padding: 14px;
+        background: #fff;
+        margin-bottom: 12px;
+      }
+
+      .stage-card .head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .stage-card .num {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        color: #fff;
+        font-weight: 900;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+      }
+
+      .stage-card .title {
+        font-size: 14px;
+        font-weight: 700;
+        flex: 1;
+        margin-left: 10px;
+      }
+
+      .stage-card .time {
+        font-size: 11px;
+        color: #64748b;
+        font-family: monospace;
+        padding: 2px 8px;
+        background: #f1f5f9;
+        border-radius: 10px;
+      }
+
+      .stage-card .row {
+        display: grid;
+        grid-template-columns: 80px 1fr;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 12px;
+      }
+
+      .stage-card .row .k {
+        font-weight: 700;
+        color: #64748b;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .stage-card .gate {
+        background: linear-gradient(135deg, #fef2f2, #fff);
+        border-left: 3px solid #ef4444;
+        padding: 6px 10px;
+        margin-top: 6px;
+        border-radius: 0 4px 4px 0;
+        font-size: 12px;
+      }
+
+      .stage-card .gate b {
+        color: #991b1b;
+      }
+
+      .s0 {
+        border-color: #94a3b8;
+      }
+
+      .s0 .num {
+        background: #64748b;
+      }
+
+      .s1 {
+        border-color: #3b82f6;
+      }
+
+      .s1 .num {
+        background: #3b82f6;
+      }
+
+      .s2 {
+        border-color: #06b6d4;
+      }
+
+      .s2 .num {
+        background: #06b6d4;
+      }
+
+      .s3 {
+        border-color: #10b981;
+      }
+
+      .s3 .num {
+        background: #10b981;
+      }
+
+      .s4 {
+        border-color: #f59e0b;
+      }
+
+      .s4 .num {
+        background: #f59e0b;
+      }
+
+      .s5 {
+        border-color: #8b5cf6;
+      }
+
+      .s5 .num {
+        background: #8b5cf6;
+      }
+
+      .s6 {
+        border-color: #ec4899;
+      }
+
+      .s6 .num {
+        background: #ec4899;
+      }
+
+      .phase-marker {
+        background: #fff;
+        border: 2px solid #94a3b8;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin: 12px 0;
+        font-size: 12px;
+        font-weight: 700;
+        color: #475569;
+        text-align: center;
+      }
+
+      .phase-marker.p1 {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(16, 185, 129, 0.1));
+        border-color: #10b981;
+        color: #065f46;
+      }
+
+      .phase-marker.p2 {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(236, 72, 153, 0.1));
+        border-color: #8b5cf6;
+        color: #5b21b6;
+      }
+
+      .decision {
+        border-left: 3px solid #f59e0b;
+        padding: 10px 14px;
+        background: #fffbeb;
+        margin: 10px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 13px;
+      }
+
+      .decision b {
+        color: #92400e;
+      }
+    </style>
+
+    <div class="panel" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 18px">
+      <h4 style="margin:0 0 10px">Gantt 总览 · 月份 1-15</h4>
+      <div class="gantt">
+        <div class="gantt-header">
+          <div></div>
+          <div>M1</div>
+          <div>M2</div>
+          <div>M3</div>
+          <div>M4</div>
+          <div>M5</div>
+          <div>M6</div>
+          <div>M7</div>
+          <div>M8</div>
+          <div>M9</div>
+          <div>M10</div>
+          <div>M11</div>
+          <div>M12</div>
+          <div>M13</div>
+          <div>M14</div>
+          <div>M15</div>
+        </div>
+        <div class="gantt-row">
+          <div class="gantt-label">S0 基建</div>
+          <div class="gantt-bar b0" style="grid-column:2 / span 1">M1</div>
+        </div>
+        <div class="gantt-row">
+          <div class="gantt-label">S1 国内单引擎闭环</div>
+          <div class="gantt-bar b1" style="grid-column:3 / span 2">M2-3</div>
+        </div>
+        <div class="gantt-row">
+          <div class="gantt-label">S2 多引擎/平台</div>
+          <div class="gantt-bar b2" style="grid-column:5 / span 2">M4-5</div>
+        </div>
+        <div class="gantt-row">
+          <div class="gantt-label">S3 海外 MVP + L5</div>
+          <div class="gantt-bar b3" style="grid-column:7 / span 2">M6-7</div>
+        </div>
+        <div class="gantt-row">
+          <div class="gantt-label">S4 一期上线/二期启动</div>
+          <div class="gantt-bar b4" style="grid-column:9 / span 2">M8-9</div>
+        </div>
+        <div class="gantt-row">
+          <div class="gantt-label">S5 视频 MVP</div>
+          <div class="gantt-bar b5" style="grid-column:11 / span 3">M10-12</div>
+        </div>
+        <div class="gantt-row">
+          <div class="gantt-label">S6 二期深化</div>
+          <div class="gantt-bar b6" style="grid-column:14 / span 3">M13-15</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="phase-marker p1">▼ 一期（M1-M9） · 国内全闭环 + 海外 MVP · 文/图模态 ▼</div>
+
+    <div class="stage-card s0">
+      <div class="head">
+        <div class="num">0</div>
+        <div class="title">基建与预热</div>
+        <div class="time">M1 · 1 个月</div>
+      </div>
+      <div class="row"><span class="k">目标</span><span>立项、组队、技术选型、原型 demo</span></div>
+      <div class="row"><span class="k">关键</span><span>工作流引擎选型敲定（n8n / Dify / Temporal / 自研）· 数据基础 D1 确认 · App 团队 D5.3
+          协调</span></div>
+      <div class="row"><span class="k">输出</span><span>选型文档 + 工作流引擎原型跑通 hello-world</span></div>
+      <div class="gate"><b>退出门槛</b>：工作流引擎可拖拽创建 1 个 demo 流水线并执行成功；D1/D5.3 答案到位</div>
+    </div>
+
+    <div class="stage-card s1">
+      <div class="head">
+        <div class="num">1</div>
+        <div class="title">国内单引擎单平台闭环（MVP-1）</div>
+        <div class="time">M2-3 · 2 个月</div>
+      </div>
+      <div class="row"><span class="k">目标</span><span>把"手工跑头条"完整自动化，证明架构能跑</span></div>
+      <div class="row"><span class="k">范围</span><span>监测(豆包) + 生产(文章) + 分发(头条号) + 归因 L1 + 数据仓库 v0 + 控制台 v0</span></div>
+      <div class="row"><span class="k">输出</span><span>每日自动 5+ 篇文章 → 自动发头条 → 监测豆包提及率 → 仪表盘看曲线</span></div>
+      <div class="gate"><b>退出门槛</b>：1 周自动化产出 ≥ 当前手工产量 · 流水线无人工干预运行 5 个工作日</div>
+    </div>
+
+    <div class="stage-card s2">
+      <div class="head">
+        <div class="num">2</div>
+        <div class="title">多引擎多平台横向扩展（MVP-2）</div>
+        <div class="time">M4-5 · 2 个月</div>
+      </div>
+      <div class="row"><span class="k">目标</span><span>验证多引擎/多平台架构</span></div>
+      <div class="row"><span class="k">范围</span><span>监测扩到 7 个国内引擎 · 分发扩到 P1 4 平台（头条/知乎/小红书/百家号）· 归因 L2 (UTM 中转) + L3
+          (时序桥接) · 账号池系统</span></div>
+      <div class="row"><span class="k">输出</span><span>4 平台 × 5 账号矩阵稳定运营 · 归因报告 v0 给老板看</span></div>
+      <div class="gate"><b>退出门槛</b>：归因 L2 数据稳定 · ROI 仪表盘可读 · 4 平台周封号率 &lt; 5%</div>
+    </div>
+
+    <div class="stage-card s3">
+      <div class="head">
+        <div class="num">3</div>
+        <div class="title">海外 MVP + 一期完善</div>
+        <div class="time">M6-7 · 2 个月</div>
+      </div>
+      <div class="row"><span class="k">目标</span><span>海外能力打通 · L5 用户自报闭环</span></div>
+      <div class="row"><span class="k">范围</span><span>海外 5 引擎监测 · Medium + Reddit 分发 · L5 首启动问卷上线 · 决策反推 v1 · 工作流编辑器
+          GA</span></div>
+      <div class="row"><span class="k">输出</span><span>海外 GEO 数据流通 · L5 用户自报数据回流 · 运营可独立编排工作流</span></div>
+      <div class="gate"><b>退出门槛</b>：海外仪表盘可看 · L5 问卷上线且有数据回收 · 运营 0 开发支持下可发布新 GEO 策略</div>
+    </div>
+
+    <div class="stage-card s4">
+      <div class="head">
+        <div class="num">4</div>
+        <div class="title">一期上线 & 二期视频启动</div>
+        <div class="time">M8-9 · 2 个月</div>
+      </div>
+      <div class="row"><span class="k">目标</span><span>一期 SLA 稳定上线 · 二期架构启动（视频接口预留）</span></div>
+      <div class="row"><span class="k">范围</span><span>一期 bug 修复/性能优化 · 视频节点接口预留 · 视频平台适配器 · TTS/数字人 POC</span></div>
+      <div class="row"><span class="k">输出</span><span>一期 v1.0 公司内部发布 · 视频 POC demo 跑通</span></div>
+      <div class="gate"><b>退出门槛</b>：一期 uptime 99% · dashboard 数据延迟 &lt; 1h · 视频 POC 能产出 1 条端到端 demo</div>
+    </div>
+
+    <div class="phase-marker p2">▼ 二期（M10-M15） · 视频自动化 + 归因深化 + 海外扩展 ▼</div>
+
+    <div class="stage-card s5">
+      <div class="head">
+        <div class="num">5</div>
+        <div class="title">视频自动化 MVP — 痛点 2</div>
+        <div class="time">M10-12 · 3 个月</div>
+      </div>
+      <div class="row"><span class="k">目标</span><span>视频自动化跑通（数字人模式 MVP）</span></div>
+      <div class="row"><span class="k">范围</span><span>脚本 → TTS → 数字人 → 剪辑 → 字幕 → 抖音/视频号/小红书分发 · 多平台转版引擎</span></div>
+      <div class="row"><span class="k">输出</span><span>每日自动产 10+ 视频 · 3 平台分发 · 视频引擎监测覆盖</span></div>
+      <div class="gate"><b>退出门槛</b>：视频 hit rate ≥ 文章的 50% · 单条成本 &lt; ¥20</div>
+    </div>
+
+    <div class="stage-card s6">
+      <div class="head">
+        <div class="num">6</div>
+        <div class="title">归因深化 + ML 反推 + 模式扩展</div>
+        <div class="time">M13-15 · 3 个月</div>
+      </div>
+      <div class="row"><span class="k">目标</span><span>归因 L4 实验对照 · ML 反推模型 · 视觉模式扩展</span></div>
+      <div class="row"><span class="k">范围</span><span>实验调度器 · GBDT 反推模型 · 实拍剪辑模式 · 纯 AI 视频试点 · 海外 P2 平台扩展
+          (Quora/LinkedIn)</span></div>
+      <div class="row"><span class="k">输出</span><span>L4 实验有结果 · ML 模型上线 · 视频 ROI 可量化</span></div>
+      <div class="gate"><b>退出门槛</b>：L4 实验报告 ≥ 1 份 · ML 模型 hit rate 预测准确率 &gt; 70% · 进入自我优化稳态</div>
+    </div>
+
+    <div class="panel" style="background:#f8fafc;margin-top:16px">
+      <h4>团队配比建议（按阶段）</h4>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <tr style="background:#f1f5f9">
+          <th style="text-align:left;padding:6px">阶段</th>
+          <th>后端</th>
+          <th>前端/控制台</th>
+          <th>数据/算法</th>
+          <th>客户端/SDK 协调</th>
+          <th>运营/内容</th>
+        </tr>
+        <tr>
+          <td style="padding:6px">S0 基建</td>
+          <td>2</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0.5</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">S1-2 一期主战</td>
+          <td>2</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0.5</td>
+          <td>2</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">S3-4 海外+上线</td>
+          <td>2</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0.5</td>
+          <td>3</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">S5 视频 MVP</td>
+          <td>1.5</td>
+          <td>1</td>
+          <td>1.5</td>
+          <td>0</td>
+          <td>3</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">S6 深化</td>
+          <td>1.5</td>
+          <td>0.5</td>
+          <td>2 (ML)</td>
+          <td>0.5</td>
+          <td>3</td>
+        </tr>
+      </table>
+      <div style="font-size:11px;color:#64748b;margin-top:6px">数字含义：FTE（全职等价）· 0.5 = 半投入 · 客户端是协调成本，不算项目本身团队</div>
+    </div>
+
+    <div class="decision">
+      <b>⚠ 待 sign-off 决策项 D8.x</b>
+      <ul style="margin:6px 0 0">
+        <li><b>D8.1 · 6 阶段划分</b>：是否同意？还是要拆细/合并某些阶段？</li>
+        <li><b>D8.2 · 时长</b>：一期 9 个月 / 二期 6 个月。是否合理？还是要加 1-2 个月缓冲（应对未知风险）？</li>
+        <li><b>D8.3 · 退出门槛</b>：每阶段都设了硬门槛。这种"门槛不过不进下阶段"的做法你 OK 吗？还是更喜欢"时间到了就推进"？</li>
+        <li><b>D8.4 · 公司内部发布节点</b>：建议在 S4 末（M9）做一次内部发布会，对齐期望、争取后续预算。是否需要？</li>
+        <li><b>D8.5 · 风险缓冲</b>：要不要额外排 1-2 个月 buffer 给"未知风险"（账号封禁潮、新 AI 引擎冒出、客户端发版延迟）？</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section-wrap" id="sec9">
+    <h2>Section 9 / 9 · 关键决策 & 风险地图</h2>
+    <p class="subtitle">30+ 决策点汇总 · 6 大类风险 · 用户行动清单</p>
+
+    <style>
+      .panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        background: #fff;
+        margin-bottom: 12px;
+      }
+
+      .panel h4 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        color: #475569;
+        letter-spacing: 0.3px;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .grid-3 {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+      }
+
+      .decision-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+
+      .decision-table th {
+        text-align: left;
+        padding: 6px;
+        background: #f1f5f9;
+        font-size: 10px;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .decision-table td {
+        padding: 5px 6px;
+        border-bottom: 1px solid #f1f5f9;
+        vertical-align: top;
+      }
+
+      .d-id {
+        font-family: monospace;
+        font-weight: 700;
+        color: #1e40af;
+      }
+
+      .d-status {
+        display: inline-block;
+        padding: 1px 5px;
+        border-radius: 8px;
+        font-size: 9px;
+        font-weight: 700;
+      }
+
+      .d-status.pending {
+        background: #fef3c7;
+        color: #92400e;
+      }
+
+      .d-status.blocked {
+        background: #fecaca;
+        color: #991b1b;
+      }
+
+      .d-status.signed {
+        background: #d1fae5;
+        color: #065f46;
+      }
+
+      .risk-card {
+        border-left: 4px solid;
+        padding: 10px 14px;
+        background: #fff;
+        margin-bottom: 8px;
+        border-radius: 0 6px 6px 0;
+        font-size: 12px;
+      }
+
+      .risk-card .head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+      }
+
+      .risk-card .title {
+        font-weight: 700;
+      }
+
+      .risk-card .sev {
+        font-size: 9px;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-weight: 700;
+      }
+
+      .risk-card .body {
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      .risk-card .mit {
+        color: #065f46;
+        font-size: 11px;
+        margin-top: 4px;
+      }
+
+      .risk-card .mit b {
+        color: #065f46;
+      }
+
+      .r-tech {
+        border-color: #3b82f6;
+      }
+
+      .r-tech .sev {
+        background: #dbeafe;
+        color: #1e40af;
+      }
+
+      .r-biz {
+        border-color: #f59e0b;
+      }
+
+      .r-biz .sev {
+        background: #fef3c7;
+        color: #92400e;
+      }
+
+      .r-ops {
+        border-color: #ef4444;
+      }
+
+      .r-ops .sev {
+        background: #fecaca;
+        color: #991b1b;
+      }
+
+      .r-leg {
+        border-color: #8b5cf6;
+      }
+
+      .r-leg .sev {
+        background: #ede9fe;
+        color: #5b21b6;
+      }
+
+      .r-org {
+        border-color: #10b981;
+      }
+
+      .r-org .sev {
+        background: #d1fae5;
+        color: #065f46;
+      }
+
+      .r-unk {
+        border-color: #64748b;
+      }
+
+      .r-unk .sev {
+        background: #f1f5f9;
+        color: #475569;
+      }
+
+      .action-item {
+        display: grid;
+        grid-template-columns: 100px 1fr;
+        gap: 10px;
+        padding: 7px;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 12px;
+        align-items: start;
+      }
+
+      .action-time {
+        font-weight: 700;
+        color: #64748b;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .action-time.urgent {
+        color: #dc2626;
+      }
+
+      .action-item:last-child {
+        border-bottom: none;
+      }
+
+      .stat-card {
+        padding: 14px;
+        border-radius: 8px;
+        text-align: center;
+        background: linear-gradient(135deg, #fff, #f8fafc);
+        border: 1px solid #e2e8f0;
+      }
+
+      .stat-card .num {
+        font-size: 28px;
+        font-weight: 900;
+      }
+
+      .stat-card .label {
+        font-size: 11px;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-top: 4px;
+      }
+
+      .stat-card.k {
+        background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
+      }
+
+      .stat-card.k .num {
+        color: #059669;
+      }
+
+      .stat-card.d {
+        background: linear-gradient(135deg, #fffbeb, #fef3c7);
+      }
+
+      .stat-card.d .num {
+        color: #d97706;
+      }
+
+      .stat-card.r {
+        background: linear-gradient(135deg, #fef2f2, #fee2e2);
+      }
+
+      .stat-card.r .num {
+        color: #dc2626;
+      }
+    </style>
+
+    <div class="grid-3" style="margin-top:16px">
+      <div class="stat-card k">
+        <div class="num">1</div>
+        <div class="label">已 sign-off · 关键决策</div>
+        <div style="font-size:11px;color:#64748b;margin-top:6px">K1 · 工作流引擎 + 节点化</div>
+      </div>
+      <div class="stat-card d">
+        <div class="num">30+</div>
+        <div class="label">待 sign-off · 决策点</div>
+        <div style="font-size:11px;color:#64748b;margin-top:6px">D1, D2, D2.x-D8.x</div>
+      </div>
+      <div class="stat-card r">
+        <div class="num">2</div>
+        <div class="label">阻塞项 · 必须本周回答</div>
+        <div style="font-size:11px;color:#64748b;margin-top:6px">D1 归因 SDK · D5.3 App 配合</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>9.1 · 决策点全集（按 Section 分组）</h4>
+      <table class="decision-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>主题</th>
+            <th>默认值</th>
+            <th>谁来 sign-off</th>
+            <th>窗口</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td colspan="6" style="background:#f8fafc;font-weight:700;color:#475569">框架级</td>
+          </tr>
+          <tr>
+            <td><span class="d-id">K1</span></td>
+            <td>架构 = 工作流引擎 + 节点化</td>
+            <td>—</td>
+            <td>用户</td>
+            <td>本轮</td>
+            <td><span class="d-status signed">已签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D1</span></td>
+            <td>App 归因 SDK 现状</td>
+            <td>未知 → 按最差假设设计</td>
+            <td>数据/客户端同学</td>
+            <td><b>本周</b></td>
+            <td><span class="d-status blocked">阻塞</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D2</span></td>
+            <td>时间表</td>
+            <td>一期 9 月 · 二期 6 月</td>
+            <td>用户</td>
+            <td>本周</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+
+          <tr>
+            <td colspan="6" style="background:#f8fafc;font-weight:700;color:#475569">Section 2 监测层</td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D2.1</span></td>
+            <td>一期引擎数</td>
+            <td>12 (国内 7 + 海外 5)</td>
+            <td>用户</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D2.2</span></td>
+            <td>抓取方案</td>
+            <td>自研 Playwright</td>
+            <td>用户 + 技术 Lead</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D2.3</span></td>
+            <td>关键词宇宙规模</td>
+            <td>~1500</td>
+            <td>运营 Lead</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+
+          <tr>
+            <td colspan="6" style="background:#f8fafc;font-weight:700;color:#475569">Section 3 内容生产</td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D3.1</span></td>
+            <td>主笔模型</td>
+            <td>Claude Sonnet 4.6 + DeepSeek V3</td>
+            <td>技术 + 内容 Lead</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D3.2</span></td>
+            <td>RAG 知识库</td>
+            <td>自建（产品文档+历史内容）</td>
+            <td>技术 Lead</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D3.3</span></td>
+            <td>审核策略</td>
+            <td>自动 + 10-20% 人审</td>
+            <td>运营 Lead + 法务</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D3.4</span></td>
+            <td>AI 内容标记</td>
+            <td>按平台政策（小红书标/头条不强制）</td>
+            <td>法务</td>
+            <td>S2 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+
+          <tr>
+            <td colspan="6" style="background:#f8fafc;font-weight:700;color:#475569">Section 4 分发</td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D4.1</span></td>
+            <td>一期国内平台数</td>
+            <td>6 (P1 4 + P2 2)</td>
+            <td>运营 Lead</td>
+            <td>S1 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D4.2</span></td>
+            <td>海外 MVP 2 平台</td>
+            <td>Medium + Reddit</td>
+            <td>运营 Lead</td>
+            <td>S2 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D4.3</span></td>
+            <td>账号池规模</td>
+            <td>每平台 5-8 账号</td>
+            <td>运营 Lead</td>
+            <td>S1 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D4.4</span></td>
+            <td>内容差异化策略</td>
+            <td>同主题 2-3 改写版</td>
+            <td>内容 Lead</td>
+            <td>S1 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D4.5</span></td>
+            <td>微信公众号一期是否上</td>
+            <td>建议二期</td>
+            <td>用户</td>
+            <td>S2 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+
+          <tr>
+            <td colspan="6" style="background:#f8fafc;font-weight:700;color:#475569">Section 5 归因 · 痛点 1</td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D5.1</span></td>
+            <td>第三方归因 SDK</td>
+            <td>取决于 D1</td>
+            <td>取决于 D1</td>
+            <td>S0 期间</td>
+            <td><span class="d-status blocked">阻塞 D1</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D5.2</span></td>
+            <td>L4 实验对照</td>
+            <td>二期做</td>
+            <td>用户</td>
+            <td>S5 之前</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D5.3</span></td>
+            <td>L5 用户自报问卷</td>
+            <td>一期做（需 App 团队配合）</td>
+            <td>App 团队 Lead</td>
+            <td><b>本周</b></td>
+            <td><span class="d-status blocked">阻塞</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D5.4</span></td>
+            <td>归因置信度阈值</td>
+            <td>≥0.6 算"GEO 带来"</td>
+            <td>数据 Lead</td>
+            <td>S2 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D5.5</span></td>
+            <td>中转落地页域名</td>
+            <td>独立域名 geo.yourbrand.com</td>
+            <td>用户 + IT</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+
+          <tr>
+            <td colspan="6" style="background:#f8fafc;font-weight:700;color:#475569">Section 6 决策中枢</td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D6.1</span></td>
+            <td>数据仓库选型</td>
+            <td>Postgres + TimescaleDB</td>
+            <td>技术 Lead</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D6.2</span></td>
+            <td>仪表盘方案</td>
+            <td>核心自建 + Metabase 高级</td>
+            <td>技术 Lead</td>
+            <td>S1 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D6.3</span></td>
+            <td>ML 反推模型</td>
+            <td>一期统计 / 二期 GBDT</td>
+            <td>数据 Lead</td>
+            <td>S6 之前</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D6.4</span></td>
+            <td>与公司 BI 集成方式</td>
+            <td>定时拉取 (待与 BI 团队确认)</td>
+            <td>BI 团队 Lead</td>
+            <td>S1 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D6.5</span></td>
+            <td>反推自动化程度</td>
+            <td>半自动（推荐 + 运营 confirm）</td>
+            <td>运营 Lead</td>
+            <td>S3 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+
+          <tr>
+            <td colspan="6" style="background:#f8fafc;font-weight:700;color:#475569">Section 7 视频 · 痛点 2</td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D7.1</span></td>
+            <td>视觉生成模式优先级</td>
+            <td>A→B→C (数字人 → 实拍 → 纯 AI)</td>
+            <td>内容 Lead</td>
+            <td>S4 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D7.2</span></td>
+            <td>数字人服务选型</td>
+            <td>即梦/腾讯智影/火山 + HeyGen</td>
+            <td>技术 + 法务</td>
+            <td>S4 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D7.3</span></td>
+            <td>剪辑引擎</td>
+            <td>FFmpeg + 阿里云剪辑</td>
+            <td>技术 Lead</td>
+            <td>S5 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D7.4</span></td>
+            <td>一期视频接口预留</td>
+            <td>要做 (+0.5 月)</td>
+            <td>用户 + 技术 Lead</td>
+            <td>S0 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D7.5</span></td>
+            <td>TTS 服务</td>
+            <td>火山+MiniMax+ElevenLabs</td>
+            <td>技术 Lead</td>
+            <td>S5 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D7.6</span></td>
+            <td>视频审核策略</td>
+            <td>建议 100% 人审 (合规风险高)</td>
+            <td>法务 + 运营</td>
+            <td>S5 期间</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+
+          <tr>
+            <td colspan="6" style="background:#f8fafc;font-weight:700;color:#475569">Section 8 路线图</td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D8.1</span></td>
+            <td>6 阶段划分</td>
+            <td>同意</td>
+            <td>用户</td>
+            <td>本轮</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D8.2</span></td>
+            <td>时长</td>
+            <td>9 + 6 月 (含或不含 buffer)</td>
+            <td>用户</td>
+            <td>本轮</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D8.3</span></td>
+            <td>硬退出门槛</td>
+            <td>每阶段门槛不过不进下阶段</td>
+            <td>用户</td>
+            <td>本轮</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D8.4</span></td>
+            <td>M9 内部发布会</td>
+            <td>建议做</td>
+            <td>用户</td>
+            <td>S3 末</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+          <tr>
+            <td><span class="d-id">D8.5</span></td>
+            <td>风险缓冲</td>
+            <td>建议 +1-2 月</td>
+            <td>用户</td>
+            <td>本轮</td>
+            <td><span class="d-status pending">待签</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h4>9.2 · 风险地图（6 大类 · 18 个识别项）</h4>
+
+      <div style="font-size:11px;color:#64748b;margin:6px 0">⚠ 严重度 = 出现概率 × 影响面 · S=Severe / H=High / M=Medium / L=Low
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <h5 style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px">技术风险
+          </h5>
+          <div class="risk-card r-tech">
+            <div class="head">
+              <div class="title">工作流引擎选型错误</div>
+              <div class="sev">H</div>
+            </div>
+            <div class="body">n8n / Dify 等是否支持 GEO 场景的定制需求（多账号池、复杂调度）？选错要换内核。</div>
+            <div class="mit"><b>缓解</b>：S0 必须有 POC 验证 3 个关键场景能跑</div>
+          </div>
+          <div class="risk-card r-tech">
+            <div class="head">
+              <div class="title">Playwright 反爬 / 验证码</div>
+              <div class="sev">S</div>
+            </div>
+            <div class="body">国内平台对自动化敏感（小红书/知乎），账号封禁潮可能让分发瘫痪。</div>
+            <div class="mit"><b>缓解</b>：账号健康度监控 + 多账号轮转 + 浏览器指纹 + 国内 IP 代理池</div>
+          </div>
+          <div class="risk-card r-tech">
+            <div class="head">
+              <div class="title">AI 引擎抓取合规</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">部分 AI 引擎 ToS 禁止爬虫；监测层抓取存灰区风险。</div>
+            <div class="mit"><b>缓解</b>：优先用官方 API（智谱/Kimi 等有），Web 自动化频率严控</div>
+          </div>
+          <div class="risk-card r-tech">
+            <div class="head">
+              <div class="title">归因数据不全（D1 阻塞）</div>
+              <div class="sev">S</div>
+            </div>
+            <div class="body">如果 App 没接归因 SDK，L2/L4 精度大跌，归因层只剩 L1+L3+L5。</div>
+            <div class="mit"><b>缓解</b>：本项目推动接入 AppsFlyer/Adjust；L5 用户自报作 fallback</div>
+          </div>
+        </div>
+
+        <div>
+          <h5 style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px">业务风险
+          </h5>
+          <div class="risk-card r-biz">
+            <div class="head">
+              <div class="title">L4 实验暂停 GEO 投放</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">为了对照实验要暂停 1 周以上 GEO 投放，业务侧可能反对。</div>
+            <div class="mit"><b>缓解</b>：分平台/分关键词组实验，不全局暂停</div>
+          </div>
+          <div class="risk-card r-biz">
+            <div class="head">
+              <div class="title">视频 GEO hit rate 不达预期</div>
+              <div class="sev">H</div>
+            </div>
+            <div class="body">2026 年视频 GEO 还在演进，多模态 AI 抓取视频内容能力有限。</div>
+            <div class="mit"><b>缓解</b>：先靠字幕轨道 GEO（AI 抓的核心），视频本身做品牌曝光</div>
+          </div>
+          <div class="risk-card r-biz">
+            <div class="head">
+              <div class="title">海外 MVP 运营能力不足</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">运营团队英文能力 / 文化把握 / 合规知识可能不够。</div>
+            <div class="mit"><b>缓解</b>：海外 MVP 阶段招 1 名海外运营，或外包初期内容</div>
+          </div>
+
+          <h5 style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px">运营风险
+          </h5>
+          <div class="risk-card r-ops">
+            <div class="head">
+              <div class="title">账号封禁潮</div>
+              <div class="sev">S</div>
+            </div>
+            <div class="body">多平台同步发同主题 → 算法识别 → 同周大范围封号。</div>
+            <div class="mit"><b>缓解</b>：D4.4 内容差异化 + 时间分散 + 账号健康度监控</div>
+          </div>
+          <div class="risk-card r-ops">
+            <div class="head">
+              <div class="title">平台政策变化</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">小红书改规则、知乎调算法 → 现有策略失效。</div>
+            <div class="mit"><b>缓解</b>：节点化架构便于策略热替换</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <h5 style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px">法务 /
+            合规风险</h5>
+          <div class="risk-card r-leg">
+            <div class="head">
+              <div class="title">AI 内容标记不一致</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">各平台政策不一（小红书强制标、头条不强制），漏标会被平台限流。</div>
+            <div class="mit"><b>缓解</b>：D3.4 平台政策表 + 分发节点自动适配</div>
+          </div>
+          <div class="risk-card r-leg">
+            <div class="head">
+              <div class="title">竞品对比法务红线</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">GEO 内容含竞品对比，存"不当贬低"风险。</div>
+            <div class="mit"><b>缓解</b>：审核节点加入"竞品对比合规校验"</div>
+          </div>
+          <div class="risk-card r-leg">
+            <div class="head">
+              <div class="title">用户数据归因隐私</div>
+              <div class="sev">L</div>
+            </div>
+            <div class="body">L2/L5 涉及用户行为数据采集。</div>
+            <div class="mit"><b>缓解</b>：用户隐私协议覆盖；L5 问卷匿名化</div>
+          </div>
+        </div>
+
+        <div>
+          <h5 style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px">组织风险
+          </h5>
+          <div class="risk-card r-org">
+            <div class="head">
+              <div class="title">App 团队配合发版</div>
+              <div class="sev">H</div>
+            </div>
+            <div class="body">D5.3 L5 用户自报需要 App 团队发版改动，可能排期受阻。</div>
+            <div class="mit"><b>缓解</b>：本周就对接 App 团队 Lead，争取 S3 之前发版</div>
+          </div>
+          <div class="risk-card r-org">
+            <div class="head">
+              <div class="title">数据 BI 团队配合度</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">D6.4 业务数据要从 BI 来，BI 团队对项目优先级不一定认可。</div>
+            <div class="mit"><b>缓解</b>：S0 期间高层对齐；接入方式选定时拉取避免侵入</div>
+          </div>
+          <div class="risk-card r-org">
+            <div class="head">
+              <div class="title">老板对 ROI 预期管理</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">早期 ROI 可能&lt;1（投入大 / 归因还没建立），可能被砍预算。</div>
+            <div class="mit"><b>缓解</b>：S2 起就有"露出层 ROI"对外披露；M9 发布会提前对齐预期</div>
+          </div>
+
+          <h5 style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px">
+            未知风险（黑天鹅）</h5>
+          <div class="risk-card r-unk">
+            <div class="head">
+              <div class="title">新 AI 引擎出现 / 模型升级</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">2026 后期可能冒出新 player；现有引擎模型升级导致内容失效。</div>
+            <div class="mit"><b>缓解</b>：节点化架构 + 监测层可扩展，预留时间响应</div>
+          </div>
+          <div class="risk-card r-unk">
+            <div class="head">
+              <div class="title">监管对 AIGC 政策收紧</div>
+              <div class="sev">M</div>
+            </div>
+            <div class="body">国内对 AIGC 标记 / 算法备案的要求可能强化。</div>
+            <div class="mit"><b>缓解</b>：法务每月跟进政策；保留全人工审通道作 fallback</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel"
+      style="background:linear-gradient(135deg,#fef2f2,#fff);border-color:#ef4444;border-left:4px solid #ef4444">
+      <h4>9.3 · 用户行动清单（按时间窗口）</h4>
+
+      <div style="font-weight:700;color:#dc2626;font-size:13px;margin-bottom:6px">本周内 · 必做</div>
+      <div class="action-item">
+        <div class="action-time urgent">本周</div>
+        <div><b>D1 · 归因 SDK 现状</b>：找数据 / 客户端同学问"App 有没有接 AppsFlyer / Adjust / Branch / 热云 / 友盟+ 归因版？"</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time urgent">本周</div>
+        <div><b>D5.3 · App 团队对齐</b>：跟 App Lead 同步"首启动问卷"需求，确认 S3 之前能否发版</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time urgent">本周</div>
+        <div><b>D8.x · 本方案 sign-off</b>：路线图/时长/硬门槛/发布会/缓冲 5 项决策</div>
+      </div>
+
+      <div style="font-weight:700;color:#d97706;font-size:13px;margin:14px 0 6px">S0 期间 (M1) · 必做</div>
+      <div class="action-item">
+        <div class="action-time">S0</div>
+        <div><b>D2.x</b>: 一期引擎数 / 抓取方案 / 关键词宇宙规模</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time">S0</div>
+        <div><b>D3.1-3.3</b>: 主笔模型 / RAG / 审核策略</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time">S0</div>
+        <div><b>D5.5</b>: 申请独立域名 (建议 geo.yourbrand.com)</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time">S0</div>
+        <div><b>D6.1</b>: 数据仓库选型 + 与 BI 团队对齐 D6.4</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time">S0</div>
+        <div><b>D7.4</b>: 是否预留一期视频接口</div>
+      </div>
+
+      <div style="font-weight:700;color:#059669;font-size:13px;margin:14px 0 6px">S1-S6 期间 · 滚动 sign-off</div>
+      <div class="action-item">
+        <div class="action-time">S1-S2</div>
+        <div>D4.x 分发策略 / D6.2 仪表盘方案 / D6.4 BI 集成 / D5.4 置信度</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time">S2-S3</div>
+        <div>D3.4 AI 标记 / D4.5 微信 / D6.5 反推自动化</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time">S4-S5</div>
+        <div>D7.x 视频细节 / D5.2 L4 实验时机</div>
+      </div>
+      <div class="action-item">
+        <div class="action-time">S6</div>
+        <div>D6.3 ML 模型 / 升级到 B 路线的预研</div>
+      </div>
+    </div>
+
+    <div class="panel" style="background:linear-gradient(135deg,#ecfdf5,#f0fdf4);border-color:#10b981">
+      <h4>9.4 · 关键成功指标（验证整套方案是否成功）</h4>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <tr style="background:#d1fae5">
+          <th style="padding:6px;text-align:left">维度</th>
+          <th>S2 末 (M5)</th>
+          <th>S4 末 (M9 一期上线)</th>
+          <th>S6 末 (M15 二期完)</th>
+        </tr>
+        <tr>
+          <td style="padding:6px">L1 提及率</td>
+          <td>≥ 15% (头条/豆包)</td>
+          <td>≥ 25% (12 引擎平均)</td>
+          <td>≥ 40%</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">日产文章量</td>
+          <td>≥ 20 篇/日</td>
+          <td>≥ 50 篇/日</td>
+          <td>≥ 80 篇/日</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">日产视频量</td>
+          <td>—</td>
+          <td>—</td>
+          <td>≥ 30 条/日</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">归因到下载量</td>
+          <td>L1+L3 基线</td>
+          <td>L2+L3+L5 综合</td>
+          <td>L4 因果确认</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">月度 ROI</td>
+          <td>—</td>
+          <td>≥ 1.0 (打平)</td>
+          <td>≥ 2.0</td>
+        </tr>
+        <tr>
+          <td style="padding:6px">运营自助率</td>
+          <td>50%</td>
+          <td>80%</td>
+          <td>95%+</td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+</body>
+
+</html>
