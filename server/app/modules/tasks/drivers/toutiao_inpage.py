@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -13,9 +14,27 @@ from server.app.modules.tasks.drivers.base import (
     PublishResult,
     UserInputRequired,
 )
-from server.app.modules.tasks.drivers.toutiao_html import body_segments_to_toutiao_html
+from server.app.modules.tasks.drivers.image_upload import _maybe_resize_for_upload
+from server.app.modules.tasks.drivers.toutiao_html import (
+    ImageRef,
+    body_segments_to_toutiao_html,
+)
 
 logger = logging.getLogger(__name__)
+
+# Image-upload endpoint. A single multipart POST done IN-PAGE so the page's
+# global secsdk hook signs it (field `file` = the image Blob). The response
+# carries the uploaded image's uri (tos-cn-i-…) + url + width/height.
+UPLOAD_URL = (
+    "https://mp.toutiao.com/mp/agw/article_material/photo/upload_picture"
+    "?type=ueditor&pgc_watermark=1&action=uploadimage&encode=utf-8"
+)
+# Publish endpoint (form-urlencoded). save=1 + entrance=main = real publish;
+# save=0 = draft. Passed to the JS via arg.publishUrl.
+PUBLISH_API_URL = (
+    "https://mp.toutiao.com/mp/agw/article/publish"
+    "?source=mp&type=article&aid=1231&mp_publish_ab_val=0"
+)
 
 _EXTRA_BASE = {
     "content_source": 100000000402,
@@ -45,6 +64,55 @@ _EDITOR_TITLE_PLACEHOLDER = "请输入文章标题"
 
 def _word_count(content_html: str) -> int:
     return len(re.sub(r"<[^>]+>", "", content_html))
+
+
+_MIME_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+}
+
+
+def _b64_of(path: Path) -> tuple[str, str]:
+    """Read an image (downscaled if needed) as (base64-ascii, mime).
+
+    Reuses the shared upload resizer so oversized images are downscaled to JPEG
+    before being base64-encoded into the page.evaluate arg.
+    """
+    with _maybe_resize_for_upload(path) as resolved:
+        data = resolved.read_bytes()
+        mime = _MIME_BY_SUFFIX.get(resolved.suffix.lower(), "image/jpeg")
+    return base64.b64encode(data).decode("ascii"), mime
+
+
+def _build_evaluate_arg(
+    payload: PublishPayload,
+    content_html: str,
+    image_order: list[ImageRef],
+    save: int,
+) -> dict[str, Any]:
+    """Assemble the single page.evaluate arg: form + base64 images + endpoints."""
+    form = build_publish_form(title=payload.title, content_html=content_html, save=save)
+
+    cover: dict[str, str] | None = None
+    if payload.cover_asset_path is not None:
+        b64, mime = _b64_of(payload.cover_asset_path)
+        cover = {"b64": b64, "mime": mime}
+
+    body_images: list[dict[str, str]] = []
+    for ref in image_order:
+        if ref.image_path is None:
+            raise PublishError(f"头条正文图片缺少本地路径: token={ref.token}")
+        b64, mime = _b64_of(ref.image_path)
+        body_images.append({"token": ref.token, "b64": b64, "mime": mime})
+
+    return {
+        "form": form,
+        "cover": cover,
+        "bodyImages": body_images,
+        "uploadUrl": UPLOAD_URL,
+        "publishUrl": PUBLISH_API_URL,
+    }
 
 
 def build_publish_form(
@@ -141,6 +209,26 @@ def _map_publish_response(result: dict[str, Any], title: str) -> PublishResult:
     )
 
 
+def _map_full_response(result: Any, title: str) -> PublishResult:
+    """Map the single-round-trip envelope into a PublishResult, or raise.
+
+    Envelope (from adapters/toutiao_publish.js):
+      success:     {ok:true,  step:"publish", uploads:[...], publish:{...}}
+      upload fail: {ok:false, step:"upload", index, httpStatus, raw}
+    """
+    if not isinstance(result, dict):
+        raise PublishError(f"头条页内驱动返回意外结果: {result!r}")
+    if result.get("ok") is False and result.get("step") == "upload":
+        raise PublishError(
+            f"头条图片上传失败: index={result.get('index')} "
+            f"httpStatus={result.get('httpStatus')} raw={result.get('raw')}"
+        )
+    publish = result.get("publish")
+    if not isinstance(publish, dict):
+        raise PublishError(f"头条页内驱动缺少发布结果: {result!r}")
+    return _map_publish_response(publish, title)
+
+
 class ToutiaoInPageDriver:
     code = "toutiao"
     name = "头条号(页内)"
@@ -160,23 +248,30 @@ class ToutiaoInPageDriver:
         payload: PublishPayload,
         stop_before_publish: bool,
     ) -> PublishResult:
-        content_html, _image_order = body_segments_to_toutiao_html(payload.body_segments)
+        content_html, image_order = body_segments_to_toutiao_html(payload.body_segments)
         page.goto(PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
         if not _wait_editor_ready(page):
             raise UserInputRequired(
                 "头条账号未登录或登录态失效，需要人工接管",
                 error_type="login_required",
             )
-        # Milestone 1 always saves a DRAFT (save=0), which is already a
-        # non-publish state, so `stop_before_publish` is intentionally a no-op
-        # here. Milestone 2 will flip save=1 and honor the flag by pausing at
-        # the preview for manual-confirm.
-        form = build_publish_form(title=payload.title, content_html=content_html, save=0)
-        result = page.evaluate(_ADAPTER_JS, {"form": form})
-        if not isinstance(result, dict):
-            raise PublishError(f"头条页内驱动返回意外结果: {result!r}")
-        logger.info("toutiao in-page publish raw response: %s", result.get("raw"))
-        return _map_publish_response(result, payload.title)
+        # save=0 -> draft (honors stop_before_publish); save=1 -> real publish.
+        # Cover + body images upload REGARDLESS of save; save only controls the
+        # publish call's save/entrance fields.
+        save = 0 if stop_before_publish else 1
+        if save == 1 and payload.cover_asset_path is None:
+            raise PublishError("头条发布需要封面图片")
+        arg = _build_evaluate_arg(payload, content_html, image_order, save)
+        result = page.evaluate(_ADAPTER_JS, arg)
+        if isinstance(result, dict):
+            logger.info(
+                "toutiao in-page publish: uploads=%s publish.raw=%s",
+                result.get("uploads"),
+                (result.get("publish") or {}).get("raw")
+                if isinstance(result.get("publish"), dict)
+                else None,
+            )
+        return _map_full_response(result, payload.title)
 
 
 register_variant("toutiao", "inpage", ToutiaoInPageDriver())
