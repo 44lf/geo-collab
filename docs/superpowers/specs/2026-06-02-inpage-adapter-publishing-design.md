@@ -123,6 +123,22 @@ Spike 产出的真实请求记录，转为契约测试 fixture。
 - 正文/封面格式比预想简单得多（`<p>` HTML + tos uri），转换成本低。
 - 唯一残留：用一笔 `save=0` 草稿验证「我们重建的 fetch 能否拿全 3 个 token」→ 落为实现 **Task 1**，非架构风险。
 
+### Spike 结论 · phase 3（2026-06-02，M1 完成后真实 live 验证）
+
+用 `test_toutiao_inpage_live.py` 对已登录 profile 跑了一次真实 `save=0` 草稿（headed，无人工干预）。
+
+**关键正面结论 —— 架构被实证**：页内 `XMLHttpRequest` **被全局 hook 自动签名并被服务端受理**：`httpStatus=200`，返回结构化业务响应
+`{"code":7050,"data":{"pgc_id":"0"},"err_no":7050,"message":"保存失败","reason":"保存失败"}`。
+若是签名/鉴权失败，响应形态会完全不同（verify/403/风控页），而这里请求**进到了业务校验层**。→ **B-direct 签名彻底证实，#1 风险消除。**
+
+**保存被拒（待解决）**：`code=7050 保存失败`、`pgc_id=0`（未建出草稿）。已尝试把抓包里 `save=0` 的**完整字段集**补齐（含 `title_id`、`timer_time`、`educluecard`、`star_order_*`、`activity_tag`、`trends_writing_tag` 等 8 个缺失字段），**仍是 7050** → 根因**不是字段完整度**。
+
+**主假设（→ M2）**：干净保存需要**封面**（头条发布强制封面：DOM 驱动 `_handle_cover` 与 `run_publish` 都强制）和/或一次**草稿初始化 / 取 pgc_id** 的前置调用（我们只抓到了发布请求、没抓响应，也没抓编辑器加载时的建稿链路）。两者都属 **M2**（图片上传 + 草稿生命周期）。
+
+**M1 结论修正**：M1 在「不依赖图片上传 API」的前提下能证的都证了 —— 签名、请求受理、表单构造、整条页内管线直到**服务端业务校验**。一笔**被受理的成功保存**被卡在封面/建稿环节（M2）。`save=0`-免封面 的原始假设不成立。
+
+**下一步（M2 Task 0 capture）**：扩展 `spike_toutiao_publish_capture.py` —— 记录**响应体** + 编辑器加载时的**全部 mp.toutiao.com 请求**，定位建稿/取 pgc_id 调用并确认封面是否为保存必需。
+
 ## 7. 组件与文件布局（新增）
 
 - `drivers/adapters/toutiao.js` —— 头条页内适配器。
@@ -176,7 +192,8 @@ worker 抢占记录 → 构建 `PublishPayload` → runner 启动浏览器、导
 
 待确认项：
 
-- ~~Spike 结论（页内 fetch 是否自动签名）→ 决定纯适配器 vs 混合。~~ **已解决（2026-06-02）**：签名为全局 hook 统一附加，B-direct 成立；发布契约见 §6「Spike 结论 · phase 2」。残留的「重建 fetch 取全 token」落为实现 Task 1。
+- ~~Spike 结论（页内 fetch 是否自动签名）→ 决定纯适配器 vs 混合。~~ **已彻底解决（2026-06-02 live 验证）**：页内 XHR 被全局 hook 自动签名且被服务端受理（见 §6「Spike 结论 · phase 3」）。B-direct 成立。
+- **新残留（→ M2）：`save=0` 草稿被 `code=7050 保存失败` 拒绝**（补齐完整字段集仍旧）。主假设为缺封面 / 缺建稿前置调用。M2 Task 0 先扩展 capture 抓响应 + 编辑器加载链路定位根因。
 - 现有 manual-confirm 机制细节（规划阶段核实）。
 - `@wechatsync/drivers/toutiao` 具体文件许可证（照抄任何字面代码前确认；当前按只参考不照抄处理）。
 
