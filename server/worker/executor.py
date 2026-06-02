@@ -21,6 +21,12 @@ from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
 import server.app.modules.image_library.models  # noqa: F401  # 确保 StockCategory 注册到 mapper registry（Article.stock_category 关系依赖它）
+
+# Import all drivers to trigger registration. The worker runs as a SEPARATE
+# process from the web app, so it must register drivers itself — both the default
+# DOM driver and the in-page variant (so GEO_TOUTIAO_DRIVER=inpage works here).
+import server.app.modules.tasks.drivers.toutiao  # noqa: F401
+import server.app.modules.tasks.drivers.toutiao_inpage  # noqa: F401
 from server.app.core.time import utcnow
 from server.app.db.session import SessionLocal
 from server.app.modules.accounts import process_account_login_session_requests
@@ -249,9 +255,6 @@ def _check_stuck_tasks(db) -> None:
 def main() -> None:
     # Register as GEO_WORKER_ID so browser_sessions.py can tag DB rows
     os.environ["GEO_WORKER_ID"] = WORKER_ID
-
-    # Import all drivers to trigger registration
-    import server.app.modules.tasks.drivers.toutiao  # noqa: F401
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
