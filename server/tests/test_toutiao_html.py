@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 from server.app.modules.articles.parser import BodySegment
 from server.app.modules.tasks.drivers.toutiao_html import (
+    ImageRef,
     ToutiaoBodyError,
     body_segments_to_toutiao_html,
 )
@@ -13,9 +16,9 @@ def test_plain_paragraphs():
         BodySegment(kind="text", text="\n"),
         BodySegment(kind="text", text="第二段"),
     ]
-    assert body_segments_to_toutiao_html(segs) == (
-        '<p data-track="1">第一段</p><p data-track="2">第二段</p>'
-    )
+    html, image_order = body_segments_to_toutiao_html(segs)
+    assert html == '<p data-track="1">第一段</p><p data-track="2">第二段</p>'
+    assert image_order == []
 
 
 def test_bold_run_wrapped_in_strong():
@@ -23,19 +26,23 @@ def test_bold_run_wrapped_in_strong():
         BodySegment(kind="text", text="普通"),
         BodySegment(kind="text", text="加粗", bold=True),
     ]
-    assert body_segments_to_toutiao_html(segs) == (
-        '<p data-track="1">普通<strong>加粗</strong></p>'
-    )
+    html, image_order = body_segments_to_toutiao_html(segs)
+    assert html == '<p data-track="1">普通<strong>加粗</strong></p>'
+    assert image_order == []
 
 
 def test_heading_becomes_bold_paragraph():
     segs = [BodySegment(kind="text", text="小标题", heading_level=1)]
-    assert body_segments_to_toutiao_html(segs) == ('<p data-track="1"><strong>小标题</strong></p>')
+    html, image_order = body_segments_to_toutiao_html(segs)
+    assert html == '<p data-track="1"><strong>小标题</strong></p>'
+    assert image_order == []
 
 
 def test_html_special_chars_escaped():
     segs = [BodySegment(kind="text", text="a<b>&c")]
-    assert body_segments_to_toutiao_html(segs) == ('<p data-track="1">a&lt;b&gt;&amp;c</p>')
+    html, image_order = body_segments_to_toutiao_html(segs)
+    assert html == '<p data-track="1">a&lt;b&gt;&amp;c</p>'
+    assert image_order == []
 
 
 def test_empty_body_raises():
@@ -43,6 +50,49 @@ def test_empty_body_raises():
         body_segments_to_toutiao_html([])
 
 
-def test_image_segment_raises_in_m1():
-    with pytest.raises(ToutiaoBodyError):
-        body_segments_to_toutiao_html([BodySegment(kind="image", image_asset_id="a1")])
+def test_image_between_text_emits_placeholder_paragraph():
+    segs = [
+        BodySegment(kind="text", text="a"),
+        BodySegment(kind="image", image_asset_id="x", image_path=Path("x.png")),
+        BodySegment(kind="text", text="b"),
+    ]
+    html, image_order = body_segments_to_toutiao_html(segs)
+    assert html == (
+        '<p data-track="1">a</p><p data-track="2">__GEO_IMG_0__</p><p data-track="3">b</p>'
+    )
+    assert image_order == [
+        ImageRef(token="__GEO_IMG_0__", image_path=Path("x.png"), image_asset_id="x")
+    ]
+    assert image_order[0].image_asset_id == "x"
+    assert image_order[0].image_path == Path("x.png")
+
+
+def test_two_images_tokens_in_order():
+    segs = [
+        BodySegment(kind="image", image_asset_id="x", image_path=Path("x.png")),
+        BodySegment(kind="text", text="middle"),
+        BodySegment(kind="image", stock_image_id=42, image_path=Path("y.png")),
+    ]
+    html, image_order = body_segments_to_toutiao_html(segs)
+    assert html == (
+        '<p data-track="1">__GEO_IMG_0__</p>'
+        '<p data-track="2">middle</p>'
+        '<p data-track="3">__GEO_IMG_1__</p>'
+    )
+    assert [ref.token for ref in image_order] == ["__GEO_IMG_0__", "__GEO_IMG_1__"]
+    assert image_order[0].image_asset_id == "x"
+    assert image_order[1].stock_image_id == 42
+
+
+def test_image_only_article_does_not_raise():
+    segs = [BodySegment(kind="image", image_asset_id="solo", image_path=Path("solo.png"))]
+    html, image_order = body_segments_to_toutiao_html(segs)
+    assert html == '<p data-track="1">__GEO_IMG_0__</p>'
+    assert image_order == [
+        ImageRef(token="__GEO_IMG_0__", image_path=Path("solo.png"), image_asset_id="solo")
+    ]
+
+
+def test_zero_text_and_zero_images_raises():
+    with pytest.raises(ToutiaoBodyError, match="正文为空"):
+        body_segments_to_toutiao_html([BodySegment(kind="text", text="\n")])
