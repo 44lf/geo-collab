@@ -49,8 +49,9 @@ def _seed(app):
         db.add(tpl)
         db.flush()
         tpl_id = tpl.id
+        pool_id = pool.id
         db.commit()
-    return pool.id, ids, uid, tpl_id
+    return pool_id, ids, uid, tpl_id
 
 
 def _create_scheme(app, pool_id, lines, uid) -> int:
