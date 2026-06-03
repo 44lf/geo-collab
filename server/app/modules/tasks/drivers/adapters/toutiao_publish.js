@@ -48,7 +48,11 @@ async (arg) => {
   async function uploadOne(item) {
     const blob = b64ToBlob(item.b64, item.mime);
     const fd = new FormData();
-    fd.append("file", blob);
+    // Append with a real filename + image extension. A bare Blob makes the
+    // browser send filename="blob" (no extension), which Toutiao's
+    // upload_picture rejects as 无效图片数据 (response width/height 0, mime_type "").
+    const ext = item.mime === "image/png" ? "png" : "jpg";
+    fd.append("file", blob, "image." + ext);
     // Do NOT set content-type for multipart: the browser sets the boundary.
     const res = await xhrPost(arg.uploadUrl, fd, null);
     let json = null;
