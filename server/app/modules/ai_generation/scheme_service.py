@@ -84,6 +84,14 @@ def question_types(db: Session, pool_id: int) -> list[tuple[str | None, list[Que
 # ── 校验 ───────────────────────────────────────────────────────────────────────
 
 
+def _norm_engine(value: str | None) -> str | None:
+    """AI 引擎 model 字符串归一：空 / 纯空白 → None（运行时用系统默认模型）。"""
+    if value is None:
+        return None
+    v = value.strip()
+    return v or None
+
+
 def _validate_template_ids(db: Session, *, template_ids: list[int], user_id: int) -> None:
     if not template_ids:
         raise ValidationError("每个问题类型至少要选一个提示词模板")
@@ -169,6 +177,7 @@ def create_scheme(
         pool_id=pool_id,
         name=payload.name.strip(),
         is_enabled=payload.is_enabled,
+        ai_engine=_norm_engine(payload.ai_engine),
     )
     db.add(scheme)
     db.flush()
@@ -200,6 +209,7 @@ def update_scheme(
         )
     scheme.name = payload.name.strip()
     scheme.is_enabled = payload.is_enabled
+    scheme.ai_engine = _norm_engine(payload.ai_engine)
     db.flush()
     for line, items in validated:
         _build_line(db, scheme_id=scheme.id, line=line, items=items)

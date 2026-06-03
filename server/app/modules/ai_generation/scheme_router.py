@@ -24,11 +24,14 @@ from server.app.modules.ai_generation.models import (
     GenerationSchemeRunTask,
 )
 from server.app.modules.ai_generation.schemas import (
+    AiEngineRead,
     SchemeCreate,
     SchemeLineQuestionRead,
     SchemeLineRead,
+    SchemePatch,
     SchemeRead,
     SchemeRunRead,
+    SchemeRunSummary,
     SchemeRunTaskRead,
     SchemeUpdate,
 )
@@ -76,10 +79,21 @@ def _scheme_to_read(db: Session, scheme: GenerationScheme) -> SchemeRead:
         name=scheme.name,
         pool_id=scheme.pool_id,
         is_enabled=scheme.is_enabled,
+        ai_engine=scheme.ai_engine,
         created_at=scheme.created_at,
         updated_at=scheme.updated_at,
         lines=line_reads,
     )
+
+
+@scheme_router.get("/ai-engines", response_model=list[AiEngineRead])
+def list_ai_engines(
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """方案可选的 AI 引擎列表（来自 settings.ai_engines，给方案编辑器下拉用）。"""
+    from server.app.core.config import get_settings
+
+    return [AiEngineRead(**e) for e in get_settings().ai_engines]
 
 
 @scheme_router.get("/schemes", response_model=list[SchemeRead])
@@ -143,6 +157,32 @@ def update_scheme(
         target_type="generation_scheme",
         target_id=scheme.id,
         payload={"name": scheme.name, "lines": len(payload.lines)},
+        request=request,
+    )
+    return _scheme_to_read(db, scheme)
+
+
+@scheme_router.patch("/schemes/{scheme_id}", response_model=SchemeRead)
+def patch_scheme(
+    scheme_id: int,
+    payload: SchemePatch,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """轻量更新（目前仅启用状态），不重建问题行。"""
+    scheme = _get_owned_scheme(db, scheme_id, current_user)
+    if payload.is_enabled is not None:
+        scheme.is_enabled = payload.is_enabled
+    db.commit()
+    db.refresh(scheme)
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="generation_scheme.patch",
+        target_type="generation_scheme",
+        target_id=scheme.id,
+        payload={"is_enabled": scheme.is_enabled},
         request=request,
     )
     return _scheme_to_read(db, scheme)
@@ -232,6 +272,46 @@ def create_scheme_run(
         threading.Thread(target=_run, daemon=True).start()
 
     return JSONResponse(content={"run_id": run_id, "status": "pending"}, status_code=202)
+
+
+@scheme_router.get("/schemes/{scheme_id}/runs", response_model=list[SchemeRunSummary])
+def list_scheme_runs(
+    scheme_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """某方案的历次运行（精简，倒序），供运行历史切换器使用。"""
+    from sqlalchemy import func
+
+    scheme = _get_owned_scheme(db, scheme_id, current_user)
+    runs = (
+        db.query(GenerationSchemeRun)
+        .filter(GenerationSchemeRun.scheme_id == scheme.id)
+        .order_by(GenerationSchemeRun.created_at.desc(), GenerationSchemeRun.id.desc())
+        .limit(50)
+        .all()
+    )
+    run_ids = [r.id for r in runs]
+    task_counts: dict[int, int] = {}
+    if run_ids:
+        rows = (
+            db.query(GenerationSchemeRunTask.run_id, func.count())
+            .filter(GenerationSchemeRunTask.run_id.in_(run_ids))
+            .group_by(GenerationSchemeRunTask.run_id)
+            .all()
+        )
+        task_counts = {rid: cnt for rid, cnt in rows}
+    return [
+        SchemeRunSummary(
+            id=r.id,
+            status=r.status,
+            article_count=len(r.article_ids or []),
+            task_count=task_counts.get(r.id, 0),
+            created_at=r.created_at,
+            completed_at=r.completed_at,
+        )
+        for r in runs
+    ]
 
 
 @scheme_router.get("/scheme-runs/{run_id}", response_model=SchemeRunRead)

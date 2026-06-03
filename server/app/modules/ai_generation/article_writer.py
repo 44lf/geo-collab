@@ -38,10 +38,12 @@ def generate_article_from_prompt(
     user_id: int,
     template_content: str,
     question_text: str,
+    model: str | None = None,
 ) -> int:
     """组 prompt → LLM → 取标题 → 转 Tiptap/HTML → create_article。返回 article_id。
 
-    通用系统提示词（不拼 Skill）。异常向上抛（由调用方记 task 失败）。每次调用自带独立 session。
+    通用系统提示词（不拼 Skill）。`model` 为方案级 AI 引擎覆盖（None / 空 = 用 settings.ai_model）。
+    异常向上抛（由调用方记 task 失败）。每次调用自带独立 session。
     """
     import litellm
 
@@ -58,7 +60,7 @@ def generate_article_from_prompt(
         + "\n\n请开始写作（只输出 Markdown 正文，含 # 一级标题，不要解释）："
     )
     response = litellm.completion(
-        model=settings.ai_model,
+        model=(model or "").strip() or settings.ai_model,
         messages=[
             {"role": "system", "content": _GENERIC_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},

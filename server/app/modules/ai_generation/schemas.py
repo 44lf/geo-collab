@@ -86,17 +86,33 @@ class SchemeLineInput(BaseModel):
     allowed_prompt_template_ids: list[int] = []
 
 
+class AiEngineRead(BaseModel):
+    """方案可选的 AI 引擎（来自 settings.ai_engines）。model 为空 = 系统默认写作模型。"""
+
+    label: str
+    model: str
+
+
 class SchemeCreate(BaseModel):
     name: str
     pool_id: int
     is_enabled: bool = True
+    # litellm model 字符串；None / 空 = 用系统默认 GEO_AI_MODEL
+    ai_engine: str | None = None
     lines: list[SchemeLineInput] = []
 
 
 class SchemeUpdate(BaseModel):
     name: str
     is_enabled: bool = True
+    ai_engine: str | None = None
     lines: list[SchemeLineInput] = []
+
+
+class SchemePatch(BaseModel):
+    """轻量补丁：只改启用状态，不触碰问题行（避免简单开关触发整方案重新校验）。"""
+
+    is_enabled: bool | None = None
 
 
 class SchemeLineQuestionRead(BaseModel):
@@ -121,6 +137,7 @@ class SchemeRead(BaseModel):
     name: str
     pool_id: int
     is_enabled: bool
+    ai_engine: str | None
     created_at: datetime
     updated_at: datetime
     lines: list[SchemeLineRead]
@@ -153,6 +170,17 @@ class SchemeRunRead(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     tasks: list[SchemeRunTaskRead]
+
+
+class SchemeRunSummary(BaseModel):
+    """运行历史切换器用的精简运行记录（不含逐篇明细）。"""
+
+    id: int
+    status: str
+    article_count: int
+    task_count: int
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class GenerationSessionRead(BaseModel):

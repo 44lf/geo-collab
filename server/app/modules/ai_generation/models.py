@@ -132,6 +132,9 @@ class GenerationScheme(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     pool_id: Mapped[int] = mapped_column(ForeignKey("question_pools.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
+    # 方案级 AI 引擎（litellm model 字符串；None / 空 = 用系统默认 GEO_AI_MODEL）。
+    # 为后续接入更多写作模型留接口，可选列表由 settings.ai_engines 暴露。
+    ai_engine: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -190,6 +193,8 @@ class GenerationSchemeRun(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     article_ids: Mapped[list] = mapped_column(JSON, default=list)
+    # 运行时从方案快照的 AI 引擎（运行期不变；None / 空 = 系统默认模型）
+    ai_engine: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

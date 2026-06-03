@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     # AI 生文（LangGraph 写作 Agent）—— 保持 Claude
     ai_model: str = "claude-3-5-sonnet-20241022"  # GEO_AI_MODEL
     ai_api_key: str = ""  # GEO_AI_API_KEY
+    # 方案级可选 AI 引擎列表（为后续接入更多写作模型留接口）。
+    # 每项 {"label": 展示名, "model": litellm model 字符串}；model 为空 = 用 ai_model 默认。
+    # 通过 GEO_AI_ENGINES 传 JSON 覆盖，例如：
+    #   [{"label":"默认写作模型","model":""},{"label":"DeepSeek","model":"deepseek/deepseek-chat"}]
+    ai_engines: list[dict[str, str]] = [{"label": "默认写作模型", "model": ""}]  # GEO_AI_ENGINES
 
     # AI 格式调整（标题识别 / 未来配图配链接）—— 独立模型，降低成本
     ai_format_model: str = "deepseek/deepseek-v4-flash"  # GEO_AI_FORMAT_MODEL

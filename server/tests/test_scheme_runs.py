@@ -54,13 +54,16 @@ def _seed(app):
     return pool_id, ids, uid, tpl_id
 
 
-def _create_scheme(app, pool_id, lines, uid) -> int:
+def _create_scheme(app, pool_id, lines, uid, ai_engine=None) -> int:
     from server.app.modules.ai_generation.schemas import SchemeCreate, SchemeLineInput
     from server.app.modules.ai_generation.scheme_service import create_scheme
 
     with app.session_factory() as db:
         payload = SchemeCreate(
-            name="s", pool_id=pool_id, lines=[SchemeLineInput(**ln) for ln in lines]
+            name="s",
+            pool_id=pool_id,
+            ai_engine=ai_engine,
+            lines=[SchemeLineInput(**ln) for ln in lines],
         )
         scheme = create_scheme(db, user_id=uid, pool_id=pool_id, payload=payload)
         db.commit()
@@ -125,6 +128,37 @@ def test_run_scheme_expands_by_article_count_and_records_template(monkeypatch):
             a_task = next(t for t in tasks if t.question_type == "A")
             assert "1. 问题a1" in a_task.question_text
             assert "2. 问题a2" in a_task.question_text
+    finally:
+        app.cleanup()
+
+
+def test_run_scheme_passes_ai_engine_model_to_llm(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        pool_id, ids, uid, tpl = _seed(app)
+        scheme_id = _create_scheme(
+            app,
+            pool_id,
+            [
+                {
+                    "question_type": "A",
+                    "question_item_ids": [ids["a1"]],
+                    "article_count": 1,
+                    "allowed_prompt_template_ids": [tpl],
+                }
+            ],
+            uid,
+            ai_engine="deepseek/deepseek-chat",
+        )
+        seen: dict[str, str] = {}
+
+        def _cap(**kw):
+            seen["model"] = kw.get("model")
+            return _fake_completion("# T\n\nx")
+
+        monkeypatch.setattr("litellm.completion", _cap)
+        _run_now(app, scheme_id, uid)
+        assert seen.get("model") == "deepseek/deepseek-chat"
     finally:
         app.cleanup()
 

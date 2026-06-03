@@ -299,6 +299,74 @@ def test_update_scheme_replaces_lines_and_snapshots(monkeypatch):
         app.cleanup()
 
 
+# ── AI 引擎字段 ────────────────────────────────────────────────────────────────
+
+
+def test_ai_engines_endpoint_returns_configured_list(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        r = app.client.get("/api/generation/ai-engines")
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert isinstance(data, list) and len(data) >= 1
+        assert "label" in data[0] and "model" in data[0]
+    finally:
+        app.cleanup()
+
+
+def test_create_scheme_ai_engine_round_trips_and_normalizes(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        pool_id, items, uid = _seed_pool_with_types(app)
+        tpls = _seed_templates(app, uid)
+        line = {
+            "question_type": "A",
+            "question_item_ids": [items["a1"]],
+            "article_count": 1,
+            "allowed_prompt_template_ids": [tpls["good"]],
+        }
+        # 显式引擎 → 原样保存
+        r = app.client.post(
+            "/api/generation/schemes",
+            json={
+                "name": "s",
+                "pool_id": pool_id,
+                "ai_engine": "deepseek/deepseek-chat",
+                "lines": [line],
+            },
+        )
+        assert r.status_code == 201, r.text
+        sid = r.json()["id"]
+        assert r.json()["ai_engine"] == "deepseek/deepseek-chat"
+        assert app.client.get(f"/api/generation/schemes/{sid}").json()["ai_engine"] == (
+            "deepseek/deepseek-chat"
+        )
+
+        # 空白引擎 → 归一为 None（用系统默认模型）
+        r2 = app.client.post(
+            "/api/generation/schemes",
+            json={"name": "s2", "pool_id": pool_id, "ai_engine": "  ", "lines": [line]},
+        )
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["ai_engine"] is None
+
+        # 不传 ai_engine → None
+        r3 = app.client.post(
+            "/api/generation/schemes",
+            json={"name": "s3", "pool_id": pool_id, "lines": [line]},
+        )
+        assert r3.json()["ai_engine"] is None
+
+        # 更新可改引擎
+        r4 = app.client.put(
+            f"/api/generation/schemes/{sid}",
+            json={"name": "s", "ai_engine": "gpt-4o", "lines": [line]},
+        )
+        assert r4.json()["ai_engine"] == "gpt-4o"
+    finally:
+        app.cleanup()
+
+
 def test_delete_scheme_soft(monkeypatch):
     app = build_test_app(monkeypatch)
     try:

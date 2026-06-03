@@ -45,7 +45,11 @@ def _render_questions(questions: list[Any]) -> str:
 def create_run(db: Any, *, scheme: GenerationScheme, user_id: int) -> GenerationSchemeRun:
     """按方案行展开 run tasks（每行 article_count 条）。使用方案快照，不读问题池最新文本。"""
     run = GenerationSchemeRun(
-        scheme_id=scheme.id, user_id=user_id, status="pending", article_ids=[]
+        scheme_id=scheme.id,
+        user_id=user_id,
+        status="pending",
+        article_ids=[],
+        ai_engine=scheme.ai_engine,
     )
     db.add(run)
     db.flush()
@@ -96,8 +100,16 @@ def _fail_task(db: Any, task_id: int, message: str) -> None:
     db.commit()
 
 
-def _execute_task(task_id: int, user_id: int, session_factory: SessionFactory) -> int | None:
-    """执行一条 task：选模板 → 生文 → 写结果。返回 article_id 或 None（失败）。"""
+def _execute_task(
+    task_id: int,
+    user_id: int,
+    session_factory: SessionFactory,
+    model_override: str | None = None,
+) -> int | None:
+    """执行一条 task：选模板 → 生文 → 写结果。返回 article_id 或 None（失败）。
+
+    model_override 为方案级 AI 引擎（None / 空 = 用系统默认写作模型）。
+    """
     db = session_factory()
     try:
         task = db.get(GenerationSchemeRunTask, task_id)
@@ -135,6 +147,7 @@ def _execute_task(task_id: int, user_id: int, session_factory: SessionFactory) -
             user_id=user_id,
             template_content=template_content,
             question_text=question_text,
+            model=model_override,
         )
     except Exception as exc:  # noqa: BLE001 — 单 task 失败隔离
         logger.exception("scheme run task %s generation failed", task_id)
@@ -167,6 +180,7 @@ def run_scheme(run_id: int, session_factory: SessionFactory) -> None:
             return
         run.status = "running"
         user_id = run.user_id
+        model_override = run.ai_engine
         task_ids = [
             t.id
             for t in db.query(GenerationSchemeRunTask)
@@ -181,7 +195,7 @@ def run_scheme(run_id: int, session_factory: SessionFactory) -> None:
     if task_ids:
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {
-                executor.submit(_execute_task, tid, user_id, session_factory): tid
+                executor.submit(_execute_task, tid, user_id, session_factory, model_override): tid
                 for tid in task_ids
             }
             for future in as_completed(futures):
