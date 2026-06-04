@@ -24,7 +24,10 @@ def test_auto_format_article_sets_lock_and_passes_all_buckets(monkeypatch):
                 "content_json": {
                     "type": "doc",
                     "content": [
-                        {"type": "paragraph", "content": [{"type": "text", "text": "原神是一款开放世界游戏。"}]}
+                        {
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": "原神是一款开放世界游戏。"}],
+                        }
                     ],
                 },
             },

@@ -699,8 +699,14 @@ def test_run_ai_format_uses_candidate_categories_when_article_has_none(monkeypat
             {
                 "type": "doc",
                 "content": [
-                    {"type": "paragraph", "content": [{"type": "text", "text": "王者荣耀是一款 MOBA 手游。"}]},
-                    {"type": "paragraph", "content": [{"type": "text", "text": "它有上百名英雄。"}]},
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "王者荣耀是一款 MOBA 手游。"}],
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "它有上百名英雄。"}],
+                    },
                 ],
             },
         )
@@ -724,10 +730,9 @@ def test_run_ai_format_uses_candidate_categories_when_article_has_none(monkeypat
         monkeypatch.setattr(
             aif,
             "insert_images_at_positions",
-            lambda content_json, refs, positions: inserted.update(
-                {"refs": refs, "positions": positions}
-            )
-            or content_json,
+            lambda content_json, refs, positions: (
+                inserted.update({"refs": refs, "positions": positions}) or content_json
+            ),
         )
 
         candidate = [{"id": 777, "name": "王者荣耀", "description": "MOBA"}]
