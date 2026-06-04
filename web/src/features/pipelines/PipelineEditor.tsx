@@ -1,5 +1,5 @@
 // web/src/features/pipelines/PipelineEditor.tsx
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   discardDraft, getNodeTypes, getPipeline, getRun, publishPipeline, saveDraft, startRun,
 } from "../../api/pipelines";
@@ -16,6 +16,7 @@ export function PipelineEditor({ pipelineId, onChanged }:
   const [selected, setSelected] = useState<number | null>(null);
   const [showVersions, setShowVersions] = useState(false);
   const [runStatus, setRunStatus] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     const p: Pipeline = await getPipeline(pipelineId);
@@ -26,6 +27,17 @@ export function PipelineEditor({ pipelineId, onChanged }:
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { getNodeTypes().then((r) => setNodeTypes(r.node_types)).catch(() => {}); }, []);
+
+  // Stop polling and reset run status when switching pipelines.
+  useEffect(() => {
+    if (pollRef.current != null) { clearInterval(pollRef.current); pollRef.current = null; }
+    setRunStatus(null);
+  }, [pipelineId]);
+
+  // Clear any pending poll on unmount.
+  useEffect(() => () => {
+    if (pollRef.current != null) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
 
   const reindex = (list: PipelineNodeDef[]) => list.map((n, i) => ({ ...n, node_index: i }));
 
@@ -51,7 +63,18 @@ export function PipelineEditor({ pipelineId, onChanged }:
   const updateNode = (i: number, patch: Partial<PipelineNodeDef>) =>
     setNodes(nodes.map((n, idx) => (idx === i ? { ...n, ...patch } : n)));
 
-  const snapshot = useMemo(() => ({ schemaVersion: 1, nodes }), [nodes]);
+  // Serialize nodes for save/publish. Empty (whitespace-only field) conditions are
+  // emitted as null instead of persisting {field:"",op:"eq",value:""}. Does not mutate state.
+  const snapshot = useMemo(() => ({
+    schemaVersion: 1,
+    nodes: nodes.map((n) => {
+      if (n.flow_meta == null) return n;
+      if (n.flow_meta.condition && !n.flow_meta.condition.field.trim()) {
+        return { ...n, flow_meta: { ...n.flow_meta, condition: null } };
+      }
+      return n;
+    }),
+  }), [nodes]);
 
   const onSaveDraft = async () => {
     await saveDraft(pipelineId, snapshot); setHasDraft(true); onChanged();
@@ -70,10 +93,13 @@ export function PipelineEditor({ pipelineId, onChanged }:
     try {
       const { run_id } = await startRun(pipelineId);
       setRunStatus("running");
-      const poll = setInterval(async () => {
+      if (pollRef.current != null) { clearInterval(pollRef.current); pollRef.current = null; }
+      pollRef.current = setInterval(async () => {
         const r = await getRun(run_id);
         setRunStatus(`${r.status}（文章 ${r.article_ids.length} 篇）`);
-        if (["done", "failed", "partial_failed"].includes(r.status)) clearInterval(poll);
+        if (["done", "failed", "partial_failed"].includes(r.status)) {
+          if (pollRef.current != null) { clearInterval(pollRef.current); pollRef.current = null; }
+        }
       }, 1500);
     } catch (e) {
       toast(e instanceof Error ? e.message : "运行失败", "error");

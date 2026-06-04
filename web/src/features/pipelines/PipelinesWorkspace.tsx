@@ -24,16 +24,24 @@ export function PipelinesWorkspace() {
   const onCreate = async () => {
     const name = window.prompt("工作流名称");
     if (!name) return;
-    const p = await createPipeline({ name });
-    await reload();
-    setSelectedId(p.id);
+    try {
+      const p = await createPipeline({ name });
+      await reload();
+      setSelectedId(p.id);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "操作失败", "error");
+    }
   };
 
   const onDelete = async (id: number) => {
     if (!window.confirm("确认删除该工作流？")) return;
-    await deletePipeline(id);
-    if (selectedId === id) setSelectedId(null);
-    reload();
+    try {
+      await deletePipeline(id);
+      if (selectedId === id) setSelectedId(null);
+      reload();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "操作失败", "error");
+    }
   };
 
   return (
