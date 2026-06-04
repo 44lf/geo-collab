@@ -70,3 +70,20 @@ def test_snapshot_round_trip_preserves_order_and_fields():
 def test_snapshot_to_node_dicts_handles_empty():
     assert snapshot_to_node_dicts(None) == []
     assert snapshot_to_node_dicts({}) == []
+
+
+import pytest
+from server.app.modules.pipelines.nodes import base as node_base
+from server.app.shared.errors import ValidationError
+
+
+def test_registry_register_and_get():
+    node_base.register("dummy", lambda ctx: node_base.NodeResult(output={"ok": 1}, article_ids=[]))
+    handler = node_base.get_handler("dummy")
+    res = handler(None)
+    assert res.output == {"ok": 1}
+
+
+def test_registry_unknown_type_raises():
+    with pytest.raises(ValidationError):
+        node_base.get_handler("nope-does-not-exist")
