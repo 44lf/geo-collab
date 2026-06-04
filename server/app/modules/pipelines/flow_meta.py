@@ -1,4 +1,5 @@
 """纯逻辑：节点间数据传递（inputMapping）与跳过条件（condition）。无 DB 依赖。"""
+
 from __future__ import annotations
 
 from typing import Any

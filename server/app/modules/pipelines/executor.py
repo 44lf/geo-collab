@@ -16,8 +16,11 @@ SessionFactory = Callable[[], Any]
 
 def create_run(db, *, pipeline_id: int, user_id: int) -> PipelineRun:
     run = PipelineRun(
-        pipeline_id=pipeline_id, user_id=user_id, status="pending",
-        node_results={}, article_ids=[],
+        pipeline_id=pipeline_id,
+        user_id=user_id,
+        status="pending",
+        node_results={},
+        article_ids=[],
     )
     db.add(run)
     db.flush()
@@ -41,15 +44,19 @@ def run_pipeline(run_id: int, session_factory: SessionFactory) -> None:
             .all()
         )
         node_specs = [
-            {"node_type": n.node_type, "node_index": n.node_index,
-             "config": n.config or {}, "flow_meta": n.flow_meta}
+            {
+                "node_type": n.node_type,
+                "node_index": n.node_index,
+                "config": n.config or {},
+                "flow_meta": n.flow_meta,
+            }
             for n in nodes
         ]
         db.commit()
     finally:
         db.close()
 
-    context: dict[int, dict] = {}      # node_index -> output
+    context: dict[int, dict] = {}  # node_index -> output
     node_results: dict[str, Any] = {}
     article_ids: list[int] = []
     had_success = False
@@ -71,10 +78,15 @@ def run_pipeline(run_id: int, session_factory: SessionFactory) -> None:
         inputs = apply_input_mapping(meta, upstream)
         try:
             handler = get_handler(spec["node_type"])
-            result = handler(NodeRunContext(
-                session_factory=session_factory, user_id=user_id,
-                config=spec["config"], inputs=inputs, upstream=upstream,
-            ))
+            result = handler(
+                NodeRunContext(
+                    session_factory=session_factory,
+                    user_id=user_id,
+                    config=spec["config"],
+                    inputs=inputs,
+                    upstream=upstream,
+                )
+            )
             context[idx] = result.output
             node_results[str(idx)] = result.output
             article_ids.extend(result.article_ids)

@@ -41,8 +41,13 @@ def _to_read(db: Session, p) -> dict:
     nodes = svc.list_nodes(db, p.id)
     data = PipelineRead.model_validate(p).model_dump()
     data["nodes"] = [
-        {"node_type": n.node_type, "name": n.name, "node_index": n.node_index,
-         "config": n.config or {}, "flow_meta": n.flow_meta}
+        {
+            "node_type": n.node_type,
+            "name": n.name,
+            "node_index": n.node_index,
+            "config": n.config or {},
+            "flow_meta": n.flow_meta,
+        }
         for n in nodes
     ]
     return data
@@ -53,14 +58,22 @@ def get_node_types() -> dict:
     # 节点 config 字段 schema，供前端属性面板渲染
     return {
         "node_types": [
-            {"type": "input", "label": "输入源",
-             "config_schema": [{"key": "question_text", "type": "textarea", "label": "问题/主题"}]},
-            {"type": "ai_generate", "label": "AI 生文",
-             "config_schema": [
-                 {"key": "prompt_template_id", "type": "prompt_template", "label": "提示词模板"},
-                 {"key": "count", "type": "number", "label": "生成数量"},
-                 {"key": "model", "type": "text", "label": "模型(可空)"},
-             ]},
+            {
+                "type": "input",
+                "label": "输入源",
+                "config_schema": [
+                    {"key": "question_text", "type": "textarea", "label": "问题/主题"}
+                ],
+            },
+            {
+                "type": "ai_generate",
+                "label": "AI 生文",
+                "config_schema": [
+                    {"key": "prompt_template_id", "type": "prompt_template", "label": "提示词模板"},
+                    {"key": "count", "type": "number", "label": "生成数量"},
+                    {"key": "model", "type": "text", "label": "模型(可空)"},
+                ],
+            },
         ],
         "registered": registered_types(),
     }
@@ -73,23 +86,29 @@ def list_pipelines(db: Session = Depends(get_db), user: User = Depends(get_curre
 
 
 @router.post("", status_code=201)
-def create_pipeline(payload: PipelineCreate, db: Session = Depends(get_db),
-                    user: User = Depends(get_current_user)):
+def create_pipeline(
+    payload: PipelineCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     p = svc.create_pipeline(db, user_id=user.id, name=payload.name, description=payload.description)
     db.commit()
     return _to_read(db, p)
 
 
 @router.get("/{pipeline_id}")
-def get_pipeline(pipeline_id: int, db: Session = Depends(get_db),
-                 user: User = Depends(get_current_user)):
+def get_pipeline(
+    pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     p = _owned(db, pipeline_id, user)
     return _to_read(db, p)
 
 
 @router.patch("/{pipeline_id}")
-def patch_pipeline(pipeline_id: int, payload: PipelinePatch, db: Session = Depends(get_db),
-                   user: User = Depends(get_current_user)):
+def patch_pipeline(
+    pipeline_id: int,
+    payload: PipelinePatch,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     p = _owned(db, pipeline_id, user)
     svc.patch_pipeline(db, p, name=payload.name, description=payload.description)
     db.commit()
@@ -97,16 +116,21 @@ def patch_pipeline(pipeline_id: int, payload: PipelinePatch, db: Session = Depen
 
 
 @router.delete("/{pipeline_id}", status_code=204)
-def delete_pipeline(pipeline_id: int, db: Session = Depends(get_db),
-                    user: User = Depends(get_current_user)):
+def delete_pipeline(
+    pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     p = _owned(db, pipeline_id, user)
     svc.delete_pipeline(db, p)
     db.commit()
 
 
 @router.post("/{pipeline_id}/draft")
-def save_draft(pipeline_id: int, payload: DraftSave, db: Session = Depends(get_db),
-               user: User = Depends(get_current_user)):
+def save_draft(
+    pipeline_id: int,
+    payload: DraftSave,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     p = _owned(db, pipeline_id, user)
     svc.save_draft(db, p, payload.snapshot)
     db.commit()
@@ -114,8 +138,12 @@ def save_draft(pipeline_id: int, payload: DraftSave, db: Session = Depends(get_d
 
 
 @router.post("/{pipeline_id}/publish")
-def publish(pipeline_id: int, payload: PublishRequest, db: Session = Depends(get_db),
-            user: User = Depends(get_current_user)):
+def publish(
+    pipeline_id: int,
+    payload: PublishRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     p = _owned(db, pipeline_id, user)
     version_no = svc.publish_draft(db, p, remark=payload.remark, user_id=user.id)
     db.commit()
@@ -123,8 +151,9 @@ def publish(pipeline_id: int, payload: PublishRequest, db: Session = Depends(get
 
 
 @router.post("/{pipeline_id}/draft/discard")
-def discard(pipeline_id: int, db: Session = Depends(get_db),
-            user: User = Depends(get_current_user)):
+def discard(
+    pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     p = _owned(db, pipeline_id, user)
     svc.discard_draft(db, p)
     db.commit()
@@ -132,8 +161,9 @@ def discard(pipeline_id: int, db: Session = Depends(get_db),
 
 
 @router.get("/{pipeline_id}/versions")
-def list_versions(pipeline_id: int, db: Session = Depends(get_db),
-                  user: User = Depends(get_current_user)):
+def list_versions(
+    pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     _owned(db, pipeline_id, user)
     out = []
     for v in svc.list_versions(db, pipeline_id):
@@ -144,8 +174,9 @@ def list_versions(pipeline_id: int, db: Session = Depends(get_db),
 
 
 @router.get("/versions/{version_id}")
-def get_version(version_id: int, db: Session = Depends(get_db),
-                user: User = Depends(get_current_user)):
+def get_version(
+    version_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     v = svc.get_version(db, version_id)
     if v is None:
         raise HTTPException(status_code=404, detail="版本不存在")
@@ -154,8 +185,9 @@ def get_version(version_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/versions/{version_id}/rollback")
-def rollback(version_id: int, db: Session = Depends(get_db),
-             user: User = Depends(get_current_user)):
+def rollback(
+    version_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     v = svc.get_version(db, version_id)
     if v is None:
         raise HTTPException(status_code=404, detail="版本不存在")
@@ -166,8 +198,9 @@ def rollback(version_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/{pipeline_id}/runs", status_code=202)
-def create_run(pipeline_id: int, db: Session = Depends(get_db),
-               user: User = Depends(get_current_user)) -> JSONResponse:
+def create_run(
+    pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> JSONResponse:
     from server.app.modules.pipelines.executor import create_run as _create_run
     from server.app.modules.pipelines.executor import run_pipeline
 
@@ -183,19 +216,25 @@ def create_run(pipeline_id: int, db: Session = Depends(get_db),
 
 
 @router.get("/{pipeline_id}/runs")
-def list_runs(pipeline_id: int, db: Session = Depends(get_db),
-              user: User = Depends(get_current_user)):
+def list_runs(
+    pipeline_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     from server.app.modules.pipelines.models import PipelineRun
+
     _owned(db, pipeline_id, user)
-    rows = (db.query(PipelineRun).filter(PipelineRun.pipeline_id == pipeline_id)
-            .order_by(PipelineRun.id.desc()).all())
+    rows = (
+        db.query(PipelineRun)
+        .filter(PipelineRun.pipeline_id == pipeline_id)
+        .order_by(PipelineRun.id.desc())
+        .all()
+    )
     return [RunRead.model_validate(r).model_dump() for r in rows]
 
 
 @router.get("/runs/{run_id}")
-def get_run(run_id: int, db: Session = Depends(get_db),
-            user: User = Depends(get_current_user)):
+def get_run(run_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     from server.app.modules.pipelines.models import PipelineRun
+
     r = db.get(PipelineRun, run_id)
     if r is None:
         raise HTTPException(status_code=404, detail="运行记录不存在")

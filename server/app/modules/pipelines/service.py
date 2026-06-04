@@ -42,7 +42,9 @@ def list_nodes(db: Session, pipeline_id: int) -> list[PipelineNode]:
     return list(db.execute(q).scalars().all())
 
 
-def patch_pipeline(db: Session, p: Pipeline, *, name: str | None, description: str | None) -> Pipeline:
+def patch_pipeline(
+    db: Session, p: Pipeline, *, name: str | None, description: str | None
+) -> Pipeline:
     if name is not None:
         if not name.strip():
             raise ValidationError("名称不能为空")
@@ -82,22 +84,29 @@ def publish_draft(db: Session, p: Pipeline, *, remark: str | None, user_id: int)
     # 重建 live 节点
     db.query(PipelineNode).filter(PipelineNode.pipeline_id == p.id).delete()
     for nd in node_dicts:
-        db.add(PipelineNode(
-            pipeline_id=p.id,
-            node_type=nd["node_type"],
-            name=nd["name"],
-            node_index=nd["node_index"],
-            config=nd.get("config") or {},
-            flow_meta=nd.get("flow_meta"),
-        ))
+        db.add(
+            PipelineNode(
+                pipeline_id=p.id,
+                node_type=nd["node_type"],
+                name=nd["name"],
+                node_index=nd["node_index"],
+                config=nd.get("config") or {},
+                flow_meta=nd.get("flow_meta"),
+            )
+        )
     db.flush()
     # 写版本快照（用 live 节点规范化）
     live = list_nodes(db, p.id)
     next_no = _next_version_no(db, p.id)
-    db.add(PipelineVersion(
-        pipeline_id=p.id, version_no=next_no,
-        snapshot=nodes_to_snapshot(live), remark=remark, created_by=user_id,
-    ))
+    db.add(
+        PipelineVersion(
+            pipeline_id=p.id,
+            version_no=next_no,
+            snapshot=nodes_to_snapshot(live),
+            remark=remark,
+            created_by=user_id,
+        )
+    )
     p.draft_snapshot = None
     p.has_draft = False
     db.flush()
@@ -105,9 +114,13 @@ def publish_draft(db: Session, p: Pipeline, *, remark: str | None, user_id: int)
 
 
 def _next_version_no(db: Session, pipeline_id: int) -> int:
-    rows = db.execute(
-        select(PipelineVersion.version_no).where(PipelineVersion.pipeline_id == pipeline_id)
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(PipelineVersion.version_no).where(PipelineVersion.pipeline_id == pipeline_id)
+        )
+        .scalars()
+        .all()
+    )
     return (max(rows) if rows else 0) + 1
 
 

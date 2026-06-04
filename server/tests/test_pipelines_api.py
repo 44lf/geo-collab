@@ -5,9 +5,14 @@ from server.tests.utils import build_test_app
 
 
 def _create_generation_template(client) -> int:
-    resp = client.post("/api/prompt-templates", json={
-        "name": "测试模板", "content": "写一篇关于：", "scope": "generation",
-    })
+    resp = client.post(
+        "/api/prompt-templates",
+        json={
+            "name": "测试模板",
+            "content": "写一篇关于：",
+            "scope": "generation",
+        },
+    )
     assert resp.status_code in (200, 201), resp.text
     return resp.json()["id"]
 
@@ -31,14 +36,28 @@ def test_pipeline_draft_publish_version_and_run(monkeypatch):
         assert r.json()["has_draft"] is False
 
         # 2) 存草稿：input -> ai_generate，inputMapping 传 question_text
-        snapshot = {"schemaVersion": 1, "nodes": [
-            {"node_type": "input", "name": "源", "node_index": 0,
-             "config": {"question_text": "如何养生"}, "flow_meta": None},
-            {"node_type": "ai_generate", "name": "生文", "node_index": 1,
-             "config": {"prompt_template_id": tpl_id, "count": 2},
-             "flow_meta": {"schemaVersion": 1,
-                           "inputMapping": [{"from": "question_text", "to": "question_text"}]}},
-        ]}
+        snapshot = {
+            "schemaVersion": 1,
+            "nodes": [
+                {
+                    "node_type": "input",
+                    "name": "源",
+                    "node_index": 0,
+                    "config": {"question_text": "如何养生"},
+                    "flow_meta": None,
+                },
+                {
+                    "node_type": "ai_generate",
+                    "name": "生文",
+                    "node_index": 1,
+                    "config": {"prompt_template_id": tpl_id, "count": 2},
+                    "flow_meta": {
+                        "schemaVersion": 1,
+                        "inputMapping": [{"from": "question_text", "to": "question_text"}],
+                    },
+                },
+            ],
+        }
         r = client.post(f"/api/pipelines/{pid}/draft", json={"snapshot": snapshot})
         assert r.status_code == 200, r.text
 
@@ -60,8 +79,10 @@ def test_pipeline_draft_publish_version_and_run(monkeypatch):
 
         # 5) 运行（测试内同步执行）
         from server.app.modules.pipelines.executor import create_run, run_pipeline
+
         with test_app.session_factory() as db:
             from server.app.modules.pipelines.models import Pipeline
+
             p = db.get(Pipeline, pid)
             run = create_run(db, pipeline_id=p.id, user_id=p.user_id)
             db.commit()
@@ -97,18 +118,33 @@ def test_pipeline_skip_condition(monkeypatch):
     try:
         tpl_id = _create_generation_template(client)
         pid = client.post("/api/pipelines", json={"name": "条件流程"}).json()["id"]
-        snapshot = {"schemaVersion": 1, "nodes": [
-            {"node_type": "input", "name": "源", "node_index": 0,
-             "config": {"question_text": "x"}, "flow_meta": None},
-            {"node_type": "ai_generate", "name": "生文", "node_index": 1,
-             "config": {"prompt_template_id": tpl_id, "count": 1},
-             "flow_meta": {"condition": {"field": "question_text", "op": "eq", "value": "不匹配"}}},
-        ]}
+        snapshot = {
+            "schemaVersion": 1,
+            "nodes": [
+                {
+                    "node_type": "input",
+                    "name": "源",
+                    "node_index": 0,
+                    "config": {"question_text": "x"},
+                    "flow_meta": None,
+                },
+                {
+                    "node_type": "ai_generate",
+                    "name": "生文",
+                    "node_index": 1,
+                    "config": {"prompt_template_id": tpl_id, "count": 1},
+                    "flow_meta": {
+                        "condition": {"field": "question_text", "op": "eq", "value": "不匹配"}
+                    },
+                },
+            ],
+        }
         client.post(f"/api/pipelines/{pid}/draft", json={"snapshot": snapshot})
         client.post(f"/api/pipelines/{pid}/publish", json={})
 
         from server.app.modules.pipelines.executor import create_run, run_pipeline
         from server.app.modules.pipelines.models import Pipeline
+
         with test_app.session_factory() as db:
             p = db.get(Pipeline, pid)
             run = create_run(db, pipeline_id=p.id, user_id=p.user_id)

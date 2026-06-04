@@ -58,8 +58,16 @@ class _FakeNode:
 def test_snapshot_round_trip_preserves_order_and_fields():
     nodes = [
         _FakeNode("input", "源", 0, {"question_text": "Q"}, None),
-        _FakeNode("ai_generate", "生文", 1, {"prompt_template_id": 5, "count": 2},
-                  {"schemaVersion": 1, "inputMapping": [{"from": "question_text", "to": "question_text"}]}),
+        _FakeNode(
+            "ai_generate",
+            "生文",
+            1,
+            {"prompt_template_id": 5, "count": 2},
+            {
+                "schemaVersion": 1,
+                "inputMapping": [{"from": "question_text", "to": "question_text"}],
+            },
+        ),
     ]
     snap = nodes_to_snapshot(nodes)
     assert snap["schemaVersion"] == 1
@@ -89,8 +97,13 @@ def test_registry_unknown_type_raises():
 
 
 def test_input_node_outputs_question_text():
-    ctx = NodeRunContext(session_factory=None, user_id=1,
-                         config={"question_text": "今天写什么"}, inputs={}, upstream={})
+    ctx = NodeRunContext(
+        session_factory=None,
+        user_id=1,
+        config={"question_text": "今天写什么"},
+        inputs={},
+        upstream={},
+    )
     res = run_input(ctx)
     assert res.output == {"question_text": "今天写什么"}
     assert res.article_ids == []

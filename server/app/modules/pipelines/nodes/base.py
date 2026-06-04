@@ -12,8 +12,8 @@ class NodeRunContext:
     session_factory: Callable[[], Any]
     user_id: int
     config: dict
-    inputs: dict           # 经 flow_meta inputMapping 注入
-    upstream: dict         # 上游累积 context（node_index -> output 的合并视图）
+    inputs: dict  # 经 flow_meta inputMapping 注入
+    upstream: dict  # 上游累积 context（node_index -> output 的合并视图）
 
 
 @dataclass

@@ -1,4 +1,5 @@
 """纯逻辑：pipeline_nodes <-> 快照 dict 互转。"""
+
 from __future__ import annotations
 
 from typing import Any
