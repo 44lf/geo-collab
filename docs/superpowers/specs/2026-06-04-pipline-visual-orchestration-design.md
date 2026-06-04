@@ -1,4 +1,8 @@
-# 可视化流程编排轻量增强 — 设计方案
+> ⚠️ **已作废 (SUPERSEDED 2026-06-04)**：本方案针对 `content-library-public` / `pc-admin-conetnt-library-public` 两个**参考项目**编写。后经确认这两个项目仅供架构参照、不可改动，实际改造落在 `geo-collab` 主仓库。请改看 `2026-06-04-geo-collab-pipeline-orchestration-design.md`。以下内容仅作架构参考保留。
+
+---
+
+# 可视化流程编排轻量增强 — 设计方案（已作废）
 
 - **日期**：2026-06-04
 - **聚焦模块**：可视化流程编排（pipLine / 智能体广场 / 工作流）

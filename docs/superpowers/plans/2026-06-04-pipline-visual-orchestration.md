@@ -1,4 +1,8 @@
-# 可视化流程编排轻量增强 Implementation Plan
+> ⚠️ **已作废 (SUPERSEDED 2026-06-04)**：本计划针对 `content-library-public` / `pc-admin-conetnt-library-public` 两个**参考项目**编写。这两个项目仅供架构参照、不可改动。实际改造落在 `geo-collab` 主仓库，见 `2026-06-04-geo-collab-pipeline-orchestration.md`。以下内容仅作参考保留，**不要执行**。
+
+---
+
+# 可视化流程编排轻量增强 Implementation Plan（已作废）
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
