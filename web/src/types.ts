@@ -1,7 +1,7 @@
-import { FileText, Images, MessagesSquare, MonitorCog, RadioTower, Send, Sparkles } from "lucide-react";
+import { FileText, Images, MessagesSquare, MonitorCog, RadioTower, Send, Sparkles, Workflow } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "admin" | "audit-logs";
+export type NavKey = "pipelines" | "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "admin" | "audit-logs";
 
 export type PromptScope = "generation" | "ai_format";
 
@@ -433,6 +433,7 @@ export function statusLabel(status: string): string {
 }
 
 export const navItems: { key: NavKey; label: string; icon: ComponentType<{ size?: number }> }[] = [
+  { key: "pipelines", label: "工作流编排", icon: Workflow },
   { key: "ai", label: "AI 生文", icon: Sparkles },
   { key: "content", label: "内容管理", icon: FileText },
   { key: "prompts", label: "提示词管理", icon: MessagesSquare },
