@@ -214,6 +214,32 @@ def run_scheme(run_id: int, session_factory: SessionFactory) -> None:
     _group_run_articles(run_id, session_factory)
 
 
+def recover_stuck_scheme_runs(db: Any) -> None:
+    """启动时复位崩溃残留的方案运行（running/pending → failed）。
+
+    与 pipeline run 对称：进程刚启动时没有 run 真正在执行，所有 running/pending 都是
+    上次崩溃的残留，直接置 failed（方案运行没有租约机制，故全量复位、不按阈值）。
+    """
+    from sqlalchemy import select
+
+    runs = list(
+        db.execute(
+            select(GenerationSchemeRun).where(
+                GenerationSchemeRun.status.in_(("running", "pending"))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for run in runs:
+        run.status = "failed"
+        run.error_message = "进程重启：运行在上次执行中意外中断"
+        run.completed_at = utcnow()
+    if runs:
+        logger.warning("Recovered %d stuck scheme runs: %s", len(runs), [r.id for r in runs])
+        db.commit()
+
+
 def _aggregate_run(run_id: int, session_factory: SessionFactory) -> None:
     db = session_factory()
     try:
