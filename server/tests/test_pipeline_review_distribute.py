@@ -254,11 +254,19 @@ def test_mark_pending_and_group_fallback_suffix_is_stable(monkeypatch):
         with test_app.session_factory() as db:
             uid = db.query(Article).first().user_id
         gid1 = mark_pending_and_group(
-            test_app.session_factory, article_ids=[a1], user_id=uid,
-            base_name="撞名组", fallback_suffix="#101")
+            test_app.session_factory,
+            article_ids=[a1],
+            user_id=uid,
+            base_name="撞名组",
+            fallback_suffix="#101",
+        )
         gid2 = mark_pending_and_group(
-            test_app.session_factory, article_ids=[a2], user_id=uid,
-            base_name="撞名组", fallback_suffix="#202")
+            test_app.session_factory,
+            article_ids=[a2],
+            user_id=uid,
+            base_name="撞名组",
+            fallback_suffix="#202",
+        )
         assert gid1 is not None and gid2 is not None and gid1 != gid2
         with test_app.session_factory() as db:
             names = {g.name for g in db.query(ArticleGroup).all()}
