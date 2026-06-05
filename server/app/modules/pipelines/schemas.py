@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 
 from pydantic import BaseModel, ConfigDict
 
@@ -8,11 +8,31 @@ from pydantic import BaseModel, ConfigDict
 class PipelineCreate(BaseModel):
     name: str
     description: str | None = None
+    type: str = "general"
+    tags: list[str] = []
+    ignore_exception: bool = False
+    is_enabled: bool = True
+    schedule_kind: str = "none"
+    schedule_minute: int | None = None
+    schedule_hour: int | None = None
+    schedule_weekday: int | None = None
+    window_start: time | None = None
+    window_end: time | None = None
 
 
 class PipelinePatch(BaseModel):
     name: str | None = None
     description: str | None = None
+    type: str | None = None
+    tags: list[str] | None = None
+    ignore_exception: bool | None = None
+    is_enabled: bool | None = None
+    schedule_kind: str | None = None
+    schedule_minute: int | None = None
+    schedule_hour: int | None = None
+    schedule_weekday: int | None = None
+    window_start: time | None = None
+    window_end: time | None = None
 
 
 class NodeRead(BaseModel):
@@ -28,6 +48,17 @@ class PipelineRead(BaseModel):
     name: str
     description: str | None
     has_draft: bool
+    type: str = "general"
+    tags: list[str] = []
+    ignore_exception: bool = False
+    is_enabled: bool = True
+    schedule_kind: str = "none"
+    schedule_minute: int | None = None
+    schedule_hour: int | None = None
+    schedule_weekday: int | None = None
+    window_start: time | None = None
+    window_end: time | None = None
+    last_scheduled_run_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     nodes: list[NodeRead] = []

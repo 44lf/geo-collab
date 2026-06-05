@@ -104,7 +104,22 @@ def list_pipelines(db: Session = Depends(get_db), user: User = Depends(get_curre
 def create_pipeline(
     payload: PipelineCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    p = svc.create_pipeline(db, user_id=user.id, name=payload.name, description=payload.description)
+    p = svc.create_pipeline(
+        db,
+        user_id=user.id,
+        name=payload.name,
+        description=payload.description,
+        type=payload.type,
+        tags=payload.tags,
+        ignore_exception=payload.ignore_exception,
+        is_enabled=payload.is_enabled,
+        schedule_kind=payload.schedule_kind,
+        schedule_minute=payload.schedule_minute,
+        schedule_hour=payload.schedule_hour,
+        schedule_weekday=payload.schedule_weekday,
+        window_start=payload.window_start,
+        window_end=payload.window_end,
+    )
     db.commit()
     return _to_read(db, p)
 
@@ -125,7 +140,7 @@ def patch_pipeline(
     user: User = Depends(get_current_user),
 ):
     p = _owned(db, pipeline_id, user)
-    svc.patch_pipeline(db, p, name=payload.name, description=payload.description)
+    svc.patch_pipeline(db, p, fields=payload.model_dump(exclude_unset=True))
     db.commit()
     return _to_read(db, p)
 

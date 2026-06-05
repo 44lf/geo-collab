@@ -51,6 +51,8 @@ def run_pipeline(run_id: int, session_factory: SessionFactory) -> None:
             return
         run.status = "running"
         pipeline_id, user_id = run.pipeline_id, run.user_id
+        pipeline = db.get(Pipeline, pipeline_id)
+        ignore_exception = bool(pipeline.ignore_exception) if pipeline is not None else False
         nodes = (
             db.query(PipelineNode)
             .filter(PipelineNode.pipeline_id == pipeline_id)
@@ -86,9 +88,10 @@ def run_pipeline(run_id: int, session_factory: SessionFactory) -> None:
         else:
             upstream = {k: v for out in context.values() for k, v in out.items()}
 
-        # 上游依赖失败 → 阻断本节点，避免拿空 upstream 静默回退 config 产生副作用
+        # 上游依赖失败 → 阻断本节点，避免拿空 upstream 静默回退 config 产生副作用。
+        # ignore_exception=True 时不阻断：允许"忽略异常、继续往下跑"（出错的下游自负其责）。
         dep = meta.get("dependsOnIndex") if meta else None
-        if dep is not None and dep in failed_indices:
+        if dep is not None and dep in failed_indices and not ignore_exception:
             node_results[str(idx)] = {"error": f"上游节点 #{dep} 失败，已中止本节点"}
             had_failure = True
             failed_indices.add(idx)
@@ -113,7 +116,6 @@ def run_pipeline(run_id: int, session_factory: SessionFactory) -> None:
             context[idx] = result.output
             node_results[str(idx)] = result.output
             article_ids.extend(result.article_ids)
-            # ai_generate 节点内单篇失败也算部分失败
             if result.output.get("errors"):
                 had_failure = True
             # had_success 仅在真正产出业务结果时置位：
