@@ -394,3 +394,61 @@ def test_last_due_slot_daily_before_time_wraps_prev_day():
 
 def test_last_due_slot_none_kind():
     assert last_due_slot("none", None, None, None, _local(2026, 6, 5, 9, 0)) is None
+
+
+# ---------------------------------------------------------------------------
+# DB tests: Task 6 (drift) + Task 7 (atomic claim)
+# ---------------------------------------------------------------------------
+from server.app.modules.system.models import User  # noqa: E402
+
+
+@pytest.mark.mysql
+def test_run_due_triggers_even_when_poll_minute_mismatch(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.pipelines import service as svc
+        from server.app.modules.pipelines.models import PipelineNode
+        from server.app.modules.pipelines import scheduler as sched
+
+        with app.session_factory() as db:
+            admin_id = db.query(User).filter_by(username="testadmin").first().id
+            p = svc.create_pipeline(db, user_id=admin_id, name="hourly", description=None,
+                                    schedule_kind="hourly", schedule_minute=30)
+            db.add(PipelineNode(pipeline_id=p.id, node_type="input", name="in",
+                                node_index=0, config={"question_text": "x"}, flow_meta=None))
+            db.commit()
+        monkeypatch.setattr(sched, "run_pipeline", lambda *a, **k: None)
+        now = _local(2026, 6, 5, 9, 47)  # schedule minute=30; poll at :47 — old impl would miss
+        assert sched.run_due_pipelines_once(app.session_factory, now=now) == 1
+        assert sched.run_due_pipelines_once(app.session_factory, now=now) == 0  # same slot deduped
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_claim_rolled_back_when_create_run_fails(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.pipelines import service as svc
+        from server.app.modules.pipelines.models import Pipeline, PipelineNode
+        from server.app.modules.pipelines import scheduler as sched
+
+        with app.session_factory() as db:
+            admin_id = db.query(User).filter_by(username="testadmin").first().id
+            p = svc.create_pipeline(db, user_id=admin_id, name="hourly", description=None,
+                                    schedule_kind="hourly", schedule_minute=30)
+            db.add(PipelineNode(pipeline_id=p.id, node_type="input", name="in",
+                                node_index=0, config={}, flow_meta=None))
+            db.commit()
+            pid = p.id
+
+        def _boom(*a, **k):
+            raise RuntimeError("simulated create_run failure")
+
+        monkeypatch.setattr(sched, "create_run", _boom)
+        now = _local(2026, 6, 5, 9, 47)
+        assert sched.run_due_pipelines_once(app.session_factory, now=now) == 0
+        with app.session_factory() as db:
+            assert db.get(Pipeline, pid).last_scheduled_run_at is None  # claim rolled back
+    finally:
+        app.cleanup()
