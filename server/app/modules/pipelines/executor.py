@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import logging
+import threading as _threading
 from collections.abc import Callable
 from typing import Any
 
+from server.app.core.config import get_settings as _get_settings
 from server.app.core.time import utcnow
+
+_RUN_SEMAPHORE = _threading.Semaphore(max(1, _get_settings().pipeline_max_concurrent_runs))
 from server.app.modules.articles.service import mark_pending_and_group
 from server.app.modules.pipelines.flow_meta import apply_input_mapping, should_skip
 from server.app.modules.pipelines.models import Pipeline, PipelineNode, PipelineRun
@@ -206,7 +210,8 @@ def _run_pipeline_inner(run_id: int, session_factory: SessionFactory) -> None:
 
 def run_pipeline(run_id: int, session_factory: SessionFactory) -> None:
     try:
-        _run_pipeline_inner(run_id, session_factory)
+        with _RUN_SEMAPHORE:
+            _run_pipeline_inner(run_id, session_factory)
     except Exception:
         logger.exception("pipeline run %s crashed at top level", run_id)
         db = session_factory()
