@@ -28,19 +28,24 @@ export function AgentLogsView({ pipelineId, onBack }:
   const [appliedStart, setAppliedStart] = useState("");
   const [appliedEnd, setAppliedEnd] = useState("");
 
+  // 智能体名只随 pipelineId 拉一次，不随翻页/筛选反复请求
+  useEffect(() => {
+    let alive = true;
+    getPipeline(pipelineId)
+      .then((a) => { if (alive) setAgent(a); })
+      .catch(() => { /* 标题非关键：失败静默，日志加载失败另有 toast */ });
+    return () => { alive = false; };
+  }, [pipelineId]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [a, r] = await Promise.all([
-        getPipeline(pipelineId),
-        listPipelineLogs(pipelineId, {
-          page,
-          pageSize,
-          startDate: appliedStart || undefined,
-          endDate: appliedEnd || undefined,
-        }),
-      ]);
-      setAgent(a);
+      const r = await listPipelineLogs(pipelineId, {
+        page,
+        pageSize,
+        startDate: appliedStart || undefined,
+        endDate: appliedEnd || undefined,
+      });
       setRows(r.items);
       setTotal(r.total);
     } catch (e) {
