@@ -71,6 +71,107 @@ def test_question_source_picks_type_and_active(monkeypatch):
         app.cleanup()
 
 
+@pytest.mark.mysql
+def test_question_source_empty_type_pulls_whole_pool(monkeypatch):
+    """空 question_type → 取整池所有 source_active 问题（不按类型过滤）。"""
+    from server.app.modules.pipelines.nodes.base import NodeRunContext
+    from server.app.modules.pipelines.nodes.question_source import run_question_source
+
+    app = build_test_app(monkeypatch)
+    try:
+        pool_id, uid = _make_pool_with_items(
+            app,
+            [
+                ("美食", "红烧肉", True),
+                ("旅游", "去哪玩", True),
+                (None, "没有分类的问题", True),
+                ("美食", "停用的", False),
+            ],
+        )
+        # question_type 缺省（"全部类型"）
+        ctx = NodeRunContext(
+            session_factory=app.session_factory,
+            user_id=uid,
+            config={"pool_id": pool_id},
+            inputs={},
+            upstream={},
+        )
+        res = run_question_source(ctx)
+        assert res.output["question_count"] == 3
+        for kw in ("红烧肉", "去哪玩", "没有分类的问题"):
+            assert kw in res.output["question_text"]
+        assert "停用" not in res.output["question_text"]
+        # 显式传空字符串等价于"全部类型"
+        ctx_blank = NodeRunContext(
+            session_factory=app.session_factory,
+            user_id=uid,
+            config={"pool_id": pool_id, "question_type": ""},
+            inputs={},
+            upstream={},
+        )
+        assert run_question_source(ctx_blank).output["question_count"] == 3
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_question_source_uncategorized_sentinel(monkeypatch):
+    """question_type == "__uncategorized__" → 只取 category 为 NULL 的问题。"""
+    from server.app.modules.pipelines.nodes.base import NodeRunContext
+    from server.app.modules.pipelines.nodes.question_source import run_question_source
+
+    app = build_test_app(monkeypatch)
+    try:
+        pool_id, uid = _make_pool_with_items(
+            app,
+            [
+                ("美食", "红烧肉", True),
+                (None, "未分类甲", True),
+                (None, "未分类乙", True),
+            ],
+        )
+        ctx = NodeRunContext(
+            session_factory=app.session_factory,
+            user_id=uid,
+            config={"pool_id": pool_id, "question_type": "__uncategorized__"},
+            inputs={},
+            upstream={},
+        )
+        res = run_question_source(ctx)
+        assert res.output["question_count"] == 2
+        assert "未分类甲" in res.output["question_text"]
+        assert "未分类乙" in res.output["question_text"]
+        assert "红烧肉" not in res.output["question_text"]
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_question_source_requires_pool_id(monkeypatch):
+    """缺 pool_id → ValidationError（question_type 不再必填）。"""
+    from server.app.modules.pipelines.nodes.base import NodeRunContext
+    from server.app.modules.pipelines.nodes.question_source import run_question_source
+    from server.app.shared.errors import ValidationError
+
+    app = build_test_app(monkeypatch)
+    try:
+        with app.session_factory() as db:
+            from server.app.modules.system.models import User
+
+            uid = db.query(User).first().id
+        ctx = NodeRunContext(
+            session_factory=app.session_factory,
+            user_id=uid,
+            config={"question_type": "美食"},
+            inputs={},
+            upstream={},
+        )
+        with pytest.raises(ValidationError):
+            run_question_source(ctx)
+    finally:
+        app.cleanup()
+
+
 def _make_gen_template(app, uid, content="写：", enabled=True):
     from server.app.modules.prompt_templates.models import PromptTemplate
 
@@ -403,5 +504,191 @@ def test_executor_skips_autogroup_when_to_review_present(monkeypatch):
             }
             assert len(group_ids) == 1
             assert db.query(ArticleGroup).filter(ArticleGroup.id.in_(group_ids)).count() == 1
+    finally:
+        app.cleanup()
+
+
+def _fake_generate_factory():
+    def _fake_generate(*, session_factory, user_id, template_content, question_text, model=None):
+        import uuid
+
+        from server.app.modules.articles.schemas import ArticleCreate
+        from server.app.modules.articles.service import create_article
+
+        db = session_factory()
+        try:
+            art = create_article(
+                db,
+                user_id,
+                ArticleCreate(
+                    title="A",
+                    content_json={"type": "doc", "content": []},
+                    content_html="<p>x</p>",
+                    plain_text="x",
+                    word_count=1,
+                    client_request_id=str(uuid.uuid4()),
+                ),
+            )
+            db.commit()
+            return art.id
+        finally:
+            db.close()
+
+    return _fake_generate
+
+
+@pytest.mark.mysql
+def test_executor_groups_orphans_when_to_review_present_but_did_not_group(monkeypatch):
+    """Bug 2: to_review 节点存在 ≠ 真的成了组。
+
+    to_review 被 condition 跳过（不执行）→ 不成组。执行器不能因为"存在 to_review 节点"
+    就放手，否则 ai_compose 产的文章成孤儿。期望：执行器兜底把这些文章成组（一个组），不留孤儿。
+
+    （注：自从"无 inputMapping 默认透传上游"后，漏配映射不再产生孤儿——to_review 会自动拿到
+    article_ids 并成组。故这里改用 condition 跳过 to_review 来制造"节点存在但未成组"的孤儿场景。）
+    """
+    monkeypatch.setattr(
+        "server.app.modules.pipelines.nodes.ai_compose.generate_article_from_prompt",
+        _fake_generate_factory(),
+    )
+    app = build_test_app(monkeypatch)
+    client = app.client
+    try:
+        pool_id, uid = _make_pool_with_items(app, [("美食", "怎么做红烧肉", True)])
+        tpl = _make_gen_template(app, uid)
+        snap = {
+            "schemaVersion": 1,
+            "nodes": [
+                {
+                    "node_type": "question_source",
+                    "name": "问题源",
+                    "node_index": 0,
+                    "config": {"pool_id": pool_id, "question_type": "美食"},
+                    "flow_meta": None,
+                },
+                {
+                    "node_type": "ai_compose",
+                    "name": "创作",
+                    "node_index": 1,
+                    "config": {"prompt_template_ids": [tpl], "count": 2},
+                    "flow_meta": {
+                        "inputMapping": [{"from": "question_text", "to": "question_text"}]
+                    },
+                },
+                {
+                    # 用 condition 跳过 to_review：节点存在但不执行成组 → 测执行器兜底成组
+                    "node_type": "to_review",
+                    "name": "进未审核",
+                    "node_index": 2,
+                    "config": {"group_name": "今日"},
+                    "flow_meta": {
+                        "condition": {"field": "__never__", "op": "eq", "value": "__skip__"}
+                    },
+                },
+            ],
+        }
+        pid = client.post("/api/pipelines", json={"name": "孤儿兜底"}).json()["id"]
+        client.post(f"/api/pipelines/{pid}/draft", json={"snapshot": snap})
+        client.post(f"/api/pipelines/{pid}/publish", json={})
+        from server.app.modules.pipelines.executor import create_run, run_pipeline
+        from server.app.modules.pipelines.models import Pipeline
+
+        with app.session_factory() as db:
+            p = db.get(Pipeline, pid)
+            run = create_run(db, pipeline_id=pid, user_id=p.user_id)
+            db.commit()
+            rid = run.id
+        run_pipeline(rid, app.session_factory)
+
+        run = client.get(f"/api/pipelines/runs/{rid}").json()
+        arts = run["article_ids"]
+        assert len(arts) == 2
+        with app.session_factory() as db:
+            from server.app.modules.articles.models import Article, ArticleGroupItem
+
+            for aid in arts:
+                assert db.get(Article, aid).review_status == "pending"
+            # 关键：文章被执行器兜底成组，不留孤儿
+            group_ids = {
+                it.group_id
+                for it in db.query(ArticleGroupItem)
+                .filter(ArticleGroupItem.article_id.in_(arts))
+                .all()
+            }
+            assert len(group_ids) == 1, f"孤儿未成组: {run}"
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_grouping_failure_surfaces_partial_failed_not_silent_done(monkeypatch):
+    """Bug 1: 成组真失败时不能静默报 done。
+
+    mark_pending_and_group best-effort 失败返回 None。含 to_review 时，原代码短路掉
+    执行器自带的 gid-None 降级保护、to_review 自己又不上报 → run 假报 done。
+    期望：成组失败 → run 降级 partial_failed 并写明原因。
+    """
+    monkeypatch.setattr(
+        "server.app.modules.pipelines.nodes.ai_compose.generate_article_from_prompt",
+        _fake_generate_factory(),
+    )
+    # 让 to_review 与执行器兜底两处成组都失败（返回 None）
+    monkeypatch.setattr(
+        "server.app.modules.pipelines.nodes.to_review.mark_pending_and_group",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "server.app.modules.pipelines.executor.mark_pending_and_group",
+        lambda *a, **k: None,
+    )
+    app = build_test_app(monkeypatch)
+    client = app.client
+    try:
+        pool_id, uid = _make_pool_with_items(app, [("美食", "怎么做红烧肉", True)])
+        tpl = _make_gen_template(app, uid)
+        snap = {
+            "schemaVersion": 1,
+            "nodes": [
+                {
+                    "node_type": "question_source",
+                    "name": "问题源",
+                    "node_index": 0,
+                    "config": {"pool_id": pool_id, "question_type": "美食"},
+                    "flow_meta": None,
+                },
+                {
+                    "node_type": "ai_compose",
+                    "name": "创作",
+                    "node_index": 1,
+                    "config": {"prompt_template_ids": [tpl], "count": 2},
+                    "flow_meta": {
+                        "inputMapping": [{"from": "question_text", "to": "question_text"}]
+                    },
+                },
+                {
+                    "node_type": "to_review",
+                    "name": "进未审核",
+                    "node_index": 2,
+                    "config": {"group_name": "今日"},
+                    "flow_meta": {"inputMapping": [{"from": "article_ids", "to": "article_ids"}]},
+                },
+            ],
+        }
+        pid = client.post("/api/pipelines", json={"name": "成组失败"}).json()["id"]
+        client.post(f"/api/pipelines/{pid}/draft", json={"snapshot": snap})
+        client.post(f"/api/pipelines/{pid}/publish", json={})
+        from server.app.modules.pipelines.executor import create_run, run_pipeline
+        from server.app.modules.pipelines.models import Pipeline
+
+        with app.session_factory() as db:
+            p = db.get(Pipeline, pid)
+            run = create_run(db, pipeline_id=pid, user_id=p.user_id)
+            db.commit()
+            rid = run.id
+        run_pipeline(rid, app.session_factory)
+
+        run = client.get(f"/api/pipelines/runs/{rid}").json()
+        assert run["status"] == "partial_failed", run
+        assert run["error_message"] and "成组" in run["error_message"], run
     finally:
         app.cleanup()
