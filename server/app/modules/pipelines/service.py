@@ -12,11 +12,95 @@ from server.app.modules.pipelines.models import (
 from server.app.modules.pipelines.snapshot import nodes_to_snapshot, snapshot_to_node_dicts
 from server.app.shared.errors import ClientError, ValidationError
 
+VALID_AGENT_TYPES = {"generation", "distribution", "general"}
+VALID_SCHEDULE_KINDS = {"none", "hourly", "daily", "weekly"}
 
-def create_pipeline(db: Session, *, user_id: int, name: str, description: str | None) -> Pipeline:
+
+def validate_agent_fields(
+    *,
+    name,
+    type,
+    tags,
+    schedule_kind,
+    schedule_minute,
+    schedule_hour,
+    schedule_weekday,
+    window_start,
+    window_end,
+) -> None:
     if not name or not name.strip():
         raise ValidationError("名称不能为空")
-    p = Pipeline(user_id=user_id, name=name.strip(), description=description, has_draft=False)
+    if len(name.strip()) > 50:
+        raise ValidationError("名称长度不能超过 50")
+    if type not in VALID_AGENT_TYPES:
+        raise ValidationError(f"非法类型: {type}")
+    if not isinstance(tags, list) or len(tags) > 5:
+        raise ValidationError("标签最多 5 个")
+    for t in tags:
+        if not isinstance(t, str) or not t.strip():
+            raise ValidationError("标签不能为空")
+    if schedule_kind not in VALID_SCHEDULE_KINDS:
+        raise ValidationError(f"非法调度类型: {schedule_kind}")
+    if schedule_kind in ("hourly", "daily", "weekly"):
+        if schedule_minute is None or not (0 <= schedule_minute <= 59):
+            raise ValidationError("分钟需在 0-59")
+    if schedule_kind in ("daily", "weekly"):
+        if schedule_hour is None or not (0 <= schedule_hour <= 23):
+            raise ValidationError("小时需在 0-23")
+    if schedule_kind == "weekly":
+        if schedule_weekday is None or not (0 <= schedule_weekday <= 6):
+            raise ValidationError("星期需在 0-6（周一=0）")
+    if (window_start is None) != (window_end is None):
+        raise ValidationError("时间窗起止需同时设置或同时留空")
+    if window_start is not None and window_end is not None and not (window_start < window_end):
+        raise ValidationError("时间窗起须早于止")
+
+
+def create_pipeline(
+    db: Session,
+    *,
+    user_id: int,
+    name: str,
+    description: str | None,
+    type: str = "general",
+    tags: list[str] | None = None,
+    ignore_exception: bool = False,
+    is_enabled: bool = True,
+    schedule_kind: str = "none",
+    schedule_minute: int | None = None,
+    schedule_hour: int | None = None,
+    schedule_weekday: int | None = None,
+    window_start=None,
+    window_end=None,
+) -> Pipeline:
+    tags = tags or []
+    validate_agent_fields(
+        name=name,
+        type=type,
+        tags=tags,
+        schedule_kind=schedule_kind,
+        schedule_minute=schedule_minute,
+        schedule_hour=schedule_hour,
+        schedule_weekday=schedule_weekday,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    p = Pipeline(
+        user_id=user_id,
+        name=name.strip(),
+        description=description,
+        has_draft=False,
+        type=type,
+        tags=tags,
+        ignore_exception=ignore_exception,
+        is_enabled=is_enabled,
+        schedule_kind=schedule_kind,
+        schedule_minute=schedule_minute,
+        schedule_hour=schedule_hour,
+        schedule_weekday=schedule_weekday,
+        window_start=window_start,
+        window_end=window_end,
+    )
     db.add(p)
     db.flush()
     return p
@@ -42,15 +126,41 @@ def list_nodes(db: Session, pipeline_id: int) -> list[PipelineNode]:
     return list(db.execute(q).scalars().all())
 
 
-def patch_pipeline(
-    db: Session, p: Pipeline, *, name: str | None, description: str | None
-) -> Pipeline:
-    if name is not None:
-        if not name.strip():
-            raise ValidationError("名称不能为空")
-        p.name = name.strip()
-    if description is not None:
-        p.description = description
+def patch_pipeline(db: Session, p: Pipeline, *, fields: dict) -> Pipeline:
+    """fields = PipelinePatch.model_dump(exclude_unset=True)。只覆盖提供的字段。"""
+    merged = {
+        "name": p.name,
+        "type": p.type,
+        "tags": list(p.tags or []),
+        "schedule_kind": p.schedule_kind,
+        "schedule_minute": p.schedule_minute,
+        "schedule_hour": p.schedule_hour,
+        "schedule_weekday": p.schedule_weekday,
+        "window_start": p.window_start,
+        "window_end": p.window_end,
+    }
+    for k in merged:
+        if k in fields and fields[k] is not None:
+            merged[k] = fields[k]
+    validate_agent_fields(**merged)
+    # 应用（含 description / 开关，None=不改）
+    settable = [
+        "name",
+        "description",
+        "type",
+        "tags",
+        "ignore_exception",
+        "is_enabled",
+        "schedule_kind",
+        "schedule_minute",
+        "schedule_hour",
+        "schedule_weekday",
+        "window_start",
+        "window_end",
+    ]
+    for k in settable:
+        if k in fields and fields[k] is not None:
+            setattr(p, k, fields[k].strip() if k == "name" else fields[k])
     db.flush()
     return p
 
