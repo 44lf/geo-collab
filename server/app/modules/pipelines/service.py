@@ -10,7 +10,7 @@ from server.app.modules.pipelines.models import (
     PipelineVersion,
 )
 from server.app.modules.pipelines.snapshot import nodes_to_snapshot, snapshot_to_node_dicts
-from server.app.shared.errors import ClientError, ValidationError
+from server.app.shared.errors import ClientError, ConflictError, ValidationError
 
 VALID_AGENT_TYPES = {"generation", "distribution", "general"}
 VALID_SCHEDULE_KINDS = {"none", "hourly", "daily", "weekly"}
@@ -183,6 +183,13 @@ def patch_pipeline(db: Session, p: Pipeline, *, fields: dict) -> Pipeline:
 
 
 def delete_pipeline(db: Session, p: Pipeline) -> None:
+    active = (
+        db.query(PipelineRun.id)
+        .filter(PipelineRun.pipeline_id == p.id, PipelineRun.status.in_(("pending", "running")))
+        .first()
+    )
+    if active is not None:
+        raise ConflictError("该工作流有正在运行的任务，请等待其完成后再删除")
     db.query(PipelineNode).filter(PipelineNode.pipeline_id == p.id).delete()
     db.query(PipelineVersion).filter(PipelineVersion.pipeline_id == p.id).delete()
     db.query(PipelineRun).filter(PipelineRun.pipeline_id == p.id).delete()
