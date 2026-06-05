@@ -221,3 +221,33 @@ def test_delete_pipeline_rejected_when_active_run(monkeypatch):
                 svc.delete_pipeline(db, p)
     finally:
         test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_read_pipeline_with_null_tags(monkeypatch):
+    """_to_read should not raise when tags is NULL in the DB (returns empty list)."""
+    test_app = build_test_app(monkeypatch)
+    try:
+        from sqlalchemy import text
+
+        import server.app.modules.pipelines.service as svc
+        from server.app.modules.system.models import User
+        from server.app.modules.pipelines.router import _to_read
+
+        with test_app.session_factory() as db:
+            admin_id = db.query(User).filter(User.username == "testadmin").first().id
+
+            p = svc.create_pipeline(db, user_id=admin_id, name="t", description=None)
+            db.commit()
+            pid = p.id
+
+            # Force tags to NULL bypassing ORM (disable strict mode to allow NULL update)
+            db.execute(text("SET sql_mode=''"))
+            db.execute(text("UPDATE pipelines SET tags=NULL WHERE id=:i"), {"i": pid})
+            db.commit()
+            db.refresh(p)
+
+            data = _to_read(db, p)
+            assert data["tags"] == []
+    finally:
+        test_app.cleanup()
