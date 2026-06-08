@@ -81,7 +81,11 @@ def get_node_types() -> dict:
                 "type": "article_group_source",
                 "label": "已审核分组源",
                 "config_schema": [
-                    {"key": "group_id", "type": "article_group", "label": "内容分组"},
+                    {
+                        "key": "group_id",
+                        "type": "article_group",
+                        "label": "内容分组（留空＝自动选最早未分发分组）",
+                    },
                 ],
             },
             {
@@ -118,6 +122,19 @@ def get_node_types() -> dict:
                 "label": "进入未审核库",
                 "config_schema": [
                     {"key": "group_name", "type": "text", "label": "分组名(可空)"},
+                ],
+            },
+            {
+                "type": "approved_content_source",
+                "label": "已审核待发布",
+                "config_schema": [
+                    {"key": "limit", "type": "number", "label": "取多少篇(默认20)"},
+                    {
+                        "key": "exclude_distributed",
+                        "type": "checkbox",
+                        "label": "跳过已分发过的",
+                        "default": True,
+                    },
                 ],
             },
         ],
