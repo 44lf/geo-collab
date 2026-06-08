@@ -162,3 +162,50 @@ def test_approved_content_source_dedup_and_filter(monkeypatch):
         assert a3 in set(run_approved_content_source(ctx2).output["article_ids"])
     finally:
         app.cleanup()
+
+
+@pytest.mark.mysql
+def test_distribute_consumes_article_ids_and_skips_empty(monkeypatch):
+    from server.app.modules.pipelines.nodes.base import NodeRunContext
+    from server.app.modules.pipelines.nodes.distribute_node import run_distribute
+    from server.app.modules.tasks.models import PublishTask
+
+    app = build_test_app(monkeypatch)
+    client = app.client
+    try:
+        a1 = _make_approved_article(client, "x1")
+        a2 = _make_approved_article(client, "x2")
+        acc1 = _make_account(app, client, "ka", "甲号")
+        with app.session_factory() as db:
+            from server.app.modules.articles.models import Article
+
+            uid = db.get(Article, a1).user_id
+        # 有 article_ids → 建 article_round_robin 任务
+        ctx = NodeRunContext(
+            session_factory=app.session_factory,
+            user_id=uid,
+            config={"account_ids": [acc1]},
+            inputs={"article_ids": [a1, a2]},
+            upstream={},
+        )
+        res = run_distribute(ctx)
+        assert res.output.get("task_id")
+        with app.session_factory() as db:
+            assert (
+                db.query(PublishTask).filter(PublishTask.task_type == "article_round_robin").count()
+                == 1
+            )
+        # 空 article_ids → 跳过、不建任务
+        ctx_empty = NodeRunContext(
+            session_factory=app.session_factory,
+            user_id=uid,
+            config={"account_ids": [acc1]},
+            inputs={"article_ids": []},
+            upstream={},
+        )
+        r2 = run_distribute(ctx_empty)
+        assert r2.output.get("skipped")
+        with app.session_factory() as db:
+            assert db.query(PublishTask).count() == 1  # 没新建第二个
+    finally:
+        app.cleanup()
