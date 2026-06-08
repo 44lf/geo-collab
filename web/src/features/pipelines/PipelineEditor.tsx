@@ -232,7 +232,8 @@ export function PipelineEditor({ pipelineId, onChanged }:
                           <select className="peMultiSelect" multiple disabled={!poolId}
                             value={picked}
                             onChange={(e) => updateNode(selected!, { config: { ...sel.config,
-                              [f.key]: Array.from(e.target.selectedOptions, (o) => o.value) } })}>
+                              [f.key]: Array.from(e.target.selectedOptions, (o) => o.value),
+                              question_record_ids: [] } })}>
                             {types.map((t) => {
                               const v = t.question_type ?? "__uncategorized__";
                               return <option key={v} value={v}>{t.question_type ?? "未分类"}（{t.count}）</option>;
