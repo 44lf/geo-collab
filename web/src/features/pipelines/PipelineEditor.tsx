@@ -10,7 +10,7 @@ import { listPromptTemplates } from "../../api/prompt-templates";
 import { useToast } from "../../components/Toast";
 import type {
   Account, AiEngine, ArticleGroup, NodeTypeDef, Pipeline, PipelineNodeDef,
-  PromptTemplate, QuestionPool,
+  PromptTemplate, QuestionPool, QuestionType,
 } from "../../types";
 import { VersionHistory } from "./VersionHistory";
 
@@ -28,9 +28,8 @@ export function PipelineEditor({ pipelineId, onChanged }:
   const [pools, setPools] = useState<QuestionPool[]>([]);
   const [engines, setEngines] = useState<AiEngine[]>([]);
   const [genTemplates, setGenTemplates] = useState<PromptTemplate[]>([]);
-  // 每个池缓存问题类型选项；null 分类映射为「未分类」哨兵值，供下拉选取。
-  const [typesByPool, setTypesByPool] =
-    useState<Record<number, { value: string; label: string }[]>>({});
+  // 每个池缓存完整问题类型(含各类问题)，供"类型多选"与"具体问题多选"联动。
+  const [typesByPool, setTypesByPool] = useState<Record<number, QuestionType[]>>({});
   const pollRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
@@ -52,16 +51,11 @@ export function PipelineEditor({ pipelineId, onChanged }:
       .catch(() => {});
   }, []);
 
-  // Lazily load a pool's question types (cascade for question_type fields).
+  // Lazily load a pool's question types (cascade for question_types/question_records fields).
   const ensureTypes = useCallback((poolId: number) => {
     if (poolId && typesByPool[poolId] === undefined) {
       listQuestionTypes(poolId)
-        .then((ts) => setTypesByPool((m) => ({
-          ...m,
-          [poolId]: ts.map((t) => t.question_type
-            ? { value: t.question_type, label: t.question_type }
-            : { value: "__uncategorized__", label: "未分类" }),
-        })))
+        .then((ts) => setTypesByPool((m) => ({ ...m, [poolId]: ts })))
         .catch(() => setTypesByPool((m) => ({ ...m, [poolId]: [] })));
     }
   }, [typesByPool]);
@@ -222,23 +216,49 @@ export function PipelineEditor({ pipelineId, onChanged }:
                         onChange={(e) => {
                           const v = e.target.value ? Number(e.target.value) : undefined;
                           updateNode(selected!,
-                            { config: { ...sel.config, [f.key]: v, question_type: "" } });
+                            { config: { ...sel.config, [f.key]: v, question_types: [], question_record_ids: [] } });
                           if (v) ensureTypes(v);
                         }}>
                         <option value="">选择问题池</option>
                         {pools.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
-                    : f.type === "question_type"
+                    : f.type === "question_types"
                     ? (() => {
                         const poolId = Number(sel.config["pool_id"]) || 0;
-                        const opts = typesByPool[poolId] ?? [];
+                        const types = typesByPool[poolId] ?? [];
                         if (poolId) ensureTypes(poolId);
+                        const picked = (sel.config[f.key] as string[] | undefined) ?? [];
                         return (
-                          <select value={String(sel.config[f.key] ?? "")} disabled={!poolId}
-                            onChange={(e) => updateNode(selected!,
-                              { config: { ...sel.config, [f.key]: e.target.value } })}>
-                            <option value="">{poolId ? "全部类型" : "请先选问题池"}</option>
-                            {opts.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                          <select className="peMultiSelect" multiple disabled={!poolId}
+                            value={picked}
+                            onChange={(e) => updateNode(selected!, { config: { ...sel.config,
+                              [f.key]: Array.from(e.target.selectedOptions, (o) => o.value),
+                              question_record_ids: [] } })}>
+                            {types.map((t) => {
+                              const v = t.question_type ?? "__uncategorized__";
+                              return <option key={v} value={v}>{t.question_type ?? "未分类"}（{t.count}）</option>;
+                            })}
+                          </select>
+                        );
+                      })()
+                    : f.type === "question_records"
+                    ? (() => {
+                        const poolId = Number(sel.config["pool_id"]) || 0;
+                        const types = typesByPool[poolId] ?? [];
+                        if (poolId) ensureTypes(poolId);
+                        const selTypes = (sel.config["question_types"] as string[] | undefined) ?? [];
+                        const inScope = (t: QuestionType) =>
+                          selTypes.length === 0 || selTypes.includes(t.question_type ?? "__uncategorized__");
+                        const questions = types.filter(inScope).flatMap((t) => t.questions);
+                        const picked = (sel.config[f.key] as string[] | undefined) ?? [];
+                        return (
+                          <select className="peMultiSelect" multiple disabled={!poolId}
+                            value={picked}
+                            onChange={(e) => updateNode(selected!, { config: { ...sel.config,
+                              [f.key]: Array.from(e.target.selectedOptions, (o) => o.value) } })}>
+                            {questions.map((q) => (
+                              <option key={q.record_id} value={q.record_id}>{q.question_text}</option>
+                            ))}
                           </select>
                         );
                       })()
