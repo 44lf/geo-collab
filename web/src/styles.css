@@ -210,14 +210,26 @@ p { margin: 0; }
 }
 .navParent .navChevron.open { transform: rotate(180deg); }
 
+.navSub {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .26s var(--easing);
+}
+.navSub.open { grid-template-rows: 1fr; }
+
 .navChildren {
+  overflow: hidden;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 6px 0 2px 16px;
-  padding-left: 12px;
+  margin-left: 16px;
+  padding: 6px 0 2px 12px;
   border-left: 1px solid var(--hair);
+  opacity: 0;
+  transition: opacity .2s var(--easing);
 }
+.navSub.open .navChildren { opacity: 1; }
 .navChild {
   text-align: left;
   padding: 8px 12px;

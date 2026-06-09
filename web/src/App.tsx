@@ -106,7 +106,7 @@ function AppShell() {
                       <span>{item.label}</span>
                       <ChevronDown size={15} className={`navChevron${isOpen ? " open" : ""}`} />
                     </button>
-                    {isOpen && (
+                    <div className={`navSub ${isOpen ? "open" : ""}`}>
                       <div className="navChildren">
                         {item.children.map((child) => {
                           const childActive =
@@ -123,7 +123,7 @@ function AppShell() {
                           );
                         })}
                       </div>
-                    )}
+                    </div>
                   </div>
                 );
               }
