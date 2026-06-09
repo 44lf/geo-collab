@@ -1,6 +1,6 @@
 // web/src/features/pipelines/PipelineEditor.tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Trash2 } from "lucide-react";
 import { listAccounts } from "../../api/accounts";
 import { listAiEngines, listQuestionPools, listQuestionTypes } from "../../api/ai-generation";
 import { listArticleGroups } from "../../api/articles";
@@ -15,6 +15,150 @@ import type {
   PromptTemplate, QuestionPool, QuestionType, StockCategory,
 } from "../../types";
 import { VersionHistory } from "./VersionHistory";
+
+// 问题源「类型卡 + 问题 chip」选择器（交互对齐 AI 生文的方案编辑）。
+// 受控组件：勾选态完全从节点 config 派生，切换时把最小表示写回 config——
+// 全选→空配置(整池, 自动跟进新同步问题)；整类子集→question_types；类内部分→question_record_ids。
+const UNCATEGORIZED = "__uncategorized__";
+// 「全部取消」哨兵：后端按 record_id IN(...) 过滤，命中不到任何真实问题=取空，
+// 且能与「整池(两者皆空)」区分开，避免取消全部后重开又被当成全选。真实飞书 record_id 形如 recXXXX，不会撞。
+const NONE_SENTINEL = "__none__";
+
+function typeSentinel(t: QuestionType): string {
+  return t.question_type ?? UNCATEGORIZED;
+}
+
+// config → 已勾选 record_id 集合。优先级与后端 question_source 一致：record_ids > types > 整池。
+function deriveCheckedRecordIds(types: QuestionType[], config: Record<string, unknown>): Set<string> {
+  const recordIds = (config.question_record_ids as string[] | undefined) ?? [];
+  let qtypes = config.question_types as string[] | undefined;
+  if (qtypes === undefined) {
+    const legacy = config.question_type as string | null | undefined; // 兼容旧单选
+    qtypes = legacy == null || legacy === "" ? [] : [legacy];
+  }
+  const all = types.flatMap((t) => t.questions.map((q) => q.record_id));
+  if (recordIds.length > 0) {
+    const set = new Set(recordIds);
+    return new Set(all.filter((rid) => set.has(rid)));
+  }
+  if (qtypes.length > 0) {
+    const set = new Set(qtypes);
+    const out = new Set<string>();
+    for (const t of types) {
+      if (set.has(typeSentinel(t))) t.questions.forEach((q) => out.add(q.record_id));
+    }
+    return out;
+  }
+  return new Set(all);
+}
+
+// 已勾选集合 → 最小 config 表示（清掉旧 question_type）。
+function deriveQuestionConfig(types: QuestionType[], checked: Set<string>): Record<string, unknown> {
+  const all = types.flatMap((t) => t.questions.map((q) => q.record_id));
+  if (all.length > 0 && checked.size === all.length) {
+    return { question_type: undefined, question_types: [], question_record_ids: [] };
+  }
+  if (checked.size === 0) {
+    return { question_type: undefined, question_types: [], question_record_ids: [NONE_SENTINEL] };
+  }
+  const includedTypes: string[] = [];
+  let wholeTypes = true;
+  for (const t of types) {
+    const c = t.questions.filter((q) => checked.has(q.record_id)).length;
+    if (c === t.questions.length && c > 0) includedTypes.push(typeSentinel(t));
+    else if (c !== 0) { wholeTypes = false; break; } // 某类只勾了一部分 → 退化到精选 record_ids
+  }
+  if (wholeTypes) {
+    return { question_type: undefined, question_types: includedTypes, question_record_ids: [] };
+  }
+  return { question_type: undefined, question_types: [], question_record_ids: [...checked] };
+}
+
+function QuestionTypePicker({ poolId, types, config, onChange }: {
+  poolId: number;
+  types: QuestionType[] | undefined; // undefined = 该池问题类型尚未加载
+  config: Record<string, unknown>;
+  onChange: (patch: Record<string, unknown>) => void;
+}) {
+  if (!poolId) return <div className="schemeEmpty">请先在上方选择问题池</div>;
+  if (types === undefined) return <div className="schemeEmpty">加载问题类型中…</div>;
+  if (types.length === 0) {
+    return <div className="schemeEmpty">该问题池暂无问题，请先到「AI 生文 · 问题池」同步飞书</div>;
+  }
+
+  const checked = deriveCheckedRecordIds(types, config);
+  const commit = (next: Set<string>) => onChange(deriveQuestionConfig(types, next));
+
+  const toggleQuestion = (rid: string) => {
+    const next = new Set(checked);
+    if (next.has(rid)) next.delete(rid); else next.add(rid);
+    commit(next);
+  };
+  const toggleAll = (t: QuestionType) => {
+    const rids = t.questions.map((q) => q.record_id);
+    const allOn = rids.every((r) => checked.has(r));
+    const next = new Set(checked);
+    rids.forEach((r) => (allOn ? next.delete(r) : next.add(r)));
+    commit(next);
+  };
+  const removeType = (t: QuestionType) => {
+    const next = new Set(checked);
+    t.questions.forEach((q) => next.delete(q.record_id));
+    commit(next);
+  };
+
+  return (
+    <>
+      <div className="schemeFieldLabel">
+        问题类型 · 共 {types.length} 类（默认全部纳入，取消勾选即可排除）
+      </div>
+      <div className="schemeLineScroll">
+        {types.map((t) => {
+          const checkedCount = t.questions.filter((q) => checked.has(q.record_id)).length;
+          const allChecked = checkedCount === t.questions.length && t.questions.length > 0;
+          return (
+            <div className="schemeLineCard" key={typeSentinel(t)}
+              style={{ opacity: checkedCount === 0 ? 0.6 : 1 }}>
+              <div className="schemeLineHead">
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span className="schemeTypeBadge">{t.question_type ?? "未分类"}</span>
+                  <span style={{ fontSize: 12, color: "var(--fg-3)" }}>共 {t.questions.length} 题</span>
+                </div>
+                <div className="schemeLineActions">
+                  <span style={{ color: "var(--fg-3)" }}>已选 {checkedCount} / {t.questions.length}</span>
+                  <button type="button" className="schemeLink" onClick={() => toggleAll(t)}>
+                    {allChecked ? "取消全选" : "全选"}
+                  </button>
+                  <button type="button" className="schemeLink"
+                    style={{ color: "var(--fg-3)", display: "inline-flex", gap: 4, alignItems: "center" }}
+                    onClick={() => removeType(t)} title="排除该问题类型（取消其全部勾选）">
+                    <Trash2 size={12} /> 移除
+                  </button>
+                </div>
+              </div>
+              <div className="schemeLineSub">
+                <span className="schemeSubLabel">选择问题</span>
+                <div className="schemeChips">
+                  {t.questions.map((q) => {
+                    const on = checked.has(q.record_id);
+                    const label = (q.question_text || q.record_id || "").trim();
+                    return (
+                      <button key={q.record_id} type="button"
+                        className={`schemeChip${on ? " on" : ""}`} title={label}
+                        onClick={() => toggleQuestion(q.record_id)}>
+                        <span className="schemeChipText">{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
 
 export function PipelineEditor({ pipelineId, onChanged }:
   { pipelineId: number; onChanged: () => void }) {
@@ -250,6 +394,24 @@ export function PipelineEditor({ pipelineId, onChanged }:
                     </div>
                   );
                 }
+                // 问题源：用「类型卡 + 问题 chip」选择器替代原生多选；它一处同时写
+                // question_types + question_record_ids，故 question_records 字段交给它、不再单独渲染。
+                if (f.type === "question_types") {
+                  const poolId = Number(sel.config["pool_id"]) || 0;
+                  if (poolId) ensureTypes(poolId);
+                  return (
+                    <div className="agentField" key={f.key}>
+                      <QuestionTypePicker
+                        poolId={poolId}
+                        types={poolId ? typesByPool[poolId] : []}
+                        config={sel.config}
+                        onChange={(patch) =>
+                          updateNode(selected!, { config: { ...sel.config, ...patch } })}
+                      />
+                    </div>
+                  );
+                }
+                if (f.type === "question_records") return null;
                 return (
                 <label className="agentField" key={f.key}>
                   <span className="agentFieldLabel">{f.label}</span>
@@ -264,46 +426,6 @@ export function PipelineEditor({ pipelineId, onChanged }:
                         <option value="">选择问题池</option>
                         {pools.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
-                    : f.type === "question_types"
-                    ? (() => {
-                        const poolId = Number(sel.config["pool_id"]) || 0;
-                        const types = typesByPool[poolId] ?? [];
-                        if (poolId) ensureTypes(poolId);
-                        const picked = (sel.config[f.key] as string[] | undefined) ?? [];
-                        return (
-                          <select className="peMultiSelect" multiple disabled={!poolId}
-                            value={picked}
-                            onChange={(e) => updateNode(selected!, { config: { ...sel.config,
-                              [f.key]: Array.from(e.target.selectedOptions, (o) => o.value),
-                              question_record_ids: [] } })}>
-                            {types.map((t) => {
-                              const v = t.question_type ?? "__uncategorized__";
-                              return <option key={v} value={v}>{t.question_type ?? "未分类"}（{t.count}）</option>;
-                            })}
-                          </select>
-                        );
-                      })()
-                    : f.type === "question_records"
-                    ? (() => {
-                        const poolId = Number(sel.config["pool_id"]) || 0;
-                        const types = typesByPool[poolId] ?? [];
-                        if (poolId) ensureTypes(poolId);
-                        const selTypes = (sel.config["question_types"] as string[] | undefined) ?? [];
-                        const inScope = (t: QuestionType) =>
-                          selTypes.length === 0 || selTypes.includes(t.question_type ?? "__uncategorized__");
-                        const questions = types.filter(inScope).flatMap((t) => t.questions);
-                        const picked = (sel.config[f.key] as string[] | undefined) ?? [];
-                        return (
-                          <select className="peMultiSelect" multiple disabled={!poolId}
-                            value={picked}
-                            onChange={(e) => updateNode(selected!, { config: { ...sel.config,
-                              [f.key]: Array.from(e.target.selectedOptions, (o) => o.value) } })}>
-                            {questions.map((q) => (
-                              <option key={q.record_id} value={q.record_id}>{q.question_text}</option>
-                            ))}
-                          </select>
-                        );
-                      })()
                     : f.type === "ai_engine"
                     ? <select value={String(sel.config[f.key] ?? "")}
                         onChange={(e) => updateNode(selected!,
