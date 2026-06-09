@@ -466,6 +466,8 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
 
 .listPane {
   background: var(--paper);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--hair);
   border-radius: var(--r-lg);
   overflow: hidden;
@@ -480,6 +482,8 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
 
 .editorPane {
   background: var(--paper);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--hair);
   border-radius: var(--r-lg);
   padding: 22px 24px;
@@ -496,7 +500,7 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
   gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--hair);
-  background: var(--cream);
+  background: var(--glass);
 }
 
 .searchRow svg { color: var(--fg-3); flex-shrink: 0; }
@@ -751,7 +755,7 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
   border: 1px solid var(--hair-2);
   font-size: 13px;
 }
-.modalActions button:last-child { background: var(--fg); color: var(--paper); border-color: var(--fg); }
+.modalActions button:last-child { background: var(--grad); color: #fff; border-color: transparent; }
 
 /* Group section */
 .groupBox {
@@ -1039,7 +1043,7 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
   transform: translateY(-50%);
   width: 8px;
   height: 32px;
-  background: #3b82f6;
+  background: var(--grad);
   border-radius: 4px;
   cursor: ew-resize;
   z-index: 10;
