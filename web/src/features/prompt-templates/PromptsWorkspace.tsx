@@ -12,11 +12,6 @@ import { useToast } from "../../components/Toast";
 import { useAuth } from "../auth/AuthContext";
 import type { PromptScope, PromptTemplate } from "../../types";
 
-const scopeTabs: { scope: PromptScope; label: string }[] = [
-  { scope: "generation", label: "AI生文提示词" },
-  { scope: "ai_format", label: "AI格式提示词" },
-];
-
 function HighlightedContent({ text }: { text: string }) {
   const parts = text.split(/(\{\{[^}]+\}\})/);
   return (
@@ -127,7 +122,7 @@ function PromptModal({
   );
 }
 
-export function PromptsWorkspace() {
+export function PromptsWorkspace({ scope: propScope }: { scope?: PromptScope } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [scope, setScope] = useState<PromptScope>("generation");
@@ -150,6 +145,11 @@ export function PromptsWorkspace() {
   useEffect(() => {
     void reload(scope);
   }, [scope]);
+
+  // 提示词 scope（AI生文/AI格式）由侧边栏父菜单驱动
+  useEffect(() => {
+    if (propScope) setScope(propScope);
+  }, [propScope]);
 
   const filteredPrompts = useMemo(
     () =>
@@ -220,19 +220,6 @@ export function PromptsWorkspace() {
           </button>
         </div>
       </header>
-
-      <div className="aiTabs">
-        {scopeTabs.map((tab) => (
-          <button
-            key={tab.scope}
-            className={`aiTabBtn${scope === tab.scope ? " active" : ""}`}
-            type="button"
-            onClick={() => setScope(tab.scope)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
 
       <div className="promptsToolbar">
         <Search size={15} />

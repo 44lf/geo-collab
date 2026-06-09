@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { navItems } from "./types";
-import type { NavKey, ReviewStatus } from "./types";
+import type { NavKey, PromptScope, ReviewStatus } from "./types";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
 import { AgentManagementWorkspace } from "./features/pipelines/AgentManagementWorkspace";
@@ -25,6 +25,7 @@ function AppShell() {
   const [visitedTabs, setVisitedTabs] = useState<Set<NavKey>>(new Set(["content"]));
   const [openGroups, setOpenGroups] = useState<Set<NavKey>>(new Set(["content"]));
   const [contentReviewTab, setContentReviewTab] = useState<ReviewStatus>("pending");
+  const [promptsScope, setPromptsScope] = useState<PromptScope>("generation");
   const contentDirtyRef = useRef<() => boolean>(() => false);
 
   function toggleGroup(key: NavKey) {
@@ -34,6 +35,18 @@ function AppShell() {
       else next.add(key);
       return next;
     });
+  }
+
+  function childValueFor(parentKey: NavKey): string {
+    if (parentKey === "content") return contentReviewTab;
+    if (parentKey === "prompts") return promptsScope;
+    return "";
+  }
+
+  function selectChild(parentKey: NavKey, value: string) {
+    if (parentKey === "content") setContentReviewTab(value as ReviewStatus);
+    else if (parentKey === "prompts") setPromptsScope(value as PromptScope);
+    handleNavClick(parentKey);
   }
 
   function handleNavClick(key: NavKey) {
@@ -100,16 +113,13 @@ function AppShell() {
                       <div className="navChildren">
                         {item.children.map((child) => {
                           const childActive =
-                            activeNav === item.key && contentReviewTab === child.reviewTab;
+                            activeNav === item.key && childValueFor(item.key) === child.value;
                           return (
                             <button
                               className={`navChild ${childActive ? "active" : ""}`}
                               key={child.key}
                               type="button"
-                              onClick={() => {
-                                setContentReviewTab(child.reviewTab);
-                                handleNavClick(item.key);
-                              }}
+                              onClick={() => selectChild(item.key, child.value)}
                             >
                               {child.label}
                             </button>
@@ -191,7 +201,7 @@ function AppShell() {
             {visitedTabs.has("prompts") && (
               <div style={{ display: activeNav === "prompts" ? undefined : "none" }}>
                 <ErrorBoundary fallback={<p role="alert">提示词管理出错，请刷新重试</p>}>
-                  <PromptsWorkspace />
+                  <PromptsWorkspace scope={promptsScope} />
                 </ErrorBoundary>
               </div>
             )}

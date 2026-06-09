@@ -448,7 +448,7 @@ export function statusLabel(status: string): string {
   return labels[status] ?? status;
 }
 
-export type NavChild = { key: string; label: string; reviewTab: ReviewStatus };
+export type NavChild = { key: string; label: string; value: string };
 
 export const navItems: {
   key: NavKey;
@@ -463,11 +463,19 @@ export const navItems: {
     label: "内容管理",
     icon: FileText,
     children: [
-      { key: "content:pending", label: "未审核库", reviewTab: "pending" },
-      { key: "content:approved", label: "已审核库", reviewTab: "approved" },
+      { key: "content:pending", label: "未审核库", value: "pending" },
+      { key: "content:approved", label: "已审核库", value: "approved" },
     ],
   },
-  { key: "prompts", label: "提示词管理", icon: MessagesSquare },
+  {
+    key: "prompts",
+    label: "提示词管理",
+    icon: MessagesSquare,
+    children: [
+      { key: "prompts:generation", label: "AI生文提示词", value: "generation" },
+      { key: "prompts:ai_format", label: "AI格式提示词", value: "ai_format" },
+    ],
+  },
   { key: "image-library", label: "图片库", icon: Images },
   { key: "media", label: "媒体矩阵", icon: RadioTower },
   { key: "tasks", label: "分发引擎", icon: Send },
