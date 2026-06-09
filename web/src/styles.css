@@ -1273,6 +1273,8 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
 
 .taskDetail {
   background: var(--paper);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--hair);
   border-radius: var(--r-lg);
   padding: 24px;
@@ -1287,6 +1289,8 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
   padding: 18px;
   margin-bottom: 12px;
   background: var(--paper);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   display: grid;
   gap: 14px;
 }
@@ -1316,6 +1320,8 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
   border-radius: var(--r);
   overflow: hidden;
   background: var(--paper);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   font-size: 13px;
 }
 
@@ -1351,6 +1357,8 @@ input::placeholder, textarea::placeholder { color: var(--fg-3); }
   overflow: hidden;
   max-height: 280px;
   overflow-y: auto;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .logItem {
