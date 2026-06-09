@@ -57,6 +57,7 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
+html { color-scheme: dark; }  /* 原生控件（日期选择器/滚动条等）按暗色渲染 */
 
 body {
   font-family: var(--sans);
