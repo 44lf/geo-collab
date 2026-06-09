@@ -1,25 +1,46 @@
 :root {
-  --accent:      #5B5FE9;
-  --accent-soft: #ECEDFB;
-  --accent-deep: #4549C5;
+  /* ── 霓虹强调（靛蓝 → 紫）── */
+  --acc-1: #6d6bf6;
+  --acc-2: #a855f7;
+  --grad: linear-gradient(120deg, var(--acc-1) 0%, var(--acc-2) 100%);
+  --cyan: #38bdf8;
 
-  --green:      #3F8F5C;
-  --green-soft: #E6F0EA;
-  --red:        #C5482E;
-  --red-soft:   #F5E5E0;
-  --yellow:     #B88A3E;
-  --yellow-soft:#F2EBDB;
+  --accent:      #6d6bf6;
+  --accent-soft: rgba(109,107,246,0.16);
+  --accent-deep: #b9b6ff;
 
-  --fg:   #1A1A1A;
-  --fg-2: #5C5751;
-  --fg-3: #9A958D;
+  /* ── 状态色（暗底霓虹版）── */
+  --green:      #34d399;
+  --green-soft: rgba(52,211,153,0.14);
+  --red:        #f87171;
+  --red-soft:   rgba(248,113,113,0.14);
+  --yellow:     #fbbf24;
+  --yellow-soft:rgba(251,191,36,0.14);
 
-  --paper:   #FFFFFF;
-  --cream:   #F5F2EB;
-  --cream-2: #EDE8DD;
-  --sidebar: #F7F5F0;
-  --hair:    #E8E5DE;
-  --hair-2:  #D6D2C8;
+  /* ── 文字 ── */
+  --fg:   #eceefb;
+  --fg-2: #99a0bd;
+  --fg-3: #5f667e;
+
+  /* ── 表面 / 玻璃 / 描边 ── */
+  --bg:      #0a0c14;
+  --bg-2:    #0e1120;
+  --glass:        rgba(255,255,255,0.045);
+  --glass-strong: rgba(255,255,255,0.07);
+
+  --paper:   rgba(255,255,255,0.045);  /* 暗色下"卡片面"= 玻璃 */
+  --cream:   #0e1120;                  /* 工作区底 */
+  --cream-2: rgba(255,255,255,0.07);
+  --sidebar: rgba(10,12,22,0.55);
+  --hair:    rgba(255,255,255,0.08);
+  --hair-2:  rgba(255,255,255,0.12);
+
+  /* ── 亮纸 scope（仅在 .paper-scope 内通过覆盖生效，见后续任务）── */
+  --paper-bg:    #fbf9f4;
+  --paper-fg:    #1a1a1a;
+  --paper-fg-2:  #5c5751;
+  --paper-fg-3:  #9a958d;
+  --paper-hair:  #e8e5de;
 
   --serif: "Fraunces", Georgia, "Noto Serif SC", "Source Han Serif SC", serif;
   --sans:  -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
@@ -40,7 +61,11 @@ body {
   font-size: 14px;
   line-height: 1.55;
   color: var(--fg);
-  background: var(--cream);
+  background:
+    radial-gradient(900px 460px at 12% -8%, rgba(109,107,246,0.20), transparent 60%),
+    radial-gradient(760px 420px at 100% 0%, rgba(168,85,247,0.16), transparent 55%),
+    linear-gradient(180deg, var(--bg), var(--bg-2));
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
 
