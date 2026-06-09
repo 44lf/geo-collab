@@ -22,24 +22,21 @@ import {
   listArticleGroups,
   listArticles,
   revokeArticleApproval,
-  triggerAiFormat,
   updateArticle,
   updateArticleCover,
   updateArticleGroup,
   updateArticleGroupItems,
 } from "../../api/articles";
 import { listAccounts } from "../../api/accounts";
-import { listCategories } from "../../api/image-library";
-import { listPromptTemplates, updateUserAiFormatPreset } from "../../api/prompt-templates";
 import { uploadAsset as uploadAssetRequest } from "../../api/assets";
 import { assetSrc, assetThumbSrc, countWords, emptyDoc, newClientRequestId, singleFlight, withAssetToken } from "../../api/core";
-import type { Account, Article, ArticleCreatePayload, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleSummary, ArticleUpdatePayload, Draft, PromptTemplate, ReviewStatus, StockCategory } from "../../types";
+import type { Account, Article, ArticleCreatePayload, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleSummary, ArticleUpdatePayload, Draft, ReviewStatus } from "../../types";
 import { formatDateTime } from "../../utils/dateFormat";
 import { EditorToolbar } from "../../components/editor/EditorToolbar";
+import { ImageSaveDialog } from "../../components/editor/ImageSaveDialog";
 import { ArticleListItem, ReviewBadge } from "../../components/ArticleListItem";
 import { Modal } from "../../components/Modal";
 import { Pagination } from "../../components/Pagination";
-import { useAuth } from "../auth/AuthContext";
 import { DistributeModal, type DistributeTarget } from "./DistributeModal";
 
 function makeEmptyDraft(): Draft {
@@ -310,7 +307,6 @@ const CustomImage = Image.extend({
 
 const LIST_PAGE_SIZE = 10;
 const ARTICLE_FETCH_LIMIT = 200;
-const AI_FORMAT_TIMEOUT_SECONDS = 120;
 
 type UnifiedListItem =
   | { type: "article"; article: ArticleSummary; sortTime: number }
@@ -323,7 +319,6 @@ interface Props {
 
 export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
   const { toast } = useToast();
-  const { user } = useAuth();
   const [articles, setArticles] = useState<ArticleSummary[]>([]);
   const [groups, setGroups] = useState<ArticleGroup[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -338,13 +333,7 @@ export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
   const [groupPickerArticle, setGroupPickerArticle] = useState<ArticleSummary | null>(null);
-  const [aiChecking, setAiChecking] = useState(false);
-  const [aiCheckStartedAt, setAiCheckStartedAt] = useState<number | null>(null);
-  const [aiFormatRemainingSeconds, setAiFormatRemainingSeconds] = useState(AI_FORMAT_TIMEOUT_SECONDS);
-  const [aiFormatTriggerVersion, setAiFormatTriggerVersion] = useState<number | null>(null);
-  const [stockCategories, setStockCategories] = useState<StockCategory[]>([]);
-  const [aiFormatPresets, setAiFormatPresets] = useState<PromptTemplate[]>([]);
-  const [selectedAiFormatPresetId, setSelectedAiFormatPresetId] = useState<number | "">(user?.ai_format_preset_id ?? "");
+  const [saveImageSrc, setSaveImageSrc] = useState<string | null>(null);
   const [groupPickerSelectedId, setGroupPickerSelectedId] = useState<number | null>(null);
   const [confirmDeleteArticle, setConfirmDeleteArticle] = useState(false);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(false);
@@ -508,52 +497,10 @@ export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
     }
   }
 
-  function syncArticleAfterAiFormat(detail: Article) {
-    setSelectedArticle(detail);
-    setDraft({
-      id: detail.id,
-      title: detail.title,
-      author: detail.author ?? "",
-      cover_asset_id: detail.cover_asset_id,
-      status: detail.status,
-      version: detail.version,
-      stock_category_ids: detail.stock_category_ids ?? [],
-    });
-
-    const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
-    editor?.commands.setContent(displayDoc);
-    savedStateRef.current = {
-      title: detail.title?.trim() ?? "",
-      author: detail.author ?? "",
-      cover_asset_id: detail.cover_asset_id,
-      bodyState: stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save")),
-    };
-    setArticles((prev) =>
-      prev.map((article) =>
-        article.id === detail.id
-          ? {
-              ...article,
-              title: detail.title,
-              author: detail.author,
-              cover_asset_id: detail.cover_asset_id,
-              word_count: detail.word_count,
-              status: detail.status,
-              version: detail.version,
-              updated_at: detail.updated_at,
-            }
-          : article,
-      ),
-    );
-  }
-
   useEffect(() => {
     void refreshArticles();
     void refreshGroups();
-    listCategories().then(setStockCategories).catch(() => {});
     listAccounts().then(setAccounts).catch(() => {});
-    listPromptTemplates("ai_format")
-      .then((data) => setAiFormatPresets(data.filter((prompt) => prompt.is_enabled)))
-      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -566,81 +513,12 @@ export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
     void refreshGroups();
   }, [isActive]);
 
-  useEffect(() => {
-    setSelectedAiFormatPresetId(user?.ai_format_preset_id ?? "");
-  }, [user?.id, user?.ai_format_preset_id]);
-
-  useEffect(() => {
-    if (!aiChecking || !draft?.id) return;
-    const interval = setInterval(async () => {
-      try {
-        const data = await getArticle(draft.id!);
-        if (data.ai_checking) return;
-        setAiChecking(false);
-        setAiCheckStartedAt(null);
-        setAiFormatTriggerVersion(null);
-        if (data.version === aiFormatTriggerVersion) {
-          toast(data.ai_format_error || "AI 排版执行失败，请检查配置或重试", "error");
-          return;
-        }
-        syncArticleAfterAiFormat(data);
-      } catch {
-        // Keep polling; transient failures should not unlock the editor.
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [aiChecking, draft?.id, aiFormatTriggerVersion, editor]);
-
-  useEffect(() => {
-    if (!aiChecking || aiCheckStartedAt == null) {
-      setAiFormatRemainingSeconds(AI_FORMAT_TIMEOUT_SECONDS);
-      return;
-    }
-
-    const tick = () => {
-      const elapsed = Math.floor((Date.now() - aiCheckStartedAt) / 1000);
-      const remaining = Math.max(0, AI_FORMAT_TIMEOUT_SECONDS - elapsed);
-      setAiFormatRemainingSeconds(remaining);
-      if (remaining > 0) return;
-      setAiChecking(false);
-      setAiCheckStartedAt(null);
-      setAiFormatTriggerVersion(null);
-      if (draft?.id) {
-        void getArticle(draft.id).then((data) => {
-          if (data.ai_checking) {
-            toast("AI 排版超时：后台任务仍在运行，请稍后刷新查看结果", "error");
-            return;
-          }
-          if (data.version === aiFormatTriggerVersion) {
-            toast(data.ai_format_error || "AI 排版超时：模型服务响应超时或后台任务未完成，请重试", "error");
-            return;
-          }
-          syncArticleAfterAiFormat(data);
-        }).catch(() => {
-          toast("AI 排版超时：无法确认后台状态，请刷新后重试", "error");
-        });
-      } else {
-        toast("AI 排版超时：模型服务响应超时或后台任务未完成，请重试", "error");
-      }
-    };
-
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
-  }, [aiChecking, aiCheckStartedAt, draft?.id, aiFormatTriggerVersion, toast]);
-
-  useEffect(() => {
-    editor?.setEditable(!aiChecking);
-  }, [aiChecking, editor]);
-
   function resetDraft() {
     setDraft(makeEmptyDraft());
     setSelectedArticle(null);
     setPendingCoverUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
     editor?.commands.setContent(emptyDoc);
     setSelectedArticleIds([]);
-    setAiChecking(false);
-    setAiCheckStartedAt(null);
     savedStateRef.current = null;
   }
 
@@ -670,8 +548,6 @@ export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
         version: detail.version,
         stock_category_ids: detail.stock_category_ids ?? [],
       });
-      setAiChecking(detail.ai_checking ?? false);
-      setAiCheckStartedAt(detail.ai_checking ? Date.now() : null);
       const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
       editor?.commands.setContent(displayDoc);
       const bodyState = editor
@@ -864,44 +740,6 @@ export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
 
   async function saveArticle() {
     await persistArticle();
-  }
-
-  async function handleAiFormatPresetChange(value: string) {
-    const previous = selectedAiFormatPresetId;
-    const nextValue = value ? Number(value) : "";
-    setSelectedAiFormatPresetId(nextValue);
-    try {
-      await updateUserAiFormatPreset(nextValue === "" ? null : nextValue);
-      toast("AI 格式预设已更新", "success");
-    } catch (error) {
-      setSelectedAiFormatPresetId(previous);
-      toast(error instanceof Error ? error.message : "AI 格式预设更新失败", "error");
-    }
-  }
-
-  async function handleAiFormat() {
-    const saved = await persistArticle({ quiet: true });
-    if (!saved) {
-      toast("请先保存有效文章后再启动 AI 格式", "error");
-      return;
-    }
-    const startedAt = Date.now();
-    setAiFormatTriggerVersion(saved.version);
-    setAiChecking(true);
-    setAiCheckStartedAt(startedAt);
-    setAiFormatRemainingSeconds(AI_FORMAT_TIMEOUT_SECONDS);
-    try {
-      await triggerAiFormat(
-        saved.id,
-        selectedAiFormatPresetId === "" ? undefined : { preset_id: selectedAiFormatPresetId },
-      );
-      toast("AI 排版已启动，请稍候…", "success");
-    } catch (error) {
-      setAiChecking(false);
-      setAiCheckStartedAt(null);
-      setAiFormatTriggerVersion(null);
-      toast(error instanceof Error ? error.message : "AI 格式调整启动失败", "error");
-    }
   }
 
   async function deleteCurrentArticle() {
@@ -1376,46 +1214,6 @@ export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
                 <option value="archived">归档</option>
               </select>
             </label>
-            {stockCategories.length > 0 && (
-              <div>
-                <span style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 4 }}>配图栏目</span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
-                  {stockCategories.map((cat) => {
-                    const checked = draft.stock_category_ids.includes(cat.id);
-                    return (
-                      <label key={cat.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, cursor: "pointer", fontWeight: "normal" }}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            const next = e.target.checked
-                              ? [...draft.stock_category_ids, cat.id]
-                              : draft.stock_category_ids.filter((id) => id !== cat.id);
-                            setDraft({ ...draft, stock_category_ids: next });
-                          }}
-                        />
-                        {cat.name}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            <label>
-              AI 格式预设
-              <select
-                value={selectedAiFormatPresetId}
-                onChange={(event) => void handleAiFormatPresetChange(event.target.value)}
-                disabled={aiChecking}
-              >
-                <option value="">内置默认</option>
-                {aiFormatPresets.map((preset) => (
-                  <option key={preset.id} value={preset.id}>
-                    {preset.name}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
 
           {selectedArticle ? (
@@ -1474,10 +1272,12 @@ export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
           <EditorToolbar
             editor={editor}
             onImageUpload={handleBodyImageUpload}
-            aiChecking={aiChecking}
-            aiFormatRemainingSeconds={aiFormatRemainingSeconds}
-            onAiFormat={handleAiFormat}
-            stockCategorySelected={draft.stock_category_ids.length > 0}
+            imageSelected={!!editor?.isActive("image")}
+            onSaveImage={() => {
+              const src = editor?.getAttributes("image").src as string | undefined;
+              if (src) setSaveImageSrc(src);
+              else toast("请先选中正文中的图片", "error");
+            }}
           />
           <div className="editorWrap">
             <EditorContent editor={editor} />
@@ -1496,6 +1296,15 @@ export function ContentWorkspace({ dirtyCheckRef, isActive }: Props = {}) {
           accounts={accounts}
           onClose={() => setDistributeTarget(null)}
           onDistributed={() => setSelectedArticleIds([])}
+        />
+      ) : null}
+
+      {saveImageSrc ? (
+        <ImageSaveDialog
+          imageSrc={saveImageSrc}
+          onClose={() => setSaveImageSrc(null)}
+          onSaved={(msg) => toast(msg, "success")}
+          onError={(msg) => toast(msg, "error")}
         />
       ) : null}
 

@@ -655,6 +655,40 @@ input:focus, select:focus, textarea:focus {
 }
 .groupPickerOption small { color: var(--fg-3); font-size: 12px; }
 
+/* Image save dialog (editor → image library) */
+.imageSaveDialog { display: grid; gap: 12px; }
+.imageSavePreview {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  background: var(--cream);
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
+}
+.imageSaveTabs { margin: 0; }
+.imageSaveCatList {
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
+  padding: 6px;
+}
+.imageSaveNameRow {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg-2);
+}
+.imageSaveNameRow input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
+}
+.imageSaveError { margin: 0; color: #dc2626; font-size: 13px; }
+
 .modalActions {
   display: flex;
   justify-content: flex-end;
