@@ -3108,6 +3108,46 @@ option, optgroup {
 .pePanel { flex: 1; min-width: 0; }
 .peCard { border: 1px solid var(--hair); border-radius: var(--r-lg); padding: 18px; display: flex; flex-direction: column; gap: 14px; }
 .peCardTitle { display: flex; align-items: baseline; gap: 8px; font-family: var(--display); font-size: 18px; font-weight: 640; color: var(--fg); }
+
+/* 版本历史 */
+.versionHistory {
+  margin-top: 18px;
+  padding: 16px 18px;
+  background: var(--glass);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.versionHistoryTitle { font-size: 13px; font-weight: 600; color: var(--fg); margin-bottom: 12px; }
+.versionRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--glass);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-sm);
+}
+.versionRow:last-child { margin-bottom: 0; }
+.versionRowInfo { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; font-size: 13px; }
+.versionNo { font-weight: 600; color: var(--fg); flex-shrink: 0; }
+.versionRemark { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.versionTime { color: var(--fg-3); font-size: 12px; margin-left: auto; flex-shrink: 0; }
+.versionRollbackBtn {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  background: var(--glass);
+  transition: all .14s;
+}
+.versionRollbackBtn:hover { background: var(--glass-strong); color: var(--fg); border-color: rgba(140,120,255,0.45); }
+.versionEmpty { font-size: 13px; color: var(--fg-3); }
 .peCard textarea {
   width: 100%; min-height: 72px; resize: vertical;
   border: 1px solid var(--hair); border-radius: var(--r); padding: 9px 11px;
