@@ -370,7 +370,7 @@ def _start_runnable_records(
             article = _load_article_for_publish(db, next_record.article_id)
             account = db.get(Account, next_record.account_id)
             validation_error = _validate_record_inputs(article, account)
-            if account is not None and validation_error is None:
+            if account is not None and validation_error is None and account.state_path is not None:
                 profile_key = _profile_key_from_state_path(account.state_path)
                 reason = "账号正在执行发布或登录操作，发布记录已排队"
                 if not try_acquire_profile_lock(
@@ -871,8 +871,23 @@ def _store_failure_screenshot(
 def build_publish_runner_for_record(record: PublishRecord):
     """构造该记录的发布闭包：预绑 record_id + 浏览器 channel/可执行路径，返回 (article, account) → PublishResult。
 
-    驱动选择在 runner.run_publish 内按账号 state_path 的 platform_code 决定。懒导入 runner 避免循环依赖。
+    API 型平台（驱动 mode='api'，如公众号）分叉到 runner_api（无浏览器）；
+    浏览器平台驱动选择仍在 runner.run_publish 内按账号 state_path 的 platform_code 决定。
+    懒导入 runner 避免循环依赖。
     """
+    from server.app.modules.tasks.drivers import is_api_driver, resolve_driver
+
+    platform_code = record.platform.code if record.platform is not None else None
+    if platform_code and is_api_driver(platform_code):
+        from server.app.modules.tasks.runner_api import run_publish_api
+
+        driver = resolve_driver(platform_code)
+
+        def _api_runner(article, account, *, stop_before_publish=False):
+            return run_publish_api(article=article, account=account, driver=driver)
+
+        return _api_runner
+
     from server.app.modules.tasks.runner import run_publish
 
     settings = get_settings()
