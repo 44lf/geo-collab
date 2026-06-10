@@ -369,6 +369,24 @@ export function PipelineEditor({ pipelineId, onChanged }:
   const sel = selected != null ? nodes[selected] : null;
   const selDef = sel ? nodeTypes.find((t) => t.type === sel.node_type) : null;
 
+  // AI生文：若上游是 question_source 且其 units 覆盖了模板/数量，则对应字段灰显（已被接管）。
+  const aiGenMask = useMemo(() => {
+    if (!sel || sel.node_type !== "ai_generate") return { template: false, count: false };
+    const dep = sel.flow_meta?.dependsOnIndex;
+    const upIdx = dep != null ? dep : (selected != null ? selected - 1 : -1);
+    const up = upIdx >= 0 ? nodes[upIdx] : undefined;
+    if (!up || up.node_type !== "question_source") return { template: false, count: false };
+    const units = up.config?.units as Array<Record<string, unknown>> | undefined;
+    if (!Array.isArray(units) || units.length === 0) return { template: false, count: false };
+    const enabled = units.filter((u) => u.record_ids === null ||
+      (Array.isArray(u.record_ids) && (u.record_ids as unknown[]).length > 0));
+    if (enabled.length === 0) return { template: false, count: false };
+    const template = enabled.every((u) => Array.isArray(u.allowed_prompt_template_ids) &&
+      (u.allowed_prompt_template_ids as unknown[]).length > 0);
+    const count = enabled.every((u) => typeof u.article_count === "number" && (u.article_count as number) > 0);
+    return { template, count };
+  }, [sel, selected, nodes]);
+
   return (
     <div className="peEditor">
       <div className="peToolbar">
@@ -478,6 +496,23 @@ export function PipelineEditor({ pipelineId, onChanged }:
                   );
                 }
                 if (f.type === "question_records") return null;
+                // AI生文：模板/数量字段——上游问题源已覆盖时灰显禁用，提示「已接管」
+                if (sel.node_type === "ai_generate" && (f.key === "prompt_template_id" || f.key === "count")) {
+                  const masked = f.key === "prompt_template_id" ? aiGenMask.template : aiGenMask.count;
+                  return (
+                    <label className="agentField" key={f.key}>
+                      <span className="agentFieldLabel">
+                        {f.label}{masked ? "（已由上游问题源接管）" : "（上游未配时的兜底）"}
+                      </span>
+                      <input
+                        type={f.key === "count" ? "number" : "text"}
+                        disabled={masked}
+                        value={String(sel.config[f.key] ?? "")}
+                        onChange={(e) => updateNode(selected!, { config: { ...sel.config,
+                          [f.key]: f.key === "count" ? Number(e.target.value) : e.target.value } })} />
+                    </label>
+                  );
+                }
                 return (
                 <label className="agentField" key={f.key}>
                   <span className="agentFieldLabel">{f.label}</span>
