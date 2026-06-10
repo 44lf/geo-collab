@@ -39,10 +39,7 @@ export function LoginPage() {
       <div className="authCard">
         <div className="authBrand">
           <div className="authBrandMark">AI</div>
-          <div>
-            <div className="authBrandName">AI插件自动化平台</div>
-            <div className="authBrandSub">协作平台</div>
-          </div>
+          <div className="authBrandName">AI插件自动化平台</div>
         </div>
         <form className="authForm" onSubmit={handleSubmit}>
           <input
