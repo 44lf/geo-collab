@@ -122,7 +122,10 @@ function PromptModal({
   );
 }
 
-export function PromptsWorkspace({ scope: propScope }: { scope?: PromptScope } = {}) {
+export function PromptsWorkspace(
+  { scope: propScope, isMobile, onScopeChange }:
+  { scope?: PromptScope; isMobile?: boolean; onScopeChange?: (s: PromptScope) => void } = {},
+) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [scope, setScope] = useState<PromptScope>("generation");
@@ -220,6 +223,25 @@ export function PromptsWorkspace({ scope: propScope }: { scope?: PromptScope } =
           </button>
         </div>
       </header>
+
+      {isMobile && (
+        <div className="mobileSegTabs">
+          <button
+            type="button"
+            className={`mobileSegTab${scope === "generation" ? " active" : ""}`}
+            onClick={() => { setScope("generation"); onScopeChange?.("generation"); }}
+          >
+            AI生文提示词
+          </button>
+          <button
+            type="button"
+            className={`mobileSegTab${scope === "ai_format" ? " active" : ""}`}
+            onClick={() => { setScope("ai_format"); onScopeChange?.("ai_format"); }}
+          >
+            AI格式提示词
+          </button>
+        </div>
+      )}
 
       <div className="promptsToolbar">
         <Search size={15} />
