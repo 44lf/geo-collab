@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 from PIL import Image
 
@@ -14,7 +15,8 @@ THUMB_MAX_BYTES = 64 * 1024
 CONTENT_IMAGE_MAX_BYTES = 1024 * 1024
 
 _QUALITY_LADDER = (85, 75, 65, 55, 45, 35)
-_MIN_EDGE = 64  # 缩边下限，防止死循环
+_MIN_EDGE = 1  # shrink to a guaranteed fitting image before giving up
+_PASSTHROUGH_FORMATS = {"JPEG", "PNG"}
 
 
 def _flatten_to_rgb(img: Image.Image) -> Image.Image:
@@ -44,8 +46,25 @@ def _compress_to_jpeg(data: bytes, max_bytes: int) -> bytes:
                 return out
         width, height = img.size
         if min(width, height) <= _MIN_EDGE:
-            return out  # 已到缩边下限，返回当前最小结果（极端情况）
+            return out
         img = img.resize((max(width // 2, _MIN_EDGE), max(height // 2, _MIN_EDGE)))
+
+
+def _detect_image_format(data: bytes) -> str:
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            image_format = img.format or ""
+            img.verify()
+            return image_format
+    except OSError as exc:
+        raise ValueError("invalid image data") from exc
+
+
+def _content_filename(filename: str, image_format: str) -> str:
+    path = Path(filename)
+    stem = path.stem or "image"
+    suffix = ".png" if image_format == "PNG" else ".jpg"
+    return f"{stem}{suffix}"
 
 
 def compress_cover_to_jpeg(data: bytes) -> bytes:
@@ -58,9 +77,7 @@ def compress_content_image(data: bytes, filename: str) -> tuple[bytes, str]:
 
     返回 (bytes, 上传用文件名)。
     """
-    lower = filename.lower()
-    if len(data) <= CONTENT_IMAGE_MAX_BYTES and (
-        lower.endswith(".jpg") or lower.endswith(".jpeg") or lower.endswith(".png")
-    ):
-        return data, filename
+    image_format = _detect_image_format(data)
+    if len(data) <= CONTENT_IMAGE_MAX_BYTES and image_format in _PASSTHROUGH_FORMATS:
+        return data, _content_filename(filename, image_format)
     return _compress_to_jpeg(data, CONTENT_IMAGE_MAX_BYTES), "image.jpg"

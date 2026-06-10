@@ -2,6 +2,7 @@
 
 import io
 
+import pytest
 from PIL import Image
 
 from server.app.modules.tasks.drivers.wechat_images import (
@@ -38,6 +39,13 @@ def test_cover_large_png_converted_and_compressed():
     assert Image.open(io.BytesIO(out)).format == "JPEG"
 
 
+def test_cover_long_skinny_image_compressed_under_limit():
+    data = _image_bytes("RGB", (20000, 64), "PNG")
+    out = compress_cover_to_jpeg(data)
+    assert len(out) <= THUMB_MAX_BYTES
+    assert Image.open(io.BytesIO(out)).format == "JPEG"
+
+
 def test_cover_rgba_png_flattened():
     buf = io.BytesIO()
     Image.new("RGBA", (800, 600), (255, 0, 0, 128)).save(buf, format="PNG")
@@ -52,6 +60,21 @@ def test_content_image_small_png_kept_as_png():
     out, filename = compress_content_image(data, "x.png")
     assert out == data  # 已达标则原样返回
     assert filename.endswith(".png")
+
+
+def test_content_image_small_gif_named_png_is_converted():
+    buf = io.BytesIO()
+    Image.new("RGB", (300, 200), (10, 20, 30)).save(buf, format="GIF")
+    data = buf.getvalue()
+    out, filename = compress_content_image(data, "x.png")
+    assert out != data
+    assert filename.endswith(".jpg")
+    assert Image.open(io.BytesIO(out)).format == "JPEG"
+
+
+def test_content_image_invalid_named_png_is_rejected():
+    with pytest.raises(ValueError, match="invalid image data"):
+        compress_content_image(b"not an image", "x.png")
 
 
 def test_content_image_oversize_recompressed_under_1mb():

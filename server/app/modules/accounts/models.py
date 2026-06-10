@@ -21,6 +21,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.core.time import utcnow
@@ -54,10 +55,10 @@ class Account(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # ── API 型平台（公众号等）专用 ───────────────────────────────────────
     api_credentials: Mapped[dict | None] = mapped_column(
-        JSON, nullable=True
+        MutableDict.as_mutable(JSON), nullable=True
     )  # {"app_id": ..., "app_secret": ...}；永不通过 API 回传原文
     api_token_cache: Mapped[dict | None] = mapped_column(
-        JSON, nullable=True
+        MutableDict.as_mutable(JSON), nullable=True
     )  # {"access_token": ..., "expires_at": <epoch秒>}；web/worker 跨进程共享
     # ── 通用账号字段（对齐媒体矩阵交互稿）─────────────────────────────────
     distribution_enabled: Mapped[bool] = mapped_column(
