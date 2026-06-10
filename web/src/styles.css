@@ -3275,15 +3275,15 @@ option, optgroup {
   .usersTableWrap { overflow-x: auto; }
   .agentLogsScroll { overflow: auto; }
 
-  /* 弹窗近全宽 */
+  /* 弹窗：移动端近全宽 + 居中，抬到底栏之上并避让底栏。
+     遮罩 padding 缩到 12px，使弹窗宽度(100vw-24px)恰好等于内容区，避免溢出被挤到左上角 */
+  .modalBackdrop, .modalOverlay {
+    z-index: 50;
+    padding: 12px 12px calc(72px + env(safe-area-inset-bottom));
+  }
   .modal, .groupPickerModal, .schemePanel, .modalCard {
     width: calc(100vw - 24px) !important;
     max-width: calc(100vw - 24px) !important;
-  }
-  /* 弹窗层级抬到底栏之上，并避让底栏，避免按钮被遮挡 */
-  .modalBackdrop, .modalOverlay {
-    z-index: 50;
-    padding-bottom: calc(72px + env(safe-area-inset-bottom));
   }
 
   /* 输入框 16px 防 iOS 聚焦缩放 */
