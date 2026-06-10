@@ -3,7 +3,8 @@ import type { ErrorInfo, ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
-  fallback?: ReactNode;
+  /** 出错时显示的上下文名称，如「内容管理」→ 标题渲染为「内容管理出错」 */
+  title?: string;
 }
 
 interface State {
@@ -24,10 +25,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      if (this.props.fallback) return this.props.fallback;
       return (
         <div className="panel" style={{ borderColor: "var(--red-soft)", color: "var(--red)", padding: 24, margin: 24 }}>
-          <h2>出现错误</h2>
+          <h2>{this.props.title ? `${this.props.title}出错` : "出现错误"}</h2>
           <p>{this.state.error?.message || "未知错误"}</p>
           <button
             className="secondaryButton"
