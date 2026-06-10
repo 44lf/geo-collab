@@ -27,11 +27,11 @@ function AppShell() {
   const { user, loading, logout } = useAuth();
   const isMobile = useIsMobile();
   const [moreOpen, setMoreOpen] = useState(false);
-  const [activeNav, setActiveNav] = useState<NavKey>("content");
+  const [activeNav, setActiveNav] = useState<NavKey>("agents");
   // 当前页是否属于「更多」分区（即不在底栏 4 个高频入口中）
   const onMoreSection = !(["agents", "ai", "content", "tasks"] as NavKey[]).includes(activeNav);
-  const [visitedTabs, setVisitedTabs] = useState<Set<NavKey>>(new Set(["content"]));
-  const [openGroup, setOpenGroup] = useState<NavKey | null>("content");
+  const [visitedTabs, setVisitedTabs] = useState<Set<NavKey>>(new Set(["agents"]));
+  const [openGroup, setOpenGroup] = useState<NavKey | null>(null);
   const [contentReviewTab, setContentReviewTab] = useState<ReviewStatus>("pending");
   const [promptsScope, setPromptsScope] = useState<PromptScope>("generation");
   const contentDirtyRef = useRef<() => boolean>(() => false);
