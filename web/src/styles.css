@@ -3254,6 +3254,11 @@ option, optgroup {
 
   /* 双栏 → 单列 */
   .contentGrid, .taskGrid, .mediaGrid { grid-template-columns: 1fr; }
+  /* 分发/任务、媒体：移动端改流式 + 整页滚动，避免定高挤压导致内容显示不全 */
+  .taskGrid, .mediaGrid { display: block; overflow: visible; }
+  .taskGrid .listPane, .taskGrid .taskDetail,
+  .mediaGrid .listPane, .mediaGrid .taskDetail { overflow: visible; height: auto; min-height: 0; }
+  .taskGrid .taskList { flex: none; max-height: 46vh; }
   .peLayout { flex-direction: column; }
   .peNodeList { width: 100%; display: flex; flex-direction: row; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 6px; }
   .peNodeList > * { flex: 0 0 auto; }
