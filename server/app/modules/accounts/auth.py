@@ -238,6 +238,9 @@ def start_login_session(
             status="unknown",
             state_path=relative_state_path,
             note=payload.note,
+            contact=payload.contact,
+            avatar_asset_id=payload.avatar_asset_id,
+            distribution_enabled=payload.distribution_enabled,
             last_checked_at=now,
         )
         db.add(account)
@@ -245,6 +248,9 @@ def start_login_session(
         previous_status = account.status
         account.display_name = payload.display_name
         account.note = payload.note
+        account.contact = payload.contact
+        account.avatar_asset_id = payload.avatar_asset_id
+        account.distribution_enabled = payload.distribution_enabled
         account.status = "unknown"
         account.state_path = relative_state_path
         account.is_deleted = False

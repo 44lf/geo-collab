@@ -455,6 +455,10 @@ export type PlatformLoginPayload = {
   display_name: string;
   account_key: string;
   use_browser?: boolean;
+  note?: string | null;
+  contact?: string | null;
+  avatar_asset_id?: string | null;
+  distribution_enabled?: boolean;
 };
 
 export type ArticleGroupUpdateItemsPayload = {
