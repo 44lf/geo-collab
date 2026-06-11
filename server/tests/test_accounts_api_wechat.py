@@ -97,7 +97,8 @@ def test_create_duplicate_app_id_conflict(monkeypatch):
         test_app.cleanup()
 
 
-def test_create_soft_deleted_duplicate_app_id_conflict(monkeypatch):
+def test_create_after_soft_deleted_app_id_succeeds(monkeypatch):
+    """删除账号后身份槽位已释放（platform_user_id=None），同一 app_id 可重新登记。"""
     test_app = build_test_app(monkeypatch)
     try:
         _ensure_wechat_platform(test_app)
@@ -105,7 +106,7 @@ def test_create_soft_deleted_duplicate_app_id_conflict(monkeypatch):
         assert test_app.client.delete(f"/api/accounts/{account_id}").status_code == 204
 
         resp = test_app.client.post("/api/accounts", json=_create_payload())
-        assert resp.status_code == 409
+        assert resp.status_code == 200
     finally:
         test_app.cleanup()
 
@@ -298,6 +299,37 @@ def test_export_all_skips_missing_browser_state_for_api_account(monkeypatch):
             assert f"{account_dir}/storage_state.json" not in archive.namelist()
             account_payload = json.loads(archive.read(f"{account_dir}/account.json"))
             assert account_payload["state_path"] is None
+    finally:
+        test_app.cleanup()
+
+
+def test_delete_wechat_account_frees_identity_slot(monkeypatch):
+    test_app = build_test_app(monkeypatch)
+    try:
+        _ensure_wechat_platform(test_app)
+        account_id = test_app.client.post("/api/accounts", json=_create_payload()).json()["id"]
+        monkeypatch.setattr(
+            "server.app.modules.accounts.service.wechat_fetch_access_token",
+            lambda app_id, app_secret, client=None: ("tok-1", 7200),
+        )
+        assert (
+            test_app.client.post(f"/api/accounts/{account_id}/verify-credentials").status_code
+            == 200
+        )
+
+        assert test_app.client.delete(f"/api/accounts/{account_id}").status_code == 204
+
+        from server.app.modules.accounts.models import Account
+
+        with test_app.session_factory() as db:
+            acc = db.get(Account, account_id)  # db.get 不过滤 is_deleted，能取到死行
+            assert acc.is_deleted is True
+            assert acc.deleted_at is not None
+            assert acc.platform_user_id is None
+            assert acc.api_token_cache is None
+            creds = acc.api_credentials or {}
+            assert "app_secret" not in creds          # 密钥已抹除
+            assert creds.get("app_id") == "wx8f2a91c0d3e5b6"  # app_id 保留供审计
     finally:
         test_app.cleanup()
 
