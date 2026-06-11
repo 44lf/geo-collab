@@ -471,6 +471,123 @@ def test_render_ai_format_prompt_strict_undefined_raises():
         )
 
 
+def test_aggressive_builtin_prompt_variant_and_numeric_overrides():
+    """builtin_variant='aggressive' → 积极配图措辞；max_images/min_spacing 覆盖注入占位。
+
+    保守变体不含"积极配图"、保留"图少文多"；两者都保留"不确定不插"准星——激进≠瞎插。
+    """
+    from server.app.modules.articles.ai_format import _load_ai_format_prompt
+
+    text_nodes = [(0, {"type": "paragraph", "content": [{"type": "text", "text": "某游戏真好玩"}]})]
+    cats = [{"id": 5, "name": "主推A", "description": None}]
+
+    aggressive = _load_ai_format_prompt(
+        None,
+        preset_id=None,
+        user_id=None,
+        include_images=True,
+        text_nodes=text_nodes,
+        available_categories=cats,
+        max_images=7,
+        min_spacing=2,
+        builtin_variant="aggressive",
+    )
+    conservative = _load_ai_format_prompt(
+        None,
+        preset_id=None,
+        user_id=None,
+        include_images=True,
+        text_nodes=text_nodes,
+        available_categories=cats,
+        builtin_variant="conservative",
+    )
+
+    # 激进：积极配图措辞 + 数字旋钮覆盖生效
+    assert "积极配图" in aggressive
+    assert "最多 7 张" in aggressive
+    assert "不少于 2 个节点" in aggressive
+    assert "吃不准" in aggressive  # 准星仍在
+    # 保守：旧措辞，无积极配图模式；默认派生上限 3
+    assert "积极配图" not in conservative
+    assert "图少文多" in conservative
+    assert "不超过 3 张" in conservative
+
+
+def test_maybe_insert_images_hard_caps_at_max_images(monkeypatch):
+    """max_images 为硬上限：模型给 4 个位置、max_images=2 → 只插靠前 2 张并提前停止。"""
+    from server.app.modules.articles.ai_format import _maybe_insert_images
+
+    pick_calls = []
+
+    def fake_pick(query, db):
+        pick_calls.append(1)
+        return 42
+
+    fake_ref = SimpleNamespace(
+        id=42, url="/api/stock-images/42/file", filename="t.jpg", width=800, height=600
+    )
+    monkeypatch.setattr("server.app.modules.articles.ai_format.pick_image_id", fake_pick)
+    monkeypatch.setattr(
+        "server.app.modules.articles.ai_format.fetch_image_by_id", lambda image_id, db: fake_ref
+    )
+    monkeypatch.setattr(
+        "server.app.modules.articles.ai_format.has_images_in_content", lambda content: False
+    )
+
+    inserted_positions = []
+
+    def fake_insert(content_json, refs, positions):
+        inserted_positions.extend(positions)
+        return content_json
+
+    monkeypatch.setattr(
+        "server.app.modules.articles.ai_format.insert_images_at_positions", fake_insert
+    )
+
+    cat = SimpleNamespace(id=1)
+    article = _make_article_stub(stock_categories=[cat])
+    parsed = {
+        "image_positions": [
+            {"index": 0, "category_id": 1},
+            {"index": 1, "category_id": 1},
+            {"index": 2, "category_id": 1},
+            {"index": 3, "category_id": 1},
+        ]
+    }
+    _, count = _maybe_insert_images(_simple_content(), parsed, article, db=None, max_images=2)
+
+    assert count == 2  # 硬截断到 2 张
+    assert inserted_positions == [0, 1]  # 取靠前的两个
+    assert len(pick_calls) == 2  # 达上限即停，不再为第 3/4 个位置取图
+
+
+def test_maybe_insert_images_no_cap_when_max_images_none(monkeypatch):
+    """max_images=None（手动排版/方案配图）→ 不硬截断，沿用原行为：模型给几个插几个。"""
+    from server.app.modules.articles.ai_format import _maybe_insert_images
+
+    fake_ref = SimpleNamespace(
+        id=42, url="/api/stock-images/42/file", filename="t.jpg", width=800, height=600
+    )
+    monkeypatch.setattr("server.app.modules.articles.ai_format.pick_image_id", lambda q, db: 42)
+    monkeypatch.setattr(
+        "server.app.modules.articles.ai_format.fetch_image_by_id", lambda image_id, db: fake_ref
+    )
+    monkeypatch.setattr(
+        "server.app.modules.articles.ai_format.has_images_in_content", lambda content: False
+    )
+    monkeypatch.setattr(
+        "server.app.modules.articles.ai_format.insert_images_at_positions",
+        lambda content_json, refs, positions: content_json,
+    )
+
+    cat = SimpleNamespace(id=1)
+    article = _make_article_stub(stock_categories=[cat])
+    parsed = {"image_positions": [{"index": i, "category_id": 1} for i in range(4)]}
+    _, count = _maybe_insert_images(_simple_content(), parsed, article, db=None)
+
+    assert count == 4  # 不截断
+
+
 def test_maybe_insert_images_skips_when_no_stock_categories(monkeypatch):
     """stock_categories 为空且 stock_category_id 为 None → 不插图（早期返回）。"""
     from server.app.modules.articles.ai_format import _maybe_insert_images

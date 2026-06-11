@@ -127,6 +127,27 @@ def get_node_types() -> dict:
                         "type": "stock_category_main",
                         "label": "图片库 · 主推游戏",
                     },
+                    # 配图风格：开=「积极配图」(每个明确出现的游戏都插，保留"不确定不插"准星)，
+                    # 关=保守(图少文多)。默认开。见 ai_format._builtin_prompt_template 的 aggressive 变体。
+                    {
+                        "key": "aggressive_images",
+                        "type": "toggle",
+                        "label": "激进配图（每个游戏都插）",
+                        "hint": "开=每个明确出现的游戏都配图；关=保守·图少文多",
+                        "default": True,
+                    },
+                    # 数量旋钮：与风格解耦，单独控制上限/间距。留空随风格取默认(激进12/1、保守3/5)，
+                    # 同时作为插图阶段硬上限。见 ai_format._maybe_insert_images。
+                    {
+                        "key": "max_images",
+                        "type": "number",
+                        "label": "最多配图数（默认激进12 / 保守3）",
+                    },
+                    {
+                        "key": "min_spacing",
+                        "type": "number",
+                        "label": "最小配图间距·节点数（默认激进1 / 保守5）",
+                    },
                     # 联网兜底：开启后，模型可点名可用栏目外的陪衬游戏，执行器自动建栏目 +
                     # 百度千帆搜图补图（需配 GEO_BAIDU_API_KEY）。见 ai_format._maybe_insert_images。
                     {
