@@ -143,6 +143,13 @@ def get_node_types() -> dict:
                 "label": "进入未审核库",
                 "config_schema": [
                     {"key": "group_name", "type": "text", "label": "分组名(可空)"},
+                    {
+                        "key": "daily_group",
+                        "type": "toggle",
+                        "label": "按天归组",
+                        "hint": "开启后，当天所有运行/流水线产出并入同一个「每日生成 · 日期」分组",
+                        "default": False,
+                    },
                 ],
             },
             {
