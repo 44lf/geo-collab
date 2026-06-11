@@ -81,11 +81,18 @@ def test_ai_illustrate_candidates_and_passthrough(monkeypatch):
             user_id,
             candidate_categories,
             web_fallback=False,
+            max_images=None,
+            min_spacing=None,
+            builtin_variant="conservative",
         ):
             captured["article_id"] = article_id
             captured["candidates"] = candidate_categories
             captured["include_images"] = include_images
             captured["web_fallback"] = web_fallback
+            captured["preset_id"] = preset_id
+            captured["max_images"] = max_images
+            captured["min_spacing"] = min_spacing
+            captured["builtin_variant"] = builtin_variant
 
         monkeypatch.setattr("server.app.modules.pipelines.nodes.ai_illustrate.run_ai_format", _stub)
 
@@ -106,6 +113,11 @@ def test_ai_illustrate_candidates_and_passthrough(monkeypatch):
         assert captured["include_images"] is True
         ids = {c["id"] for c in captured["candidates"]}
         assert main_id in ids and comp_id in ids
+        # 默认激进：用「积极配图」变体，数量旋钮默认 12 / 1，无自定义 preset
+        assert captured["builtin_variant"] == "aggressive"
+        assert captured["max_images"] == 12
+        assert captured["min_spacing"] == 1
+        assert captured["preset_id"] is None
     finally:
         app.cleanup()
 
@@ -266,6 +278,110 @@ def test_ai_illustrate_set_cover_off_skips_cover(monkeypatch):
         assert res.output["covers_set"] == 0
         with app.session_factory() as db:
             assert db.get(Article, aid).cover_asset_id is None
+    finally:
+        app.cleanup()
+
+
+def _capture_knobs(monkeypatch):
+    """把节点传给 run_ai_format 的关键 kwargs 抓出来，供风格/数量旋钮断言。"""
+    captured: dict = {}
+    monkeypatch.setattr(
+        "server.app.modules.pipelines.nodes.ai_illustrate.run_ai_format",
+        lambda article_id, **kw: captured.update(kw) or 0,
+    )
+    return captured
+
+
+@pytest.mark.mysql
+def test_ai_illustrate_conservative_toggle_off(monkeypatch):
+    """aggressive_images=False → 保守变体 + 保守默认数量(3/5)。"""
+    app = build_test_app(monkeypatch)
+    try:
+        main_id = _make_category(app, "主推A", "main-a", "main")
+        aid = _make_article(app.client)
+        uid = _uid(app)
+        captured = _capture_knobs(monkeypatch)
+
+        from server.app.modules.pipelines.nodes.ai_illustrate import run_ai_illustrate
+        from server.app.modules.pipelines.nodes.base import NodeRunContext
+
+        run_ai_illustrate(
+            NodeRunContext(
+                session_factory=app.session_factory,
+                user_id=uid,
+                config={
+                    "main_category_id": main_id,
+                    "aggressive_images": False,
+                    "set_cover": False,
+                },
+                inputs={"article_ids": [aid]},
+                upstream={},
+            )
+        )
+        assert captured["builtin_variant"] == "conservative"
+        assert captured["max_images"] == 3
+        assert captured["min_spacing"] == 5
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_ai_illustrate_explicit_numbers_override_defaults(monkeypatch):
+    """显式 max_images/min_spacing 覆盖风格默认；清空字段得到的 0 当作未设、回退默认。"""
+    app = build_test_app(monkeypatch)
+    try:
+        main_id = _make_category(app, "主推A", "main-a", "main")
+        aid = _make_article(app.client)
+        uid = _uid(app)
+        captured = _capture_knobs(monkeypatch)
+
+        from server.app.modules.pipelines.nodes.ai_illustrate import run_ai_illustrate
+        from server.app.modules.pipelines.nodes.base import NodeRunContext
+
+        run_ai_illustrate(
+            NodeRunContext(
+                session_factory=app.session_factory,
+                user_id=uid,
+                config={
+                    "main_category_id": main_id,
+                    "max_images": 6,
+                    "min_spacing": 0,  # 前端清空 → Number("")==0 → 回退激进默认 1
+                    "set_cover": False,
+                },
+                inputs={"article_ids": [aid]},
+                upstream={},
+            )
+        )
+        assert captured["max_images"] == 6  # 显式值生效
+        assert captured["min_spacing"] == 1  # 0 视为未设，回退激进默认
+        assert captured["builtin_variant"] == "aggressive"
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_ai_illustrate_custom_preset_passthrough(monkeypatch):
+    """配了自定义 ai_format 模板 preset_id → 透传给 run_ai_format（变体仍按风格传，缺省兜底用）。"""
+    app = build_test_app(monkeypatch)
+    try:
+        main_id = _make_category(app, "主推A", "main-a", "main")
+        aid = _make_article(app.client)
+        uid = _uid(app)
+        captured = _capture_knobs(monkeypatch)
+
+        from server.app.modules.pipelines.nodes.ai_illustrate import run_ai_illustrate
+        from server.app.modules.pipelines.nodes.base import NodeRunContext
+
+        run_ai_illustrate(
+            NodeRunContext(
+                session_factory=app.session_factory,
+                user_id=uid,
+                config={"main_category_id": main_id, "preset_id": 99, "set_cover": False},
+                inputs={"article_ids": [aid]},
+                upstream={},
+            )
+        )
+        assert captured["preset_id"] == 99
     finally:
         app.cleanup()
 

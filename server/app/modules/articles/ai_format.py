@@ -171,6 +171,9 @@ def _node_label(node: dict) -> str:
 
 _PROMPT_DIR = Path(__file__).with_name("prompts")
 _AI_FORMAT_WITH_IMAGES_TEMPLATE = _PROMPT_DIR / "ai_format_with_images.j2"
+# 「积极配图」内置变体：每款明确出现的游戏都配图（保留"不确定不插"准星）。仅 AI配图 节点
+# 在 aggressive_images=True（默认）时选用；手动排版/方案配图仍走上面的保守模板。
+_AI_FORMAT_WITH_IMAGES_AGGRESSIVE_TEMPLATE = _PROMPT_DIR / "ai_format_with_images_aggressive.j2"
 
 
 def _template_env() -> SandboxedEnvironment:
@@ -312,8 +315,10 @@ def render_ai_format_prompt(
     )
 
 
-def _builtin_prompt_template(include_images: bool) -> str:
+def _builtin_prompt_template(include_images: bool, variant: str = "conservative") -> str:
     if include_images:
+        if variant == "aggressive":
+            return _AI_FORMAT_WITH_IMAGES_AGGRESSIVE_TEMPLATE.read_text(encoding="utf-8")
         return _AI_FORMAT_WITH_IMAGES_TEMPLATE.read_text(encoding="utf-8")
     return _SYSTEM_PROMPT_HEADINGS_ONLY
 
@@ -323,11 +328,16 @@ def _fallback_prompt(
     text_nodes: list[tuple[int, dict]] | None = None,
     available_categories: list[dict[str, Any]] | None = None,
     web_fallback: bool = False,
+    max_images: int | None = None,
+    min_spacing: int | None = None,
+    variant: str = "conservative",
 ) -> str:
     return render_ai_format_prompt(
-        _builtin_prompt_template(include_images),
+        _builtin_prompt_template(include_images, variant),
         text_nodes=text_nodes or [],
         available_categories=available_categories or [],
+        max_images=max_images,
+        min_spacing=min_spacing,
         web_fallback=web_fallback,
     )
 
@@ -341,14 +351,29 @@ def _load_ai_format_prompt(
     text_nodes: list[tuple[int, dict]] | None = None,
     available_categories: list[dict[str, Any]] | None = None,
     web_fallback: bool = False,
+    max_images: int | None = None,
+    min_spacing: int | None = None,
+    builtin_variant: str = "conservative",
 ) -> str:
     """组装完整的 AI 排版/配图系统提示词。
+
+    max_images / min_spacing 非空时覆盖按文章结构推导的默认值（注入提示词的 {{ max_images }} /
+    {{ min_spacing }} 占位）；DB 模板与内置模板都吃这层覆盖。builtin_variant 仅在用内置模板
+    （preset_id 缺省/不可用）时决定走保守还是「积极配图」变体。
 
     联网兜底（web_fallback=True 且 include_images）的 game 字段指引在这里统一拼到末尾，
     使本函数返回的就是模型最终看到的完整提示词——调用方（run_ai_format）不再二次拼接。
     """
     if preset_id is None or user_id is None:
-        base = _fallback_prompt(include_images, text_nodes, available_categories, web_fallback)
+        base = _fallback_prompt(
+            include_images,
+            text_nodes,
+            available_categories,
+            web_fallback,
+            max_images=max_images,
+            min_spacing=min_spacing,
+            variant=builtin_variant,
+        )
     else:
         from server.app.modules.prompt_templates.service import get_visible_prompt_template
 
@@ -357,13 +382,23 @@ def _load_ai_format_prompt(
             logger.info(
                 "ai_format preset %s unavailable; falling back to built-in prompt", preset_id
             )
-            base = _fallback_prompt(include_images, text_nodes, available_categories, web_fallback)
+            base = _fallback_prompt(
+                include_images,
+                text_nodes,
+                available_categories,
+                web_fallback,
+                max_images=max_images,
+                min_spacing=min_spacing,
+                variant=builtin_variant,
+            )
         else:
             logger.info("ai_format using DB prompt template %s", preset_id)
             base = render_ai_format_prompt(
                 prompt.content,
                 text_nodes=text_nodes or [],
                 available_categories=available_categories or [],
+                max_images=max_images,
+                min_spacing=min_spacing,
                 web_fallback=web_fallback,
             )
 
@@ -600,12 +635,17 @@ def _maybe_insert_images(
     available_categories: list[dict[str, Any]] | None = None,
     web_fallback: bool = False,
     image_search_query: str | None = None,
+    max_images: int | None = None,
 ) -> tuple[dict, int]:
     """按模型给的 image_positions 插图，返回 (新文档, 实插图数)。
 
     正文已含图则不动。每个位置优先用候选列表里的 category_id；web_fallback 开时，模型也可用
     game 游戏名点名库里没有的游戏 → get-or-create 陪衬栏目；选中的栏目没图时（含新建的）联网
     搜图补一张。选不到的位置静默跳过。web_fallback 关时行为与改造前一致（game 字段被忽略）。
+
+    max_images 非空时是【硬上限】：取靠前的至多 N 个位置，达到即停止扫描（不再为后续位置
+    联网搜图，省调用）。这层兜底独立于提示词文案——即便模型/自定义模板没遵守上限也不会超。
+    max_images=None（手动排版/方案配图）保持原行为：不硬截断，全凭模型返回的位置数。
     """
     if has_images_in_content(content_json):
         return content_json, 0
@@ -626,10 +666,12 @@ def _maybe_insert_images(
     if not positions:
         return content_json, 0
 
-    matched_refs = []
-    matched_positions = []
+    matched_refs: list[Any] = []
+    matched_positions: list[int] = []
     used_ids: list[int] = []
     for idx, req_cat_id, game in positions:
+        if max_images is not None and len(matched_refs) >= max_images:
+            break  # 已达硬上限：停止扫描，后续位置不再取图/联网搜图
         category = None  # ORM 对象，仅 web_fallback 取图/新建游戏分支才需要
         target_cat_id: int | None = None
         if req_cat_id is not None and req_cat_id in valid_category_ids:
@@ -696,6 +738,9 @@ def run_ai_format(
     user_id: int | None = None,
     candidate_categories: list[dict[str, Any]] | None = None,
     web_fallback: bool = False,
+    max_images: int | None = None,
+    min_spacing: int | None = None,
+    builtin_variant: str = "conservative",
 ) -> int:
     """识别正文小标题，并把更新后的 Tiptap 文档写回文章。返回实际插入并落库的图片数。
 
@@ -704,6 +749,10 @@ def run_ai_format(
 
     web_fallback=True（仅 AI配图 节点开关）时：允许模型点名库里没有的陪衬游戏，
     缺图则联网搜图补充（见 _maybe_insert_images）。默认 False，其它调用方行为不变。
+
+    max_images / min_spacing（仅 AI配图 节点传）覆盖按文章结构推导的默认配图数量/间距，并作为
+    插图阶段的硬上限；缺省 None 时维持原行为（按结构推导、不硬截断）。builtin_variant 仅在用内置
+    模板时区分保守 / 「积极配图」变体，默认 conservative——手动排版、方案配图均不变。
 
     返回值仅供调用方观测（如 ai_illustrate 节点回传 images_inserted）；任何跳过/失败均返回 0，
     失败详情照旧落到 article.ai_format_error。多数调用方忽略返回值，行为不变。
@@ -756,6 +805,9 @@ def run_ai_format(
             text_nodes=text_nodes,
             available_categories=available_categories,
             web_fallback=web_fallback,
+            max_images=max_images,
+            min_spacing=min_spacing,
+            builtin_variant=builtin_variant,
         )
         # 搜图关键词：优先用数据库可编辑模板（image_search scope），缺省回退内置默认。
         # 陪衬游戏提示词（image_companion）已在 _load_ai_format_prompt 内按可编辑模板拼接。
@@ -798,6 +850,7 @@ def run_ai_format(
                 available_categories=available_categories,
                 web_fallback=web_fallback,
                 image_search_query=image_search_query,
+                max_images=max_images,
             )
 
         # 第二道锁检查：写回前 refresh 再比一次指纹。模型耗时长，期间可能有新一轮排版抢锁，

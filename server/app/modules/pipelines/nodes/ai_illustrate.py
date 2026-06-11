@@ -21,6 +21,15 @@ from server.app.modules.pipelines.nodes.base import NodeResult, NodeRunContext, 
 from server.app.shared.errors import ValidationError
 
 
+def _pos_int(v: Any, default: int) -> int:
+    """正整数配置取值：非法 / 非正（含前端清空字段得到的 0）→ default。"""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return default
+    return n if n > 0 else default
+
+
 def run_ai_illustrate(ctx: NodeRunContext) -> NodeResult:
     cfg = ctx.config or {}
     article_ids = [a for a in (ctx.inputs.get("article_ids") or []) if isinstance(a, int)]
@@ -35,17 +44,25 @@ def run_ai_illustrate(ctx: NodeRunContext) -> NodeResult:
     include_companion = bool(cfg.get("include_companion", True))
     web_fallback = bool(cfg.get("web_fallback", False))
     set_cover = bool(cfg.get("set_cover", True))
+
+    # 配图风格 / 数量旋钮（节点自包含，不再回退 user.ai_format_preset_id）：
+    # aggressive_images 默认开 → 用「积极配图」内置变体（每个明确出现的游戏都插）；关 → 保守变体。
+    # max_images / min_spacing 缺省随风格取激进(12/1) 或保守(3/5)，也作为插图阶段硬上限。
+    # 运营若在「提示词管理」自建 ai_format 模板，可经 preset_id 覆盖措辞，数字旋钮与硬上限照样生效。
+    aggressive = bool(cfg.get("aggressive_images", True))
+    builtin_variant = "aggressive" if aggressive else "conservative"
+    max_images = _pos_int(cfg.get("max_images"), 12 if aggressive else 3)
+    min_spacing = _pos_int(cfg.get("min_spacing"), 1 if aggressive else 5)
     cfg_preset_id = cfg.get("preset_id")
+    effective_preset = cfg_preset_id if isinstance(cfg_preset_id, int) else None
 
     errors: list[str] = []
 
     def _format_one(article_id: int) -> int:
         from server.app.modules.articles.models import Article
-        from server.app.modules.system.models import User
 
         lock_started_at = utcnow().replace(microsecond=0)
         candidate_categories: list[Any] = []
-        effective_preset: int | None = None
 
         db = ctx.session_factory()
         try:
@@ -54,12 +71,6 @@ def run_ai_illustrate(ctx: NodeRunContext) -> NodeResult:
                 return 0
             if not has_ai_format_targets(article.content_json):
                 return 0
-            user = db.get(User, ctx.user_id)
-            effective_preset = (
-                cfg_preset_id
-                if isinstance(cfg_preset_id, int)
-                else (getattr(user, "ai_format_preset_id", None) if user else None)
-            )
             candidate_categories = category_contexts_for(
                 db, main_category_id=main_category_id, include_companion=include_companion
             )
@@ -78,6 +89,9 @@ def run_ai_illustrate(ctx: NodeRunContext) -> NodeResult:
             user_id=ctx.user_id,
             candidate_categories=candidate_categories,
             web_fallback=web_fallback,
+            max_images=max_images,
+            min_spacing=min_spacing,
+            builtin_variant=builtin_variant,
         )
 
     def _maybe_set_cover(article_id: int) -> Any:
