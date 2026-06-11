@@ -300,7 +300,9 @@ def test_operator_cannot_delete_account_gets_clear_reason(monkeypatch):
 
         # 造一个 operator，以其身份请求删除
         with test_app.session_factory() as db:
-            op = User(username="op_del", role="operator", is_active=True, must_change_password=False)
+            op = User(
+                username="op_del", role="operator", is_active=True, must_change_password=False
+            )
             op.set_password("pass1234")
             db.add(op)
             db.commit()
