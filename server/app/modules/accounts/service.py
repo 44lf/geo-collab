@@ -310,7 +310,12 @@ def rename_account(db: Session, account: Account, display_name: str) -> Account:
 
 
 def delete_account(db: Session, account: Account) -> None:
-    """软删账号（置 is_deleted）。仍有未完成发布记录时抛 ClientError 拒绝删除。"""
+    """软删账号并释放身份槽位；仍有未完成发布记录时抛 ClientError 拒绝删除。
+
+    释放槽位＝置空 platform_user_id（全局唯一约束据此放行同一 app_id 重新登记）、
+    清 api_token_cache、抹除 api_credentials.app_secret（保留 app_id 供审计）。
+    发布历史（PublishRecord.account_id）不动。
+    """
     account_id = account.id
 
     active = (
@@ -330,6 +335,12 @@ def delete_account(db: Session, account: Account) -> None:
 
     account.is_deleted = True
     account.deleted_at = utcnow()
+    account.platform_user_id = None
+    account.api_token_cache = None
+    if account.api_credentials:
+        creds = dict(account.api_credentials)
+        creds.pop("app_secret", None)
+        account.api_credentials = creds or None
     account.updated_at = utcnow()
     db.flush()
 
