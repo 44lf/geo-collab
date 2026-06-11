@@ -27,8 +27,12 @@
 
 两块协同改动：
 
-- **后端**：`to_review` 节点新增 `group_mode` 配置（`per_run` 默认 = 现状 / `per_day` 新增）；新增 service 函数 `mark_pending_and_append_daily`（按日期分组名查找-或-新建后**去重追加**，并发安全）。
-- **前端**：混合状态日期分组在「未审核」「已审核」两个标签**都可见**，每侧只列本状态文章，并提示「另有 N 篇在另一标签」。
+- **后端**：`to_review` 节点新增 `daily_group` 布尔开关（默认 `false` = 现状 / `true` = 按天归组）；新增 service 函数 `mark_pending_and_append_daily`（按日期分组名查找-或-新建后**去重追加**，并发安全）。
+- **前端**：
+  - 编辑器：开关用 `toggle` 类型，由后端 `config_schema` 声明、前端**通用渲染器自动渲染**（[PipelineEditor.tsx:463-482](../../../web/src/features/pipelines/PipelineEditor.tsx) 已有 `toggle` 分支），**无需新增前端代码**。
+  - 内容页：混合状态日期分组在「未审核」「已审核」两个标签**都可见**，每侧只列本状态文章，并提示「另有 N 篇在另一标签」。
+
+> 设计取舍：原计划用 `group_mode` 枚举（per_run/per_day），但前端通用配置渲染器只支持 `toggle`/`checkbox`/`text` 等，没有 `select`/`options` 渲染。为避免为单个字段新增枚举渲染器（YAGNI），改用布尔 `daily_group` 开关，语义等价、零前端改动。
 
 ## 5. 后端详细设计
 
@@ -70,15 +74,14 @@ def run_to_review(ctx):
     if not article_ids:
         return NodeResult(output={"skipped": "无文章"}, article_ids=[])
 
-    mode = (cfg.get("group_mode") or "per_run").strip()
-    if mode == "per_day":
+    if cfg.get("daily_group"):  # 按天归组
         today = dt.datetime.now(ZoneInfo(get_settings().scheduler_tz)).date()
         group_name = f"每日生成 · {today:%Y-%m-%d}"
         gid = mark_pending_and_append_daily(
             ctx.session_factory, article_ids=list(article_ids),
             user_id=ctx.user_id, group_name=group_name,
         )
-    else:  # per_run，保持现状
+    else:  # 保持现状：每次运行一个新组
         base_name = (cfg.get("group_name") or "").strip() or "未审核 · 智能体生成"
         gid = mark_pending_and_group(
             ctx.session_factory, article_ids=list(article_ids),
@@ -88,15 +91,33 @@ def run_to_review(ctx):
 ```
 
 - 日期取 `GEO_SCHEDULER_TZ`，复用 `dt.datetime.now(ZoneInfo(get_settings().scheduler_tz))`（[scheduler.py:35](../../../server/app/modules/pipelines/scheduler.py) 同款）。
-- 组名固定前缀 `每日生成 · {YYYY-MM-DD}`，**不随流水线/节点名变化**——保证「每天一个组·全局」。`per_day` 模式下忽略 `group_name` 配置。
-- 两种模式都输出 `group_id` → 执行器照旧不重复兜底成组。
+- 组名固定前缀 `每日生成 · {YYYY-MM-DD}`，**不随流水线/节点名变化**——保证「每天一个组·全局」。`daily_group=true` 时忽略 `group_name` 配置。
+- 两种分支都输出 `group_id` → 执行器照旧不重复兜底成组。
 
-### 5.3 编辑器节点配置
+### 5.3 编辑器节点配置（后端 config_schema，前端零改）
 
-文件：`web/src/features/pipelines/`（`PipelineEditor` 的 to_review 节点配置面板）
+文件：`server/app/modules/pipelines/router.py`（`get_node_types` 的 `to_review` 段，[router.py:142-147](../../../server/app/modules/pipelines/router.py)）
 
-- 给 to_review 节点加一个下拉/单选：「每次运行新建分组（默认）」/「按天归入同一分组」，写入节点 config 的 `group_mode`（`per_run` / `per_day`）。
-- 实现前先定位 to_review 节点现有配置项的渲染位置（`group_name` 字段在哪渲染就近加）。
+给 to_review 的 `config_schema` 增一个 toggle 字段：
+
+```python
+{
+    "type": "to_review",
+    "label": "进入未审核库",
+    "config_schema": [
+        {"key": "group_name", "type": "text", "label": "分组名(可空)"},
+        {
+            "key": "daily_group",
+            "type": "toggle",
+            "label": "按天归组",
+            "hint": "开启后，当天所有运行/流水线产出并入同一个「每日生成 · 日期」分组",
+            "default": False,
+        },
+    ],
+},
+```
+
+前端 `PipelineEditor` 的 `f.type === "toggle"` 分支会自动渲染该开关，**无需改前端代码**（与 `ai_illustrate` 的 `web_fallback` 同模式）。
 
 ## 6. 前端详细设计
 
@@ -135,8 +156,9 @@ def run_to_review(ctx):
 - 重复提交同一 article → 去重，不新增 item。
 - 并发 `IntegrityError` 路径 → 回查复用同组（可用 monkeypatch flush 触发一次 IntegrityError 验证重试分支）。
 - 软删同名组撞名 → 复活并追加（边角）。
-- `per_run` 模式行为不变（回归既有 `mark_pending_and_group`）。
-- 节点级：构造 `NodeRunContext`，`group_mode=per_day` 跑两次验证累加；`group_mode` 缺省时等于 per_run。
+- 默认（`daily_group` 关）行为不变（回归既有 `mark_pending_and_group`，每次新组）。
+- 节点级：构造 `NodeRunContext`，`daily_group=True` 跑两次验证累加；缺省时等于旧行为。
+- node-types：`GET /api/pipelines/node-types` 的 to_review 段含 `daily_group` 且 `type=="toggle"`。
 
 ### 前端
 
@@ -145,18 +167,17 @@ def run_to_review(ctx):
 
 ## 9. 实现任务拆分（供并行执行）
 
-依赖关系：T1 → T2（节点依赖 service）；T3、T4 前端，T4 与 T1/T2 无代码依赖可并行；T3 依赖 T2 的 config 字段约定（`group_mode`）。
+依赖关系：T1 → T2（节点依赖 service）。T3（前端内容页）与后端无代码依赖，可与 T1/T2 **并行**。编辑器开关已并入 T2 的后端 `config_schema`，无独立前端任务。
 
 - **T1（后端·service）**：`mark_pending_and_append_daily` + 后端单测（service 级 + 去重/并发/软删边角）。
-- **T2（后端·节点）**：`to_review` 的 `group_mode` 分支 + 节点级测试。依赖 T1。
-- **T3（前端·编辑器）**：PipelineEditor to_review 节点 `group_mode` 下拉。
-- **T4（前端·内容页）**：ContentWorkspace 双标签可见 + 跨标签提示 + 计数调整。
+- **T2（后端·节点 + config_schema）**：`to_review` 的 `daily_group` 分支 + router `config_schema` 加 toggle + 节点级/node-types 测试。依赖 T1。
+- **T3（前端·内容页）**：ContentWorkspace 双标签可见 + 跨标签提示 + 计数调整。与 T1/T2 并行。
 - **集成**：ruff check / ruff format / mypy / pytest（后端）、typecheck / build（前端）全绿。
 
 ## 10. 自检清单（落地后核对）
 
-- [ ] 默认 `per_run`，现有流水线行为零变化。
-- [ ] `per_day` 同日累加、跨天新建、去重、并发安全。
+- [ ] 默认（`daily_group` 关），现有流水线行为零变化。
+- [ ] `daily_group` 开：同日累加、跨天新建、去重、并发安全。
 - [ ] 前端混合组双标签 + 跨标签提示；approve 不跳组。
 - [ ] 后端测试全绿；前端 typecheck + build 全绿。
 - [ ] CLAUDE.md 若需补 `group_mode` 说明则同步（pipelines 模块段落）。
