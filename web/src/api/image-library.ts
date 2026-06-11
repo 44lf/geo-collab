@@ -8,7 +8,7 @@ export function listCategories(kind?: "main" | "companion"): Promise<StockCatego
 
 export function createCategory(payload: {
   name: string;
-  bucket_name: string;
+  bucket_name?: string;
   kind?: "main" | "companion";
   description?: string | null;
   official_url?: string | null;
@@ -32,6 +32,10 @@ export function updateCategory(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export function deleteCategory(categoryId: number): Promise<void> {
+  return api<void>(`/api/image-library/categories/${categoryId}`, { method: "DELETE" });
 }
 
 export function listImages(params?: { category_id?: number; tag?: string }): Promise<StockImage[]> {

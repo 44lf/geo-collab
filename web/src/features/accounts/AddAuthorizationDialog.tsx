@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Check, ChevronDown, ChevronUp, LoaderCircle, X, Search, ArrowRight, ExternalLink, Camera, AppWindow } from "lucide-react";
 import type { PlatformOption } from "../../types";
-import { createApiAccount, verifyCredentials, startAccountLoginSession, pollLoginSessionUntilActive, finishAccountLoginSession } from "../../api/accounts";
+import { createApiAccount, verifyCredentials, startPlatformLoginSession, startAccountLoginSession, pollLoginSessionUntilActive, finishAccountLoginSession } from "../../api/accounts";
 import { useToast } from "../../components/Toast";
 
 export function AddAuthorizationDialog({
@@ -41,6 +41,10 @@ export function AddAuthorizationDialog({
   const filteredPlatforms = platforms.filter(
     (p) => !searchQuery || p.name.includes(searchQuery),
   );
+
+  // API 型平台（如微信公众号）凭据直填；其余（含 browser / 未标记）走浏览器扫码登录。
+  // 用后端下发的能力位 mode 判定，避免硬编码具体平台 code。
+  const isApiPlatform = selectedPlatform?.mode === "api";
 
   function reset() {
     setStep(1);
@@ -92,29 +96,24 @@ export function AddAuthorizationDialog({
       toast("请选择平台", "error");
       return;
     }
-    if (selectedPlatform.code === "wechat_mp" && (!appId.trim() || !appSecret.trim())) {
+    if (isApiPlatform && (!appId.trim() || !appSecret.trim())) {
       toast("请填写 AppID 和 AppSecret", "error");
       return;
     }
 
-    setVerifying(true);
-    try {
-      const payload: Record<string, unknown> = {
-        platform_code: selectedPlatform.code,
-        display_name: displayName.trim(),
-        contact: contact.trim() || null,
-        note: note.trim() || null,
-        distribution_enabled: distributionEnabled,
-      };
-
-      if (selectedPlatform.code === "wechat_mp") {
-        payload.api_credentials = { app_id: appId.trim(), app_secret: appSecret.trim() };
-      }
-
-      const account = await createApiAccount(payload);
-      setCreatedAccountId(account.id);
-
-      if (selectedPlatform.code === "wechat_mp") {
+    // API 型平台（如微信公众号）：凭据直填后建号 + 验证凭据，无浏览器登录。
+    if (isApiPlatform) {
+      setVerifying(true);
+      try {
+        const account = await createApiAccount({
+          platform_code: selectedPlatform.code,
+          display_name: displayName.trim(),
+          contact: contact.trim() || null,
+          note: note.trim() || null,
+          distribution_enabled: distributionEnabled,
+          api_credentials: { app_id: appId.trim(), app_secret: appSecret.trim() },
+        });
+        setCreatedAccountId(account.id);
         try {
           await verifyCredentials(account.id);
           onCreated();
@@ -125,50 +124,53 @@ export function AddAuthorizationDialog({
           setResultMessage(err instanceof Error ? err.message : "凭据验证失败");
         }
         setStep("result");
-      } else {
-        setStep(2);
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "创建账号失败", "error");
+      } finally {
+        setVerifying(false);
       }
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "创建账号失败", "error");
-    } finally {
-      setVerifying(false);
+      return;
     }
+
+    // 浏览器登录平台（头条等）：不走 POST /api/accounts（那个端点强制要 api_credentials），
+    // 直接进第 2 步用 /login-session 端点建号 + 起远程浏览器扫码会话。
+    setStep(2);
   }
 
+  // 第 2 步：浏览器平台的扫码登录会话。建号 + 起会话 → 轮询到 active 后打开 noVNC 窗口，
+  // 之后等用户在窗口里完成登录、手动点「我已完成登录」(handleFinishLogin)，不自动收尾。
   useEffect(() => {
-    if (step !== 2 || !createdAccountId) return;
+    if (step !== 2 || !selectedPlatform) return;
 
     let cancelled = false;
     pollingActiveRef.current = true;
 
     async function init() {
       try {
-        const session = await startAccountLoginSession(createdAccountId!, {});
+        const session = await startPlatformLoginSession(selectedPlatform!.code, {
+          display_name: displayName.trim(),
+          account_key: "",
+          use_browser: true,
+          contact: contact.trim() || null,
+          note: note.trim() || null,
+          distribution_enabled: distributionEnabled,
+        });
         if (cancelled) return;
+        setCreatedAccountId(session.account.id);
         setLoginSessionId(session.session_id);
-        setLoginNovncUrl(session.novnc_url);
-
-        if (session.novnc_url) {
-          window.open(session.novnc_url, "_blank");
-        }
+        onCreated();
 
         try {
-          await pollLoginSessionUntilActive(
-            createdAccountId!,
-            session.session_id,
-          );
-          if (cancelled || finishRequestedRef.current) return;
-          if (!pollingActiveRef.current) return;
-
-          finishRequestedRef.current = true;
-          const result = await finishAccountLoginSession(createdAccountId!, session.session_id);
-          if (cancelled) return;
-          if (result.logged_in) {
-            onCreated();
-            handleClose();
+          const active = await pollLoginSessionUntilActive(session.account.id, session.session_id);
+          if (cancelled || !pollingActiveRef.current) return;
+          if (active.novnc_url) {
+            setLoginNovncUrl(active.novnc_url);
+            window.open(active.novnc_url, "_blank");
           }
-        } catch {
-          // polling failed — user can click manually
+          // 不自动 finish：等用户在 noVNC 窗口里登录后点「我已完成登录」。
+        } catch (err) {
+          if (cancelled) return;
+          setLoginSessionError(err instanceof Error ? err.message : "启动登录会话失败");
         }
       } catch (err) {
         if (cancelled) return;
@@ -182,7 +184,9 @@ export function AddAuthorizationDialog({
       cancelled = true;
       pollingActiveRef.current = false;
     };
-  }, [step, createdAccountId]);
+    // 仅在进入第 2 步时跑一次：表单字段在第 1 步已定稿，刻意不进依赖，避免按键 / onCreated 引用变化重启会话。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, selectedPlatform]);
 
   async function handleFinishLogin() {
     if (!createdAccountId || !loginSessionId) return;
@@ -347,7 +351,7 @@ export function AddAuthorizationDialog({
                 </button>
               </div>
 
-              {selectedPlatform?.code === "wechat_mp" && (
+              {isApiPlatform && (
                 <div className="addAuthWeChatSection">
                   <div className="addAuthWeChatHeader">
                     <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--fg)" }}>公众号专属配置</span>
@@ -383,7 +387,7 @@ export function AddAuthorizationDialog({
                   verifying ||
                   !displayName.trim() ||
                   !selectedPlatform ||
-                  (selectedPlatform.code === "wechat_mp" && (!appId.trim() || !appSecret.trim()))
+                  (isApiPlatform && (!appId.trim() || !appSecret.trim()))
                 }
                 style={{
                   background: "#4C6EF5",

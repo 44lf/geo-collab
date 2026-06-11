@@ -330,6 +330,38 @@ def test_toutiao_remote_login_session_creates_unknown_account(monkeypatch):
         test_app.cleanup()
 
 
+def test_toutiao_remote_login_session_persists_profile_fields(monkeypatch):
+    """浏览器平台建号时，表单里的 contact / 分发开关应一并写入账号（A2：复用 /login-session 端点）。"""
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+    install_fake_driver(monkeypatch)
+
+    monkeypatch.setattr(
+        "server.app.modules.accounts.auth._start_login_browser_via_worker",
+        lambda *_args, **_kwargs: "login-session-2",
+    )
+
+    try:
+        response = client.post(
+            "/api/accounts/toutiao/login-session",
+            json={
+                "display_name": "profile-demo",
+                "account_key": "profile-demo",
+                "contact": "13800000000",
+                "distribution_enabled": False,
+                "note": "归属：运营A",
+            },
+        )
+
+        assert response.status_code == 200
+        account = response.json()["account"]
+        assert account["contact"] == "13800000000"
+        assert account["distribution_enabled"] is False
+        assert account["note"] == "归属：运营A"
+    finally:
+        test_app.cleanup()
+
+
 def test_finish_remote_login_session_saves_state_and_stops_session(monkeypatch):
     test_app = build_test_app(monkeypatch)
     client = test_app.client

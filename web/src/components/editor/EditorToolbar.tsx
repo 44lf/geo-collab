@@ -2,7 +2,7 @@ import { useEditor } from "@tiptap/react";
 import {
   AlignCenter, AlignLeft, AlignRight, Baseline, Bold, Eraser,
   Heading1, Heading2, Highlighter, ImagePlus, Italic, LinkIcon,
-  List, ListOrdered, Quote, Redo2, Strikethrough,
+  List, ListOrdered, Quote, Redo2, Save, Strikethrough,
   Underline as UnderlineIcon, Undo2,
 } from "lucide-react";
 
@@ -83,10 +83,10 @@ export function EditorToolbar({
       <button
         onClick={onSaveImage}
         disabled={!imageSelected}
-        title={imageSelected ? "把选中图片存进图库" : "先选中正文中的图片"}
+        title={imageSelected ? "图片保存到图库" : "先选中正文中的图片"}
         type="button"
       >
-        图片保存
+        <Save size={16} />
       </button>
     </div>
   );

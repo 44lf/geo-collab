@@ -68,6 +68,10 @@ class PlatformLoginRequest(BaseModel):
     wait_seconds: int = Field(default=180, ge=5, le=600)  # 等待登录完成的超时时间（秒）
     use_browser: bool = True  # 为 True 时打开浏览器交互登录；为 False 时复用已有状态
     note: str | None = None
+    # ── 通用账号字段（与 ApiAccountCreate 对齐）：浏览器平台建号时由「添加账号」弹窗一并填入 ──
+    contact: str | None = Field(default=None, max_length=200)  # 绑定联系方式
+    avatar_asset_id: str | None = Field(default=None, max_length=64)  # 账号头像
+    distribution_enabled: bool = True  # 分发开关
 
 
 class AccountCheckRequest(BaseModel):
