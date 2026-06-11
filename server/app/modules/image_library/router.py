@@ -182,9 +182,7 @@ def create_category(
 ) -> Any:
     if payload.bucket_name:
         bucket_name = payload.bucket_name
-        existing = (
-            db.query(StockCategory).filter(StockCategory.bucket_name == bucket_name).first()
-        )
+        existing = db.query(StockCategory).filter(StockCategory.bucket_name == bucket_name).first()
         if existing:
             raise HTTPException(status_code=409, detail="bucket_name 已存在")
     else:
@@ -278,9 +276,7 @@ def delete_category(
     if cat is None:
         raise HTTPException(status_code=404, detail="栏目不存在")
 
-    image_count = (
-        db.query(StockImage).filter(StockImage.category_id == category_id).count()
-    )
+    image_count = db.query(StockImage).filter(StockImage.category_id == category_id).count()
     if image_count > 0:
         raise HTTPException(status_code=409, detail="该文件夹内还有图片，请先清空")
 
