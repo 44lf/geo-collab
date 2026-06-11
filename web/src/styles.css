@@ -2810,6 +2810,12 @@ input:focus, select:focus, textarea:focus {
 .agentSchedule .agentField { flex: 0 0 auto; min-width: 96px; }
 .agentHint { color: var(--fg-3); font-size: 12px; }
 
+/* 智能体工作区根容器：父级 .workspace 是 overflow:hidden + 固定视口高，本容器必须自带
+   纵向滚动，否则编辑器属性面板过高时（典型：问题源节点 46vh 类型选择器 +「数据传递」
+   /「跳过条件」两段）底部会被裁切、无法触达。列表视图共用此滚动；内部表格无独立滚动，
+   不会出现双滚动条。模态框为 position:fixed，不受本容器 overflow 影响。 */
+.agentsWorkspace { flex: 1; min-height: 0; overflow-y: auto; }
+
 /* ── 工作流编排（节点编辑器） ───────────────────────────── */
 .peEditor { display: flex; flex-direction: column; gap: 16px; }
 .peToolbar {
