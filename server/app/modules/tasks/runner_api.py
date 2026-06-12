@@ -54,8 +54,14 @@ def _resolve_access_token(account_id: int) -> str:
         db.close()
 
 
-def _build_api_payload(article: Article, account: Account, access_token: str) -> ApiPublishPayload:
-    """解析正文段与资产路径（含图片库临时文件）。封面可空——驱动内回落正文首图。"""
+def _build_api_payload(
+    article: Article, account: Account, access_token: str, platform_code: str
+) -> ApiPublishPayload:
+    """解析正文段与资产路径（含图片库临时文件）。封面可空——驱动内回落正文首图。
+
+    platform_code 由调用方（build_publish_runner_for_record，权威值=record.platform.code）显式传入，
+    不读 account.platform——发布线程里 account 已 detached，懒加载该关系会抛 DetachedInstanceError（见 #90）。
+    """
     from server.app.modules.tasks.runner import (
         _cleanup_temp_files,
         _resolve_stock_image_path,
@@ -103,7 +109,7 @@ def _build_api_payload(article: Article, account: Account, access_token: str) ->
             body_segments=resolved,
             cover_path=cover_path,
             display_name=account.display_name,
-            platform_code=account.platform.code,
+            platform_code=platform_code,
             access_token=access_token,
             temp_files=tuple(temp_files),
         )
@@ -112,9 +118,13 @@ def _build_api_payload(article: Article, account: Account, access_token: str) ->
         raise
 
 
-def run_publish_api(*, article: Article, account: Account, driver) -> PublishResult:
+def run_publish_api(
+    *, article: Article, account: Account, driver, platform_code: str
+) -> PublishResult:
     """API 平台发布：token 解析 → payload 构建 → driver.publish_api。
 
+    platform_code 由 build_publish_runner_for_record 传入（=record.platform.code），避免在发布线程里
+    懒加载已 detached 的 account.platform（见 #90）。
     stop_before_publish 对草稿箱终点是 no-op（草稿箱本身就是「停在发布前」），故无此参数。
     """
     from server.app.modules.tasks.runner import _cleanup_temp_files
@@ -124,7 +134,7 @@ def run_publish_api(*, article: Article, account: Account, driver) -> PublishRes
 
     with publish_step("resolve api access token"):
         access_token = _resolve_access_token(account.id)
-    payload = _build_api_payload(article, account, access_token)
+    payload = _build_api_payload(article, account, access_token, platform_code)
     try:
         with publish_step("api driver publish flow"):
             return driver.publish_api(payload=payload)
