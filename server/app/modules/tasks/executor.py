@@ -903,7 +903,10 @@ def build_publish_runner_for_record(record: PublishRecord):
         driver = resolve_driver(platform_code)
 
         def _api_runner(article, account, *, stop_before_publish=False):
-            return run_publish_api(article=article, account=account, driver=driver)
+            # platform_code（=record.platform.code）显式传入，避免发布线程懒加载 detached account.platform（#90）
+            return run_publish_api(
+                article=article, account=account, driver=driver, platform_code=platform_code
+            )
 
         return _api_runner
 

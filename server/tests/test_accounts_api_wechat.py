@@ -445,6 +445,91 @@ def test_verified_api_account_accepted_by_task_path(monkeypatch):
         test_app.cleanup()
 
 
+def test_run_publish_api_with_detached_account_resolves_platform(monkeypatch):
+    """回归 #90：API 发布在发布线程里（detached account）读 account.platform.code 会触发懒加载。
+
+    PR#70(#78) 的 detached 回归只覆盖 record.platform（build runner 阶段）；run_publish_api /
+    _build_api_payload 读的是 account.platform，从未被 detached 路径覆盖，遂裸奔到生产
+    —— 公众号(API)发布 100% 失败于 DetachedInstanceError。本用例走 build_publish_runner_for_record
+    → 调 runner 的完整 API 分叉，token 解析与 driver.publish_api 打桩，断言不再懒加载 platform。
+    """
+    from sqlalchemy.orm.exc import DetachedInstanceError
+
+    from server.app.modules.accounts.models import Account
+    from server.app.modules.articles.models import Article
+    from server.app.modules.tasks.drivers.base import PublishResult
+    from server.app.modules.tasks.drivers.wechat_mp import WeChatMpDriver
+    from server.app.modules.tasks.executor import (
+        _detach_record_inputs,
+        _load_article_for_publish,
+        build_publish_runner_for_record,
+    )
+    from server.app.modules.tasks.models import PublishRecord
+    from server.app.modules.tasks.schemas import TaskAccountInput, TaskCreate
+    from server.app.modules.tasks.service import create_task
+
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+    try:
+        _ensure_wechat_platform(test_app)
+        article_id = _make_approved_article(client)
+        account_id = client.post("/api/accounts", json=_create_payload()).json()["id"]
+        monkeypatch.setattr(
+            "server.app.modules.accounts.service.wechat_fetch_access_token",
+            lambda app_id, app_secret, client=None: ("tok-1", 7200),
+        )
+        assert client.post(f"/api/accounts/{account_id}/verify-credentials").status_code == 200
+
+        with test_app.session_factory() as db:
+            uid = db.get(Article, article_id).user_id
+            task = create_task(
+                db,
+                uid,
+                TaskCreate(
+                    name="公众号 detached 回归",
+                    task_type="single",
+                    article_id=article_id,
+                    platform_code="wechat_mp",
+                    accounts=[TaskAccountInput(account_id=account_id)],
+                    stop_before_publish=False,
+                ),
+                role="admin",
+            )
+            db.commit()
+            task_id = task.id
+
+        # 打桩 token 解析与驱动发布，避免真打微信接口
+        monkeypatch.setattr(
+            "server.app.modules.tasks.runner_api._resolve_access_token",
+            lambda account_id: "tok-stub",
+        )
+        captured: dict = {}
+
+        def fake_publish_api(self, *, payload, client=None):
+            captured["platform_code"] = payload.platform_code
+            return PublishResult(url=None, title=payload.title, message="draft-ok")
+
+        monkeypatch.setattr(WeChatMpDriver, "publish_api", fake_publish_api)
+
+        with test_app.session_factory() as db:
+            record = db.query(PublishRecord).filter(PublishRecord.task_id == task_id).one()
+            article = _load_article_for_publish(db, record.article_id)
+            account = db.get(Account, record.account_id)
+            _detach_record_inputs(db, record, article, account)
+            runner = build_publish_runner_for_record(record)
+
+        # account 现已 detached；修复前 _build_api_payload 读 account.platform.code 抛 DetachedInstanceError
+        try:
+            result = runner(article, account, stop_before_publish=False)
+        except DetachedInstanceError as exc:  # pragma: no cover - 仅用于断言信息
+            raise AssertionError(f"detached account 触发了 platform 懒加载：{exc}") from exc
+
+        assert result.message == "draft-ok"
+        assert captured["platform_code"] == "wechat_mp"
+    finally:
+        test_app.cleanup()
+
+
 def test_export_excludes_soft_deleted_accounts(monkeypatch):
     test_app = build_test_app(monkeypatch)
     try:
