@@ -81,7 +81,7 @@ security-audit:
   allow_failure: true
   script:
     - python -m pip install --upgrade pip pip-audit
-    - pip-audit -r requirements.txt -r requirements-dev.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+    - pip-audit -r requirements-audit.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
     - corepack enable
     - corepack prepare pnpm@10.4.0 --activate
     - pnpm install --frozen-lockfile --registry https://registry.npmmirror.com
