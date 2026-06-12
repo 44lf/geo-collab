@@ -3586,6 +3586,7 @@ option, optgroup {
   .lightboxImg { max-width: 90vw; max-height: 60vh; }
   .lightboxInfo { width: 100%; }
   .formRow.split { grid-template-columns: 1fr; }
+}
 /* ═══════════════════════════════ HOT LISTS ═══════════════════════════════ */
 .hotDash { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
