@@ -387,3 +387,19 @@ def test_degrades_to_non_streaming_when_resolve_fails(monkeypatch):
             assert cnt == 0
     finally:
         app.cleanup()
+
+
+# ---- Task 3: config_schema toggle ----
+@pytest.mark.mysql
+def test_node_types_ai_generate_has_daily_group_toggle(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        r = app.client.get("/api/pipelines/node-types")
+        assert r.status_code == 200, r.text
+        types = {nt["type"]: nt for nt in r.json()["node_types"]}
+        fields = {f["key"]: f for f in types["ai_generate"]["config_schema"]}
+        assert "daily_group" in fields
+        assert fields["daily_group"]["type"] == "toggle"
+        assert fields["daily_group"].get("default") is False
+    finally:
+        app.cleanup()
