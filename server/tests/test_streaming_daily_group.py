@@ -403,3 +403,50 @@ def test_node_types_ai_generate_has_daily_group_toggle(monkeypatch):
         assert fields["daily_group"].get("default") is False
     finally:
         app.cleanup()
+
+
+# ---- Task 4: to_review 守卫 ----
+@pytest.mark.mysql
+def test_to_review_passthrough_when_already_grouped(monkeypatch):
+    from server.app.modules.articles.models import ArticleGroup
+    from server.app.modules.pipelines.nodes.to_review import run_to_review
+
+    app = build_test_app(monkeypatch)
+    try:
+        uid = _uid(app)
+        a1, a2 = _make_article(app.client, "甲"), _make_article(app.client, "乙")
+        # 上游已带 group_id（模拟 ai_generate 流式成组）+ to_review daily_group=关
+        ctx = _ctx(app, uid, {"daily_group": False}, {"article_ids": [a1, a2], "group_id": 4242})
+        res = run_to_review(ctx)
+        assert res.output["group_id"] == 4242  # 原样透传
+        assert res.output["article_ids"] == [a1, a2]
+        with app.session_factory() as db:  # 没另建任何组
+            cnt = (
+                db.query(ArticleGroup)
+                .filter(
+                    ArticleGroup.user_id == uid,
+                    ArticleGroup.is_deleted == False,  # noqa: E712
+                )
+                .count()
+            )
+            assert cnt == 0
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_to_review_guard_reads_group_id_from_upstream(monkeypatch):
+    """inputMapping 把 group_id 从 inputs 筛掉时，守卫仍能从 upstream 兜底取回。"""
+    from server.app.modules.pipelines.nodes.to_review import run_to_review
+
+    app = build_test_app(monkeypatch)
+    try:
+        uid = _uid(app)
+        a1 = _make_article(app.client, "甲")
+        ctx = _ctx(
+            app, uid, {"daily_group": False}, {"article_ids": [a1]}, upstream={"group_id": 777}
+        )
+        res = run_to_review(ctx)
+        assert res.output["group_id"] == 777
+    finally:
+        app.cleanup()
