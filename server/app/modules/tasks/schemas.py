@@ -133,6 +133,12 @@ class TaskRead(BaseModel):
     finished_at: datetime | None
 
 
+class AutoDistributeResponse(BaseModel):
+    """自动分发响应：按平台拆分后可能建多个任务（一个任务=单平台），全部返回。"""
+
+    tasks: list[TaskRead]
+
+
 # ── 序列化函数（原 api/serializers.py）──────────────────────────────────────
 
 
