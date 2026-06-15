@@ -448,5 +448,6 @@ def test_to_review_guard_reads_group_id_from_upstream(monkeypatch):
         )
         res = run_to_review(ctx)
         assert res.output["group_id"] == 777
+        assert res.output["article_ids"] == [a1]
     finally:
         app.cleanup()
