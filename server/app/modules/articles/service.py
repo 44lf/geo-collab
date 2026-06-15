@@ -768,6 +768,7 @@ def append_article_to_group_pending(
                 db.commit()
             except IntegrityError:
                 db.rollback()  # item 已存在 → 仅补标 pending
+                # rollback 后上面的 art 已 detached，必须重新 get，不能复用 art
                 art2 = db.get(Article, article_id)
                 if art2 is not None and art2.review_status != "pending":
                     art2.review_status = "pending"

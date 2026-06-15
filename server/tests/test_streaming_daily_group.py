@@ -208,6 +208,9 @@ def test_resolve_reuses_after_concurrent_create(monkeypatch):
             def __getattr__(self, name):
                 return getattr(object.__getattribute__(self, "_inner"), name)
 
+            def __setattr__(self, name, value):
+                setattr(object.__getattribute__(self, "_inner"), name, value)
+
             def flush(self, *args, **kwargs):
                 inner = object.__getattribute__(self, "_inner")
                 if not state["injected"]:
