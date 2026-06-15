@@ -64,6 +64,37 @@ def create_account(client, data_dir, account_key: str, display_name: str) -> int
     return response.json()["id"]
 
 
+def create_wechat_account(test_app, client, monkeypatch, key="wxA", name="公众号A") -> int:
+    """建一个『有效』的微信公众号(API 驱动)账号，用于跨平台分发用例。"""
+    from server.app.modules.system.models import Platform
+
+    with test_app.session_factory() as db:
+        if db.query(Platform).filter(Platform.code == "wechat_mp").first() is None:
+            db.add(
+                Platform(
+                    code="wechat_mp",
+                    name="微信公众号",
+                    base_url="https://mp.weixin.qq.com",
+                    enabled=True,
+                )
+            )
+            db.commit()
+    wx = client.post(
+        "/api/accounts",
+        json={
+            "platform_code": "wechat_mp",
+            "display_name": name,
+            "api_credentials": {"app_id": key, "app_secret": "secret-xxxx"},
+        },
+    ).json()["id"]
+    monkeypatch.setattr(
+        "server.app.modules.accounts.service.wechat_fetch_access_token",
+        lambda app_id, app_secret, client=None: ("tok-1", 7200),
+    )
+    assert client.post(f"/api/accounts/{wx}/verify-credentials").status_code == 200
+    return wx
+
+
 def create_article(
     client, title: str, *, plain_text: str = "", cover_asset_id: str | None = None
 ) -> int:
@@ -778,7 +809,9 @@ def test_auto_distribute_single_creates_and_executes(monkeypatch):
             json={"article_id": article_id, "account_ids": [account_id]},
         )
         assert response.status_code == 200
-        task = response.json()
+        tasks = response.json()["tasks"]
+        assert len(tasks) == 1
+        task = tasks[0]
         assert task["task_type"] == "single"
         assert task["article_id"] == article_id
         assert task["group_id"] is None
@@ -835,7 +868,9 @@ def test_auto_distribute_group_round_robin(monkeypatch):
             },
         )
         assert response.status_code == 200
-        task = response.json()
+        tasks = response.json()["tasks"]
+        assert len(tasks) == 1
+        task = tasks[0]
         assert task["task_type"] == "group_round_robin"
         assert task["group_id"] == group["id"]
         assert task["record_count"] == 2
@@ -885,5 +920,86 @@ def test_auto_distribute_requires_exactly_one_target(monkeypatch):
             json={"account_ids": [account_id]},
         )
         assert neither.status_code == 422
+    finally:
+        test_app.cleanup()
+
+
+def _platform_code(test_app, platform_id: int) -> str:
+    from server.app.modules.system.models import Platform
+
+    with test_app.session_factory() as db:
+        return db.get(Platform, platform_id).code
+
+
+def test_auto_distribute_wechat_account_creates_task(monkeypatch):
+    """回归：分发到非头条账号（公众号）不应再报 Account platform mismatch。"""
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    try:
+        monkeypatch.setattr(
+            "server.app.modules.tasks.executor.build_publish_runner_for_record",
+            lambda record: FakePublisher()._runner,
+        )
+        article_id = create_article(client, "WX Article", plain_text="body")
+        wx_id = create_wechat_account(test_app, client, monkeypatch)
+
+        response = client.post(
+            "/api/tasks/auto-distribute",
+            json={"article_id": article_id, "account_ids": [wx_id]},
+        )
+        assert response.status_code == 200, response.json()
+        tasks = response.json()["tasks"]
+        assert len(tasks) == 1
+        # 任务平台必须解析为公众号，而不是默认的头条。
+        assert _platform_code(test_app, tasks[0]["platform_id"]) == "wechat_mp"
+    finally:
+        test_app.cleanup()
+
+
+def test_auto_distribute_multi_platform_splits_per_platform(monkeypatch):
+    """跨平台勾选（头条 + 公众号）→ 每个平台各建一个任务，各带正确 platform_code。"""
+    test_app = build_test_app(monkeypatch)
+    client = test_app.client
+
+    try:
+        monkeypatch.setattr(
+            "server.app.modules.tasks.executor.build_publish_runner_for_record",
+            lambda record: FakePublisher()._runner,
+        )
+        cover_id = _upload_cover_image(client)
+        a1 = create_article(client, "A", plain_text="a", cover_asset_id=cover_id)
+        a2 = create_article(client, "B", plain_text="b", cover_asset_id=cover_id)
+        tt = create_account(client, test_app.data_dir, "tt", "头条号")
+        wx = create_wechat_account(test_app, client, monkeypatch)
+
+        group = client.post("/api/article-groups", json={"name": "Batch"}).json()
+        client.put(
+            f"/api/article-groups/{group['id']}/items",
+            json={
+                "items": [
+                    {"article_id": a1, "sort_order": 10},
+                    {"article_id": a2, "sort_order": 20},
+                ]
+            },
+        )
+
+        response = client.post(
+            "/api/tasks/auto-distribute",
+            json={"group_id": group["id"], "account_ids": [tt, wx], "name": "多平台分发"},
+        )
+        assert response.status_code == 200, response.json()
+        tasks = response.json()["tasks"]
+        assert len(tasks) == 2
+        codes = {_platform_code(test_app, t["platform_id"]) for t in tasks}
+        assert codes == {"toutiao", "wechat_mp"}
+        # 每个任务只含本平台账号。
+        for task in tasks:
+            records = client.get(f"/api/tasks/{task['id']}/records").json()
+            account_ids = {r["account_id"] for r in records}
+            if _platform_code(test_app, task["platform_id"]) == "wechat_mp":
+                assert account_ids == {wx}
+            else:
+                assert account_ids == {tt}
     finally:
         test_app.cleanup()

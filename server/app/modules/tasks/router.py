@@ -35,6 +35,7 @@ from server.app.modules.tasks import (
 from server.app.modules.tasks.models import PublishRecord, PublishTask
 from server.app.modules.tasks.schemas import (
     AutoDistributeRequest,
+    AutoDistributeResponse,
     ManualConfirmInput,
     PublishRecordRead,
     TaskAccountInput,
@@ -46,6 +47,7 @@ from server.app.modules.tasks.schemas import (
     to_record_read,
     to_task_read,
 )
+from server.app.shared.errors import AccountError, ValidationError
 
 tasks_router = APIRouter()
 publish_records_router = APIRouter()
@@ -124,53 +126,107 @@ def create_task_endpoint(
         ) from exc
 
 
-@tasks_router.post("/auto-distribute", response_model=TaskRead)
+def _group_accounts_by_platform(db: Session, account_ids: list[int]) -> list[tuple[str, list[int]]]:
+    """把选中账号按其真实平台分组（去重、保留传入顺序）。
+
+    返回 [(platform_code, [account_id, ...]), ...]，平台按 code 升序、组内保留传入顺序，
+    便于稳定的 round-robin 与可测性。任一账号不存在/已删除即抛 AccountError（与 create_task 一致 → 400）。
+    """
+    from server.app.modules.accounts.models import Account
+    from server.app.modules.system.models import Platform
+
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for account_id in account_ids:
+        if account_id not in seen:
+            seen.add(account_id)
+            ordered.append(account_id)
+
+    rows = db.execute(
+        select(Account.id, Platform.code)
+        .join(Platform, Account.platform_id == Platform.id)
+        .where(Account.id.in_(ordered), Account.is_deleted == False)  # noqa: E712
+    ).all()
+    platform_by_account = {account_id: code for account_id, code in rows}
+    missing = [account_id for account_id in ordered if account_id not in platform_by_account]
+    if missing:
+        raise AccountError(f"Account not found: {missing[0]}")
+
+    grouped: dict[str, list[int]] = {}
+    for account_id in ordered:
+        grouped.setdefault(platform_by_account[account_id], []).append(account_id)
+    return [(code, grouped[code]) for code in sorted(grouped)]
+
+
+@tasks_router.post("/auto-distribute", response_model=AutoDistributeResponse)
 def auto_distribute_endpoint(
     payload: AutoDistributeRequest,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> TaskRead:
-    """一键自动分发：把「文章/分组 + 账号列表」简化请求映射成 TaskCreate 建任务并立即后台执行。
+) -> AutoDistributeResponse:
+    """一键自动分发：把「文章/分组 + 账号列表」简化请求映射成发布任务并立即后台执行。
 
-    单文章→single，分组→group_round_robin。审核门禁/账号校验都在 create_task 内（抛命名异常→400）。
+    选中账号按其真实平台分组，每个平台各建一个任务（受『一个任务=单平台』约束，
+    见 service.py:_validated_accounts）。单文章→single（每平台取首个账号，与前端轮询预览
+    『单篇 → 首账号』一致），分组→group_round_robin。审核门禁/账号校验都在 create_task 内
+    （抛命名异常→400）。
     """
     is_group = payload.group_id is not None
     target_label = f"分组 {payload.group_id}" if is_group else f"文章 {payload.article_id}"
-    task_create = TaskCreate(
-        name=payload.name or f"自动分发 {target_label}",
-        task_type="group_round_robin" if is_group else "single",
-        article_id=payload.article_id,
-        group_id=payload.group_id,
-        accounts=[
+
+    groups = _group_accounts_by_platform(db, list(payload.account_ids))
+    if not groups:
+        raise ValidationError("At least one account is required")
+
+    base_name = payload.name or f"自动分发 {target_label}"
+    multi = len(groups) > 1
+    created_tasks: list[PublishTask] = []
+    for platform_code, account_ids in groups:
+        # 单文章每平台只发到首个账号（单篇 round-robin 必然落在首账号）；分组保留全部账号做轮询。
+        used_account_ids = account_ids if is_group else account_ids[:1]
+        accounts = [
             TaskAccountInput(account_id=account_id, sort_order=index)
-            for index, account_id in enumerate(payload.account_ids)
-        ],
-        stop_before_publish=False,
-    )
-    # 审核门禁 + 账号有效性校验都在 create_task 内部执行（抛命名异常 → 全局映射 400）。
-    new_task = create_task(db, current_user.id, task_create, role=current_user.role)
+            for index, account_id in enumerate(used_account_ids)
+        ]
+        name = f"{base_name} · {platform_code}" if multi else base_name
+        task_create = TaskCreate(
+            name=name,
+            task_type="group_round_robin" if is_group else "single",
+            article_id=payload.article_id,
+            group_id=payload.group_id,
+            platform_code=platform_code,
+            accounts=accounts,
+            stop_before_publish=False,
+        )
+        # 审核门禁 + 账号有效性校验都在 create_task 内部执行（抛命名异常 → 全局映射 400）。
+        new_task = create_task(db, current_user.id, task_create, role=current_user.role)
+        created_tasks.append(new_task)
+
+    # 先提交，保证后台执行线程的独立 session 能看到这些任务。
     db.commit()
 
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="task.auto_distribute",
-        target_type="task",
-        target_id=new_task.id,
-        payload={
-            "name": task_create.name,
-            "article_id": payload.article_id,
-            "group_id": payload.group_id,
-            "account_ids": list(payload.account_ids),
-        },
-        request=request,
-    )
+    for new_task in created_tasks:
+        add_audit_entry(
+            db,
+            user=current_user,
+            action="task.auto_distribute",
+            target_type="task",
+            target_id=new_task.id,
+            payload={
+                "name": new_task.name,
+                "article_id": payload.article_id,
+                "group_id": payload.group_id,
+                "account_ids": [account.account_id for account in new_task.accounts],
+            },
+            request=request,
+        )
 
     # 触发后台执行（与 POST /api/tasks/{id}/execute 同一条懒加载 bg_session_factory 路径）。
-    _start_background_execute(new_task.id)
+    for new_task in created_tasks:
+        _start_background_execute(new_task.id)
 
-    return to_task_read(new_task)
+    return AutoDistributeResponse(tasks=[to_task_read(task) for task in created_tasks])
 
 
 @tasks_router.post("/preview", response_model=TaskAssignmentPreviewRead)

@@ -111,10 +111,16 @@ export function DistributeModal({ target, accounts, onClose, onDistributed }: Pr
     setSubmitting(true);
     try {
       const accountIds = orderedSelected;
+      // The backend groups the selected accounts by their real platform and creates one
+      // task per platform (one task = single platform), so a cross-platform selection can
+      // yield several tasks. Count them for the toast.
+      let created = 0;
       if (target.kind === "group") {
-        await autoDistribute({ group_id: target.groupId, account_ids: accountIds, name: target.name });
+        const res = await autoDistribute({ group_id: target.groupId, account_ids: accountIds, name: target.name });
+        created += res.tasks.length;
       } else if (target.kind === "article") {
-        await autoDistribute({ article_id: target.article.id, account_ids: accountIds });
+        const res = await autoDistribute({ article_id: target.article.id, account_ids: accountIds });
+        created += res.tasks.length;
       } else {
         // Multi-article selection: one task per article, round-robined across the
         // selected accounts so the result matches the preview (article i → account i%M).
@@ -122,10 +128,11 @@ export function DistributeModal({ target, accounts, onClose, onDistributed }: Pr
         for (let index = 0; index < target.articles.length; index++) {
           const article = target.articles[index];
           const accountId = accountIds[index % accountIds.length];
-          await autoDistribute({ article_id: article.id, account_ids: [accountId] });
+          const res = await autoDistribute({ article_id: article.id, account_ids: [accountId] });
+          created += res.tasks.length;
         }
       }
-      toast("已创建自动分发任务", "success");
+      toast(`已创建 ${created} 个自动分发任务`, "success");
       onDistributed?.();
       onClose();
     } catch (error) {

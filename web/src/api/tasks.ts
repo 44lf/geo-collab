@@ -21,8 +21,11 @@ export function createTask(payload: TaskCreatePayload): Promise<Task> {
   return api<Task>("/api/tasks", { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function autoDistribute(payload: AutoDistributePayload): Promise<Task> {
-  return api<Task>("/api/tasks/auto-distribute", { method: "POST", body: JSON.stringify(payload) });
+export function autoDistribute(payload: AutoDistributePayload): Promise<{ tasks: Task[] }> {
+  return api<{ tasks: Task[] }>("/api/tasks/auto-distribute", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function previewTaskAssignment(payload: TaskPreviewPayload): Promise<AssignmentPreview> {
