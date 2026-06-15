@@ -1,8 +1,7 @@
 from types import SimpleNamespace
 
-from server.app.modules.tasks import executor
-
 from server.app.core.config import Settings
+from server.app.modules.tasks import executor
 
 
 def test_pre_delay_defaults(monkeypatch):

@@ -228,7 +228,7 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
     """核心执行循环：每轮续心跳→检查取消/暂停→拉起可跑记录→等 future 完成并写回结果。
 
     退出条件：取消且无在跑、暂停（waiting_user_input / stop_before_publish 停在 manual）且无在跑、
-    或无 pending 且无在跑（此时聚合 task 终态）。超过 publish_record_timeout_seconds 的 future
+    或无 pending 且无在跑（此时聚合 task 终态）。超过 _record_execution_budget() 的 future
     判超时：标失败 + 停会话（关 Chromium → Playwright 线程收到 TargetClosedError 自行结束）。
     finally 兜底释放所有账号锁并 shutdown 线程池。
     """
