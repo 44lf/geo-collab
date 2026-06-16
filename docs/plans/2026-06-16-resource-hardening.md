@@ -1,0 +1,305 @@
+# 资源耗尽 / 连接泄漏 / 并发失控 —— 根因整改实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 根除 2026-06-16 资源审计确认的全部 **[高]** 风险项（10 个），收敛到 5 条根因。直接目标：堵死「重演 #110 连接池耗尽」与「卡死靠重启才恢复」两条最致命的复发路径，并补上 **检测 + 留存 + 闸刹车** 三层防护（注意：不是"自动预测式预警"，主动 backpressure 由并发闸的超时/入队提供，可观测层负责检测与事后留存）。**整改以最小根因修复为主，不引入新框架。**
+
+**Architecture:** 后端 FastAPI + SQLAlchemy/Alembic（MySQL only）；生文 / pipeline 编排跑在 API 进程后台线程（无独立 worker），发布跑在单实例 `server/worker/executor.py`；浏览器自动化 Playwright + Xvfb/x11vnc/websockify/noVNC。连接池现为 `pool_size=20 + max_overflow=40 = 60`、`pool_timeout=10s`（`server/app/db/session.py:35-39`，#110 已落地）。
+
+**Tech Stack:** Python 3.11 / FastAPI / SQLAlchemy 2 / Alembic / pytest（MySQL，需 `GEO_TEST_DATABASE_URL`）。前端本次基本不涉及。
+
+---
+
+## 背景：审计结论与根因映射
+
+审计原文见对话记录（2026-06-16）。10 个 **[高]** 项与根因 / 阶段映射：
+
+| 高风险项 | 文件:行 | 根因 | 阶段 |
+|---|---|---|---|
+| #1 排版/配图单连接横跨 120s LLM+下载（崩溃同源） | `articles/ai_format.py:766-895` | A 慢 IO 持连接 | Phase 0 |
+| #7 `recover_stuck_records/claims` 只在启动跑、不周期 | `worker/executor.py:237-243` vs `307-312` | C 卡死不自愈 | Phase 0 |
+| #10 全仓无池/闸/run 指标 | 全局 | E 零可观测 | Phase 0 |
+| #4 三信号量无全局预算、不计 fan-out | `pipelines/executor.py:26`、`scheme_executor.py:40`、`tasks/executor.py:68` | B 并发无治理 | Phase 1 |
+| #8 publish 信号量 acquire 无超时 + 排队时间被算进预算 | `tasks/executor.py:641`、watchdog `285-290` | B | Phase 1 |
+| #9 pipeline 信号量 acquire 无超时、慢 run 占槽 ~25min | `pipelines/executor.py:244` | B | Phase 1 |
+| #5 scheme run 无活跃去重 + 无界 spawn 线程 | `ai_generation/scheme_router.py:237`、`284` | B/幂等 | Phase 2 |
+| #6 publish 信号量进程内、web+worker 双进程不封顶 | `tasks/executor.py:68` | B/跨进程 | Phase 2 |
+| #2 发布超时释放账号锁时 Playwright 线程可能仍在跑 | `tasks/executor.py:285-317` | D 外部资源回收 | Phase 3 |
+| #3 进程 SIGKILL 不退则 display/port 永久泄漏 | `accounts/browser.py:812-836` | D | Phase 3 |
+
+### 核心判断：顺序决定成败
+
+**Task 1（慢 IO 不持连接）是全局最高杠杆，必须第一个做、且单独热修先上线。** 当前 `ai_format` 把一条 DB 连接钉住 120s+，是 4-worker fan-out 下 ~20 条连接被长期占用、逼近池上限 60 的**根本**。一旦改成毫秒级借还，并发数学整个变样——60 的池轻松扛住所有 fan-out，于是 Phase 1 的「三信号量无全局预算」从**会打满池**降级为**只需约束 CPU/内存/成本**。
+
+---
+
+## 评审修订记录（2026-06-16，两份外部评审 + 代码核实）
+
+以下是把初版计划与真实代码核对后的修订（评审意见经逐条验证，采纳为主、精修一处）：
+
+1. **Task 1 范围被低估（最大修正）**：`_maybe_insert_images`（[ai_format.py:672-701](../../server/app/modules/articles/ai_format.py#L672-L701)）的 for 循环逐位置交织 DB 读写与网络下载（`_web_fallback_fill_category` 693 内 `download_image`+`store_image_bytes`）。三段式只对 **`web_fallback=False`** 成立；**`web_fallback=True`**（ai_illustrate）必须把下载也剥到内存。→ Task 1 拆为 **1a / 1b / 1c**。
+2. **detached ORM**：段1 close 后 `article` 已 detached，段3 不能 `db.refresh(article)`，必须重新 `get_article`。异常路径也要自己的短 session 写 `ai_format_error`/解锁。→ 写进 Task 1a 步骤。
+3. **测试不能 flaky**：放弃 `sleep + 全局 checkedout() + "远低于60"`。改**确定性布尔断言**：进入被 patch 的慢 IO 那一刻，run_ai_format 名下无开启的 session。→ Task 1a Step 1。
+4. **Task 4 #8 修法错了**：超时是**主线程 watchdog**（[executor.py:285-290](../../server/app/modules/tasks/executor.py#L285-L290) 用 submit 时盖的 `started_monotonic`），`acquire()` 在工作线程（641）。"挪 started_monotonic 一行"无效。→ 正确修法：信号量获取**移到主线程 submit 前**（非阻塞），拿到才 submit+盖戳、拿不到留 pending；释放点迁到现有账号锁释放处。
+5. **删 `get_settings.cache_clear()` 是砍在用能力**：[786](../../server/app/modules/articles/ai_format.py#L786) 注释明说它支撑"运维中途改 Key 即时生效"。→ 从 Task 1 摘出，单列 **Task 1c 决策项**，不混进重构 PR。
+6. **Task 5 建模 + 接线**：anyio 默认线程池（40）是 Task 1 后真正的稳态长持大头，须显式治理；断言只发 WARNING 且不接告警通道 = 噪音。→ Task 5 改为**钉死 anyio 线程池 + 反推池下限 + 接 Task 3 告警通道**。（精修：主动刹车不另造——它就是 Task 4 闸超时 + Task 7 入队的 backpressure。）
+7. **Task 3 只有瞬时快照**：事故后进程一重启就无数据。→ 加**周期采样落盘**；Goal 措辞下调为"检测+留存"。
+8. **纪律靠文档+一次性 grep 拦不住**：同源反模式已发作两次。→ 新增 **Task G 机制护栏**（运行期长持断言）。
+9. **Task 7 无 worker 会静默卡 pending**：→ 配 WorkerHeartbeat 陈旧检测 + 告警。
+10. **Phase 3 只手测一次会腐化**：→ 拆纯逻辑单测（台账记账）+ 容器冒烟进 CI。
+11. **缺端到端负载复现**：单测证明不了 #110 那类并发场景。→ 新增 **Task ACC 负载签收脚本**，作为 Phase 0 的硬门禁。
+12. **PR 粒度过粗**：→ Task 1a 单独热修先行，不再整个 Phase 0 捆一个 PR。
+
+## 评审修订记录（第二轮，2026-06-16，已逐条代码核实）
+
+13. **Task 5 anyio 建模再修正（最强）**：核实 SSE 端点是 `sync def`（[router.py:360](../../server/app/modules/tasks/router.py#L360)）+ sync 生成器，**每条流占 1 个 anyio 线程整段、却几乎不持 DB 连接**（每轮 `_SL2()` 查完即关 392-426）。故：(a) anyio 线程数 ≠ 持连接数；(b) 生文/pipeline 不走 anyio（自建池）；(c) **钉小 anyio 池会饿死 SSE/同步端点**。→ Task 5 改为：**不缩 anyio**；`anyio(默认40)+publish(5)+余量 ≤ 60` 是保守上界、默认即满足、无需钉小；若失败则**扩池/降 publish**而非缩 anyio；最终数值以 Task 3/ACC 实测稳态来源为准。
+14. **Task 4 Step 5 闸/锁释放漏口（最实在落地缺陷）**：核实 [_start_runnable_records:365-421](../../server/app/modules/tasks/executor.py#L365-L421) submit 前已拿账号锁(365)+profile 锁(376)，且已有 try/except 释放两锁(418-420)。新加 `try_acquire(gate)` 必须：**放在账号锁之前**，失败 `return`（未拿任何锁）；成功后用 **`gate_transferred` 标志 + try/finally**——submit 成功才置转移、否则 finally 释放闸。否则槽位泄漏→发布全停。
+15. **Task ACC 名实**：opt-in load 脚本只能**一次性基线签收**「单进程借还纪律使峰值 触顶→≪60」，非持续门禁、不证明跨进程（#110 多进程放大归 Task 6/7）。→ 措辞下调；持续防回归 = Task 1a 确定性单测 + Task G。
+16. **Task 1c 多进程盲点**：`get_settings()` 是**每进程** lru_cache。`--workers N` 下 refresh 端点只刷接到请求的那个进程。→ 决策 A 加前提「确认 web 单进程」，否则用配置表带版本号；现状每次 cache_clear 反而每进程都拿最新。
+17. **Task 8 回归不对等**：与 Task 9 对齐——锁所有权不变式由 Step 1 纯逻辑 mock 单测**进 CI 持续防回归**（强化断言），容器真卡死路径只能一次性实测。
+18. **Task 5 断言注释别复述**：scheme 侧"×4 瞬时借连接"已核实；pipeline 节点 session 时长**未核实**前不写进基准（[[verify-dont-parrot-docs]]）。→ 加一步实测 pipeline 节点 checkout 时长。
+19. **Task 1a 工作量**：「热修」指优先级先行，**本质仍是并发重构**，评审成本不低，需仔细 review。
+
+---
+
+## 执行顺序（修订版）
+
+| 波次 | 内容 | 封堵 | 阻塞级别 |
+|---|---|---|---|
+| **Wave 0** | Task 1a 单独热修（web_fallback=False 三段式）+ Task ACC 负载签收 | #1 部分 | 立即、独立 PR、最先合 |
+| Wave 1 | Task 1b（web_fallback=True 下载剥离）∥ Task 2（周期自愈）∥ Task 3（可观测+落盘） | #1 余 #7 #10 | Task 1b 与 2/3 文件不相交，可并行 |
+| Wave 1.5 | Task G 机制护栏（接 Task 3 之后）、Task 1c 决策 | 防复发 | 排期 |
+| Wave 2 | Task 4（闸+超时，含 publish 主线程 acquire）→ Task 5（连接预算断言，不缩 anyio） | #4 #8 #9 | 调大并发/缩池前必做；依赖 Wave 1 |
+| Wave 3 | Task 6（scheme 幂等）∥ Task 7（web 入队+无worker告警）∥ Task 9（display/port 回收） | #5 #6 #3 | 排期，互不相交 |
+| Wave 4 | Task 8（超时锁安全，接 Task 4 后，同改 executor.py） | #2 | 容器内验收 |
+
+**通用约定**
+- 后端测试：`set GEO_TEST_DATABASE_URL=mysql+pymysql://geo_user:password@127.0.0.1:3306/geo_test` 后用 **env python 全路径** 跑 `python -m pytest <path> -q`（conda activate 在工具 shell 里不生效）。多 agent 并行时各用独立库名（`geo_test_w1/w2/...`，都含 "test"）。带 `build_test_app`/`@pytest.mark.mysql` 的需 DB，结束 `finally: test_app.cleanup()`。
+- Phase 3 / Task 8-9 涉及 Xvfb/x11vnc/进程信号，**Windows 本地无此环境，纯逻辑部分本地跑、进程信号路径只能 Docker 内验**。
+- service 层抛命名异常（`ClientError`/`ConflictError`/`ValidationError`），不抛裸 `ValueError`。
+- 每个任务结束 commit；message 结尾加 `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`。
+- 在默认分支上先开整改分支再提交。**Task 1a 一个独立 PR**；其余按波次/任务出 PR，粒度宁细勿粗。
+
+---
+
+# Phase 0 — 止血（#1 #7 #10）
+
+## Task ACC: 负载复现签收脚本（Wave 0 一次性基线签收，先写）
+
+**目的**：以数据签收「**单进程内** ai_format 借还纪律使峰值 checkedout 触顶→≪60」（参见 [[verify-dont-parrot-docs]]）。**范围限定单进程**——#110 的多进程/多人放大由 Task 6/7 的跨进程封顶覆盖，本脚本不涉。**这是一次性基线签收，非持续门禁**；持续防回归靠 Task 1a 确定性单测 + Task G 运行期断言。
+
+**Files:**
+- Add: `server/tests/load/test_pool_under_concurrency.py`（标 `@pytest.mark.mysql` + 自定义 `@pytest.mark.load`，opt-in 不进默认 CI gate）
+
+- [x] **Step 1（已完成）:** `checkout`/`checkin` 事件监听器统计**峰值并发持连接**（事件驱动，非 sleep 采样）。落在 `server/tests/load/test_pool_under_concurrency.py`；`load` 标记 + `GEO_RUN_LOAD_TESTS=1` opt-in（conftest 已注册，默认不跑）。
+- [x] **Step 2（已完成，含一处刻意偏离）:** 起 M=12 路并发 `run_ai_format`（mock LLM 可控耗时 0.5s、`threading.Barrier` 对齐保证重叠）。**N 路 SSE 循环刻意略去**——SSE 已在 #110 修成每轮短借（占 anyio 线程、~0 持连接，见评审第 13 条），加进来不改变 peak-checkout 指标、只添噪音；run_ai_format-only 更干净地隔离 Task 1a 的效果。
+- [x] **Step 3（改造前基线已采）:** **峰值并发持连接 = 12 = M**（`max_in_llm=12` 证实 12 路在 LLM 窗口内重叠），即当前实现下每个在飞行的生成各钉 1 条连接整段 LLM。指标改为「峰值并发持连接」而非「≪60」——测试 engine 用默认池(15)非生产(60)，看持连接行为差比看绝对容量更准。改造后目标 **peak ≤ 3** 已写成脚本末尾 TODO 断言，待 Task 1a 落地启用。
+- [ ] **Step 4（待 Task 1a）:** 附改前(=12)/改后两组数字到 Task 1a 的 PR。
+
+## Task 1a: `web_fallback=False` 路径连接持有纪律（**热修，最先合**，封堵 #1 主体）
+
+**根因**：`run_ai_format`（[ai_format.py:766](../../server/app/modules/articles/ai_format.py#L766)）单 session 持有到 895，跨 `_call_litellm_completion`（825，timeout 默认 120s）。`web_fallback=False` 时 `_maybe_insert_images` 仅快 DB、唯一慢 IO 是 LLM —— 三段式干净成立。覆盖 scheme 配图 + 手动排版两条最常跑路径。
+
+> ⚠️ 「热修」指**优先级先行**，本质仍是并发重构（拆段 + detached re-get + 异常短 session + 确定性 instrument），评审成本不低，需仔细 review，勿因"热修"二字轻视（评审第 19 条）。
+
+**修法（三段，连接只在两端短暂出现）：**
+- 段1（短借）：开 session → 第一道锁检查（`_article_lock_matches` 773）→ 读 `content_json`/可用分类 → 拼 `system_prompt` → `db.close()`。
+- 段2（无连接）：`_call_litellm_completion`（825）+ 解析 JSON。`web_fallback=False` 下 `_maybe_insert_images` 的 DB 都是快查，可放段3。
+- 段3（短借）：重开 session → **重新 `get_article(db, article_id)`（不是 refresh detached 对象）** → 第二道锁检查 → `_maybe_insert_images`（快 DB）→ 写回 + commit → close。
+- **异常路径**：段2 抛错时，用一个 `with 短session` 的 helper 写 `ai_format_error` + `_unlock_ai_format`（[711](../../server/app/modules/articles/ai_format.py#L711) 已收 db 参数），不依赖外层长 session 的 finally。
+
+**Files:**
+- Modify: `server/app/modules/articles/ai_format.py`（`run_ai_format` 拆段；仅走 `web_fallback=False` 分支，`web_fallback=True` 暂保持旧行为并在代码里标 TODO 指向 Task 1b）
+- Test: `server/tests/test_ai_format_connection_lifecycle.py`（新建）
+
+- [ ] **Step 1（确定性失败测试）**：instrument `SessionLocal`（包一层计数开/关），patch `_call_litellm_completion` 在入口断言「run_ai_format 名下当前无开启 session」（布尔，无 sleep）。再加一例：段2 抛异常后断言 `ai_format_error` 已写且锁已释放。
+- [ ] **Step 2:** 拆段重构 `web_fallback=False` 路径，保留两道锁检查与 `images_inserted` 语义。
+- [ ] **Step 3:** detached 改 re-get；异常路径短 session helper。
+- [ ] **Step 4:** 跑 `test_ai_format_connection_lifecycle.py` 绿 + 回归 `test_scheme*`。
+- [ ] **Step 5:** 跑 Task ACC 脚本，附改前/改后峰值数字到 PR。
+
+## Task 1b: `web_fallback=True` 路径下载剥离（封堵 #1 余下，ai_illustrate）
+
+**根因**：`web_fallback=True` 时 `_maybe_insert_images` 在 for 循环里交织 DB 写（`get_or_create_companion_category` 680）、DB 读、网络下载（`_web_fallback_fill_category` 693）。把下载塞进"无连接段"不成立——必须重构数据流。
+
+**修法**：两遍式——先一遍（短 session 或无连接）决策每个位置需要哪些"现有图 id / 需联网补图的栏目"；再无连接地把需要的图**下载到内存**；最后短 session 内 `store_image_bytes` 落库 + 选图 + 插入。`get_or_create_companion_category` 的写收进最后的短 session。
+
+**Files:**
+- Modify: `server/app/modules/articles/ai_format.py`（`_maybe_insert_images` + `_web_fallback_fill_category` 改造：下载与落库分离）
+- Test: 扩 `test_ai_format_connection_lifecycle.py`，对 `web_fallback=True` 同样断言下载期间无开启 session
+
+- [ ] **Step 1:** 失败测试覆盖 `web_fallback=True`（mock baidu 搜图/下载为可控耗时，断言下载期 0 session）。
+- [ ] **Step 2:** 重构为「决策 → 内存下载 → 短 session 落库/选图/插入」。
+- [ ] **Step 3:** 保持 `web_fallback=False` 行为不变（Task 1a 已测）。
+- [ ] **Step 4:** 跑测试 + 回归 ai_illustrate 节点相关测试。
+
+## Task 1c（决策项，非编码）: `get_settings.cache_clear()` 去留
+
+**背景**：[ai_format.py:786](../../server/app/modules/articles/ai_format.py#L786) + [baidu.py:211](../../server/app/shared/baidu.py#L211) 每次调用清全局 lru_cache，是"运维中途改 Key 即时生效"的在用通路；但也是性能拖累、破坏 `get_settings()` 的 lru_cache 契约。
+
+- [ ] **前提核实（评审第 16 条）**：`get_settings()` 是**每进程** lru_cache。先确认 web 部署进程数——若 `uvicorn/gunicorn --workers N`（N>1），refresh 端点只刷接到请求的那个进程、其余仍用旧 Key（比现状更隐蔽地失效）；现状每次 `cache_clear()` 反而每进程都拿最新。
+- [ ] **决策 A（仅当 web 单进程）**：加显式 `POST /api/system/refresh-settings`（admin）刷新配置后删两处 `cache_clear()`。**单独 PR**，不与 Task 1a/1b 混。
+- [ ] **决策 A'（多进程部署）**：改用配置表带版本号 / 进程间信号，别用单进程 refresh 端点替换。
+- [ ] **决策 B**：确认无人依赖中途改 Key（问运维），确认后直接删并记录到 CLAUDE.md。
+- [ ] 未决前 **不动** 这两行（避免引入行为回归）。
+
+## Task 2: worker 主循环周期复位卡死记录/认领（封堵 #7）
+
+**根因**：`recover_stuck_records`（[service.py:358](../../server/app/modules/tasks/service.py#L358)）/`recover_stuck_task_claims`（[service.py:392](../../server/app/modules/tasks/service.py#L392)）**本就为周期设计、租约保护、自带 commit**，但主循环周期分支（[worker/executor.py:307-312](../../server/worker/executor.py#L307-L312)）只调 `_check_stuck_tasks`，二者仅在 `_startup`（237-243）跑一次。结果进程不重启时卡死记录不自愈、占着账号/profile 锁。CLAUDE.md 称"周期重跑"与代码不符。
+
+**Files:**
+- Modify: `server/worker/executor.py`（`_recovery_cycle % 60 == 0` 分支加两个 recover，包 try/except 日志）
+- Modify: `CLAUDE.md`（修正「Task Execution」节）
+- Test: `server/tests/test_worker_periodic_recovery.py`（新建）
+
+- [ ] **Step 1（失败测试）**：造 `status=running, lease_until=过去` 的记录 + `worker_lease_until=过去` 的 task，跑一轮周期，断言拨回 pending / 清 worker_id。
+- [ ] **Step 2:** 周期分支加两个 recover。
+- [ ] **Step 3:** 改 CLAUDE.md。
+- [ ] **Step 4:** 跑测试绿；确认不误伤 lease 未过期的在跑记录。
+
+## Task 3: 可观测底座 —— 快照 + 周期采样落盘 + 阈值 WARN（封堵 #10）
+
+**根因**：全仓无 `engine.pool.status()`、无闸占用、无活跃 run/过期 lease 数暴露；裸 `Semaphore` 占用读不出；事故后无留存。
+
+**Files:**
+- Add: `server/app/shared/resource_metrics.py`（采集：池状态 + 闸占用[Wave 2 接 ObservableGate] + 活跃 run 数 + 过期 lease 数）
+- Modify: `server/app/modules/system/system_router.py`（`GET /api/system/db-pool`，`require_admin`）
+- Modify: `server/app/main.py` 或后台线程（周期采样**落盘/打点** + checkedout/上限 >80% 升 WARNING；提供统一告警 hook 供 Task 5 接）
+- Test: `server/tests/test_resource_metrics_api.py`（新建）
+
+- [ ] **Step 1（失败测试）**：占用 N 连接后请求端点，断言 `checkedout/overflow/size` 随占用变化；非 admin 403。
+- [ ] **Step 2:** 采集函数（闸占用先占位，Wave 2 接 `ObservableGate.in_use/waiting`）。
+- [ ] **Step 3:** 健康端点 + **周期采样落盘**（轮转日志/简单表，事故后可回溯当时占用）+ >80% WARN + 暴露告警 hook。
+- [ ] **Step 4:** 发布/生文 `ThreadPoolExecutor` 加 `thread_name_prefix`。
+- [ ] **Step 5:** 跑测试绿。
+
+## Task G: 机制护栏 —— 运行期长持连接断言（防 A 类复发）
+
+**根因**：纪律靠"CLAUDE.md 一行 + 一次性 grep"拦不住（#110/#1 同源已两发）。
+
+**修法**：SQLAlchemy `checkout` 事件记 checkout 时刻 + 轻量上下文；`checkin`（或周期巡检）时若某连接持有 > 阈值（如 30s）记 WARNING + 调用点线索。运行期捕获任何路径新引入的长持，不靠人自觉。开关 + 阈值走 settings，默认开、可关。
+
+**Files:**
+- Add: `server/app/shared/connection_watchdog.py`（事件监听 + 阈值 WARN）
+- Modify: `server/app/db/session.py`（注册监听）
+- Test: `server/tests/test_connection_watchdog.py`（新建，纯逻辑/事件 mock）
+
+- [ ] **Step 1（失败测试）**：模拟一条连接持有超阈值，断言触发 WARN 且含线索；未超阈值不触发。
+- [ ] **Step 2:** 实现监听 + 注册。
+- [ ] **Step 3:** 跑测试绿；确认对正常短借无误报、无显著开销。
+
+---
+
+# Phase 1 — 并发治理（#4 #8 #9）
+
+## Task 4: 统一可观测、带超时的并发闸（含 publish acquire 重构）
+
+**根因**：三个裸 `threading.Semaphore`（pipeline=3、scheme=2、publish=5）：占用读不出、`acquire` 无超时、不计 run 内 ×4 fan-out。
+
+**Files:**
+- Add: `server/app/shared/concurrency.py`（`ObservableGate`：`acquire(timeout)->bool`、`try_acquire()->bool`、`release()`、`in_use`、`waiting`）
+- Modify: `pipelines/executor.py:244`、`scheme_executor.py:192`、`tasks/executor.py`（acquire 重构，见下）
+- Modify: `server/app/shared/resource_metrics.py`（接 `ObservableGate.in_use/waiting`）
+- Test: `server/tests/test_observable_gate.py`（纯逻辑）+ publish 退避路径测试
+
+- [ ] **Step 1（失败测试）**：`ObservableGate` 超时返回 False、`waiting` 准确、`in_use` 准确、release 后可再取。
+- [ ] **Step 2:** 实现 `ObservableGate`（`BoundedSemaphore` + 计数 + 锁）。
+- [ ] **Step 3（pipeline #9）**：[executor.py:244](../../server/app/modules/pipelines/executor.py#L244) `acquire(timeout)` 失败 → run 置 failed + 写「等待槽位超时」日志，不无限阻塞。
+- [ ] **Step 4（scheme）**：[scheme_executor.py:192](../../server/app/modules/ai_generation/scheme_executor.py#L192) 同上。
+- [ ] **Step 5（publish #8，关键重构 —— 闸/锁释放须无漏口，评审第 14 条）**：把 `_global_publish_sem` 改 `ObservableGate`，获取移到主线程 [_start_runnable_records](../../server/app/modules/tasks/executor.py#L329)。**顺序：`try_acquire(gate)` 放在 `_try_acquire_account_lock`（[365](../../server/app/modules/tasks/executor.py#L365)）之前**——失败直接 `return`（未拿任何锁、无需释放；全局槽满本轮不再填）。拿到槽后用 **`gate_transferred=False` 标志 + try/finally** 包住「拿账号锁→拿 profile 锁→claim→detach→submit」：**仅 submit 成功并登记 RunningRecord 后置 `gate_transferred=True`**（所有权移交 running 生命周期，由 [315/321/325](../../server/app/modules/tasks/executor.py#L315) 释放）；任何 submit 前的 continue/异常分支由 `finally: if not gate_transferred: gate.release()` 兜底。**worker 线程 `_publish_record` 不再 acquire/release**。排队时间不进 watchdog 预算（#8 根除）、跨任务封顶仍在、槽位无泄漏。
+- [ ] **Step 6:** 跑测试 + 回归任务执行 / pipeline / scheme 相关测试，确认退回 pending 不破坏账号锁/租约。
+
+## Task 5: anyio 线程池治理 + 预算断言接告警（封堵 #4）
+
+**根因**：三闸无全局上限；且 Task 1 后真正的稳态长持大头是 **anyio 同步端点线程池（默认 40）**，不治理它则任何池断言都失真。只发 WARNING、不接告警通道 = 噪音。
+
+**修法（评审第二轮修正——不缩 anyio、先实测）：**
+1. **先实测**：用 Task 3/ACC 数据回答「Task 1 后 web 进程里到底谁稳态长持连接」。已知：SSE 占 anyio 线程但**几乎不持连接**（[router.py:360](../../server/app/modules/tasks/router.py#L360) sync 生成器、每轮查完即关）；生文/pipeline 走自建 ThreadPoolExecutor + 自建 session、不走 anyio。
+2. **断言（保守上界，默认即满足）**：`anyio_pool_size + publish_max + 余量 ≤ pool_size + max_overflow`。每个 anyio 线程经 `get_db` 至多持 1 连接，故 anyio 大小是 web 进程并发持连接数的**上界**；默认 `40 + 5 + 10 = 55 ≤ 60` 已通过——**无需钉小 anyio**。
+3. **失败时杠杆是扩池 / 降 publish_max，绝不缩 anyio**（缩 anyio 会饿死 SSE/同步端点，评审第 13 条）。
+4. **断言注释别复述**：scheme 侧「×4 瞬时借连接」已核实；**pipeline 节点 session 时长须先实测**再写入基准（[[verify-dont-parrot-docs]]，评审第 18 条）。
+5. 越界 → 走 Task 3 告警 hook（不只孤立 WARNING）。
+
+**Files:**
+- Modify: `server/app/main.py:create_app()`（启动期断言 + 接告警 hook；**默认不改 anyio 池**）
+- Modify: `server/app/core/config.py`（仅暴露"池下限/余量"配置，**不**暴露缩 anyio 的旋钮）
+- Test: `server/tests/test_concurrency_budget_assertion.py`（纯逻辑）
+
+- [ ] **Step 1:** 跑 Task 3/ACC，记录 Task 1 后稳态 checkedout 来源（含 pipeline 节点 checkout 时长实测）。
+- [ ] **Step 2（失败测试）**：越界配置（如把 pool 调到 < anyio+publish+余量）触发告警 hook。
+- [ ] **Step 3:** 实现保守上界断言（记算式明细到日志），失败建议扩池/降 publish。
+- [ ] **Step 4:** 接 Task 3 告警通道。
+- [ ] **Step 5:** 跑测试绿。
+
+---
+
+# Phase 2 — 幂等去重 + 跨进程封顶（#5 #6）
+
+## Task 6: scheme run 活跃去重 + 有界线程（封堵 #5）
+
+**根因**：pipeline 有"活跃 run 抛 ConflictError"，scheme 没有（[scheme_router.py:237](../../server/app/modules/ai_generation/scheme_router.py#L237)）；[284](../../server/app/modules/ai_generation/scheme_router.py#L284) 裸 `Thread` 无界 spawn。
+
+**Files:**
+- Modify: `scheme_service.py`/`scheme_router.py`（建 run 前查同 scheme 有无 pending/running，复用 [scheme_executor.py:245](../../server/app/modules/ai_generation/scheme_executor.py#L245) 判定，有则 409 ConflictError）
+- Modify: `scheme_router.py:284`（裸 Thread → 有界线程池/队列）
+- Test: `server/tests/test_scheme_run_idempotency.py`（新建）
+
+- [ ] **Step 1（失败测试）**：同 scheme 连续两次 POST，第二次 409。
+- [ ] **Step 2:** 活跃检查抛 ConflictError。
+- [ ] **Step 3:** 线程改有界。
+- [ ] **Step 4:** 跑测试绿 + 回归正常路径。
+
+## Task 7: 发布并发跨进程封顶 + 无 worker 告警（封堵 #6）
+
+**根因**：`_global_publish_sem`（[tasks/executor.py:68](../../server/app/modules/tasks/executor.py#L68)）进程内；web 进程经 `bg_session_factory` 也能跑浏览器发布 → 双进程各 ×5。
+
+**修法（推荐）**：web 进程 `POST /api/tasks/{id}/execute` 只置 pending/入队，由单实例 worker 抢占。**配套**：检测无活跃 worker（WorkerHeartbeat 陈旧）时入队即告警 + 端点回包提示，避免静默卡 pending。
+
+**Files:**
+- Modify: `server/app/modules/tasks/router.py`（execute 在 web 不起浏览器，仅置 pending；查 WorkerHeartbeat 新鲜度，陈旧则告警）
+- Test: `server/tests/test_publish_web_no_browser.py`（新建）
+
+- [ ] **Step 1:** grep `bg_session_factory` 在 tasks 路由用法，确认无依赖 web 同步发布的调用方（测试除外）。
+- [ ] **Step 2（失败测试）**：web execute 后任务 pending、未起浏览器；无新鲜 WorkerHeartbeat 时返回/记录告警。
+- [ ] **Step 3:** 改 execute + 加 worker 新鲜度检测。
+- [ ] **Step 4:** 跑测试绿；确认测试可经显式开关跑后台发布。
+
+---
+
+# Phase 3 — 发布外部资源回收与锁所有权（#2 #3，含常驻回归）
+
+## Task 8: 超时确认线程终止再释放账号锁（封堵 #2，接 Task 4 后）
+
+**根因**：[tasks/executor.py:285-317](../../server/app/modules/tasks/executor.py#L285-L317) 超时分支 `future.result(timeout=10)` 若仍 TimeoutExpired（线程卡 IO 未响应 context 关闭）被吞，而账号/profile 锁已释放（315）→ 下一条同账号记录对同一 persistent profile 再开 Chromium，目录并发写损坏。
+
+**Files:**
+- Modify: `server/app/modules/tasks/executor.py`（超时分支：线程未确认终止则不释放账号/profile 锁，标"僵尸待清"+ 告警，交下轮恢复）
+- Test: `server/tests/test_publish_timeout_lock_safety.py`（mock 卡死 future，纯逻辑）
+
+- [ ] **Step 1（失败测试 = 常驻 CI 回归，评审第 17 条）**：mock `future.result` 恒 TimeoutExpired，断言线程存活时账号锁 + profile 锁**均未**释放、记录被标"僵尸待清"。此纯逻辑测试进 CI，作为锁所有权不变式的**持续护栏**（与 Task 9 容器冒烟对齐回归级别）。
+- [ ] **Step 2:** 改超时分支。
+- [ ] **Step 3:** 跑测试绿；容器内实测一次真实卡死（不可重复路径，仅补充）。
+
+## Task 9: display/port 回收对账（封堵 #3）+ 常驻回归
+
+**根因**：[browser.py:812-836](../../server/app/modules/accounts/browser.py#L812-L836) SIGKILL 后进程仍不退只 `logger.error`，号段（base..base+1000）泄漏满后 `start_remote_browser_session` 抛错，全站发布瘫痪。
+
+**Files:**
+- Modify: `server/app/modules/accounts/browser.py`（被杀失败 PID + display/port 记入持久结构，后台对账重试 reap，成功归还号段；周期扫 `/tmp/.X11-unix/` 与端口对账）
+- Test: `server/tests/test_browser_port_reaper.py`（**台账记账纯逻辑单测**，可本地跑）
+- Add: 容器冒烟脚本（CI 内可跑的 Xvfb 泄漏场景）
+
+- [ ] **Step 1（失败测试，纯逻辑）**：mock kill 后仍存活，断言号段不被永久占用、对账最终回收（不依赖真实进程）。
+- [ ] **Step 2:** 实现回收对账（持久泄漏表 + 重试 reap + 号段归还）。
+- [ ] **Step 3（常驻回归）**：容器冒烟脚本进 CI，覆盖真实 Xvfb/x11vnc 泄漏路径，防后续改动悄悄破坏。
+- [ ] **Step 4:** 跑测试绿。
+
+---
+
+## 验收总结（修订版）
+
+- **Wave 0 签收 = Task ACC 的改前/改后峰值数字**，证明**单进程内**借还纪律使峰值从触顶→≪60（一次性基线签收，非持续门禁）。#110 的多进程放大由 Task 6/7 覆盖；持续防回归靠 Task 1a 确定性单测 + Task G。
+- Phase 0 全完成：连接持有纪律落地（含 web_fallback 两路）+ 卡死可自愈 + 可观测有留存 + 运行期长持护栏。
+- Phase 1 完成即可安全调并发/池容量（含 anyio 池治理），不再线上才暴露。
+- Phase 2/3 收口重复运行放大、跨进程超发、浏览器/端口泄漏；Phase 3 两项带常驻回归（纯逻辑单测 + 容器冒烟），防半年后腐化。
+- 每波次/任务出 PR，**Task 1a 独立先行**；CI（后端 ruff/mypy/pytest）硬门禁须绿。
