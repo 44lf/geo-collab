@@ -226,11 +226,11 @@
 - Modify: `server/app/core/config.py`（仅暴露"池下限/余量"配置，**不**暴露缩 anyio 的旋钮）
 - Test: `server/tests/test_concurrency_budget_assertion.py`（纯逻辑）
 
-- [ ] **Step 1:** 跑 Task 3/ACC，记录 Task 1 后稳态 checkedout 来源（含 pipeline 节点 checkout 时长实测）。
-- [ ] **Step 2（失败测试）**：越界配置（如把 pool 调到 < anyio+publish+余量）触发告警 hook。
-- [ ] **Step 3:** 实现保守上界断言（记算式明细到日志），失败建议扩池/降 publish。
-- [ ] **Step 4:** 接 Task 3 告警通道。
-- [ ] **Step 5:** 跑测试绿。
+- [~] **Step 1（部分）**：未做满负载实测；预算建模基于既有事实——anyio 默认 40（每线程经 get_db 至多持 1 连接）、池容量 20+40=60（session.py，#110 调大后）、publish_max=5；pipeline/scheme 后台 run 走自建 ThreadPoolExecutor+自建 session（不占 anyio）、各自闸封顶 3+2、scheme ×4 实测瞬时借还、**pipeline 节点 checkout 时长仍未满负载实测**——这些零散/瞬时借用归入 safety_margin（默认 10）吸收，断言定位为保守护栏而非精确建模（代码注释已如实标注，未 parrot「anyio=唯一上界」）。真要精确化需后续做满负载实测，留待需要时。
+- [x] **Step 2（失败测试，已完成）**：`test_concurrency_budget_assertion.py` —— 越界（把 `_collect_pool` 压到极小容量）触发告警 hook（断言 emit 一次 + 文案含 budget）；另含纯函数 within/over/边界、容量不可用不误报、_collect_pool 抛错不崩。
+- [x] **Step 3（已完成）**：纯函数 `compute_connection_budget`（算式明细 + within_budget）+ `check_connection_budget`（算式明细打 INFO 日志，越界文案建议扩池 GEO_DB_POOL_SIZE/MAX_OVERFLOW 或降 publish，明确「绝不缩 anyio」），均落在 `resource_metrics.py`（与 emit_resource_alert 同处；非 main.py，便于纯逻辑单测）。新增配置 `connection_budget_safety_margin`（GEO_CONNECTION_BUDGET_SAFETY_MARGIN，默认 10），**未暴露缩 anyio 的旋钮**。
+- [x] **Step 4（已完成）**：越界走 `emit_resource_alert`（Task 3 同一告警通道），`create_app()` 启动期 try/except 调 `check_connection_budget()`（内部已吞异常，外层双保险）。
+- [x] **Step 5（已完成）**：7 passed（纯逻辑，无 DB）；`test_resource_metrics_api.py`（经 build_test_app→create_app）2 passed 确认启动期检查不破坏建 app；ruff check / format / mypy（132 files）通过。
 
 ---
 
