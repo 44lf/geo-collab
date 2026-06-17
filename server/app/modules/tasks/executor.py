@@ -3,7 +3,8 @@
 
 并发分层（见 CLAUDE.md「Task Execution」）：
   per-task 锁（_task_locks，同一任务同时只能一个执行循环）
-    → 全局信号量 _global_publish_sem（MAX_CONCURRENT_RECORDS，跨任务封顶并发发布数）
+    → 全局发布闸 _global_publish_gate（ObservableGate(MAX_CONCURRENT_RECORDS)，跨任务封顶并发发布数；
+      Task 4 Step 5/#8：主线程 submit 前 try_acquire、记录退场处释放，发布线程不再持闸）
       → 每账号串行锁（_account_locks，同账号同时只发一条）
         → 浏览器 profile 锁（accounts.try_acquire_profile_lock，跨进程，发布 vs 登录互斥）。
 
@@ -56,6 +57,7 @@ from server.app.modules.tasks.service import (
     get_task,
     list_task_records,
 )
+from server.app.shared.concurrency import ObservableGate, register_gate
 from server.app.shared.diagnostics import PublishDiagnosticEvent, capture_publish_diagnostics
 from server.app.shared.errors import ConflictError
 
@@ -65,7 +67,9 @@ WORKER_LEASE_EXTENSION_SECONDS = 600
 _task_locks: dict[int, threading.Lock] = {}
 _account_locks: dict[int, threading.Lock] = {}
 _account_locks_lock = threading.Lock()
-_global_publish_sem = threading.Semaphore(MAX_CONCURRENT_RECORDS)
+# 全局发布并发闸（跨任务封顶）。Task 4 Step 5/#8：裸 Semaphore → ObservableGate，且获取点从
+# 发布线程移到主线程 submit 前（见 _start_runnable_records）——排队不再计入记录执行预算、可观测占用。
+_global_publish_gate = register_gate(ObservableGate(MAX_CONCURRENT_RECORDS, name="publish"))
 _task_cancel: dict[int, threading.Event] = {}
 
 _logger = logging.getLogger(__name__)
@@ -314,17 +318,17 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
                         future.result(timeout=10)
                     except Exception:
                         pass
-                    _release_account_lock(running_record.account_id)
+                    _retire_running_slot(running_record)
                     db.commit()
                     continue
                 try:
                     _finish_record_future(db, task, running_record.record_id, future)
                 finally:
-                    _release_account_lock(running_record.account_id)
+                    _retire_running_slot(running_record)
                     db.commit()
     finally:
         for running_record in running.values():
-            _release_account_lock(running_record.account_id)
+            _retire_running_slot(running_record)
         executor.shutdown(wait=False, cancel_futures=True)
 
 
@@ -364,63 +368,81 @@ def _start_runnable_records(
         if next_record is None:
             return
 
-        if not _try_acquire_account_lock(next_record.account_id):
-            blocked_accounts.add(next_record.account_id)
-            continue
+        # Task 4 Step 5/#8：全局发布槽在主线程 submit 前非阻塞获取。满了直接 return——本轮不再填，
+        # 执行循环下一轮重试；排队不再占记录执行预算（watchdog），也不在发布线程里阻塞。
+        if not _global_publish_gate.try_acquire():
+            return
 
+        # 槽所有权：仅当 submit 成功并登记 RunningRecord 后才"移交"给运行生命周期
+        # （gate_transferred=True，由 _retire_running_slot 在记录退场处释放）；任何 submit 前的
+        # 跳过 / 异常都由下面的 finally 归还，绝不泄漏。
+        gate_transferred = False
         try:
-            article = _load_article_for_publish(db, next_record.article_id)
-            account = db.get(Account, next_record.account_id)
-            validation_error = _validate_record_inputs(article, account)
-            if account is not None and validation_error is None and account.state_path is not None:
-                profile_key = _profile_key_from_state_path(account.state_path)
-                reason = "账号正在执行发布或登录操作，发布记录已排队"
-                if not try_acquire_profile_lock(
-                    profile_key,
-                    owner_kind="publish",
-                    owner_id=next_record.id,
-                    queue_reason=reason,
-                    lease_seconds=int(_record_execution_budget()) + 120,
+            if not _try_acquire_account_lock(next_record.account_id):
+                blocked_accounts.add(next_record.account_id)
+                continue
+
+            try:
+                article = _load_article_for_publish(db, next_record.article_id)
+                account = db.get(Account, next_record.account_id)
+                validation_error = _validate_record_inputs(article, account)
+                if (
+                    account is not None
+                    and validation_error is None
+                    and account.state_path is not None
                 ):
-                    _defer_record_for_profile_lock(db, task.id, next_record, reason)
-                    blocked_accounts.add(next_record.account_id)
+                    profile_key = _profile_key_from_state_path(account.state_path)
+                    reason = "账号正在执行发布或登录操作，发布记录已排队"
+                    if not try_acquire_profile_lock(
+                        profile_key,
+                        owner_kind="publish",
+                        owner_id=next_record.id,
+                        queue_reason=reason,
+                        lease_seconds=int(_record_execution_budget()) + 120,
+                    ):
+                        _defer_record_for_profile_lock(db, task.id, next_record, reason)
+                        blocked_accounts.add(next_record.account_id)
+                        _release_account_lock(next_record.account_id)
+                        db.commit()
+                        continue
+
+                # claim：pending→running 条件 UPDATE，抢不到（被别人改了状态）就退还两把锁跳过
+                if not _claim_record(db, task.id, next_record):
+                    release_profile_lock_by_owner(owner_kind="publish", owner_id=next_record.id)
+                    _release_account_lock(next_record.account_id)
+                    continue
+
+                if validation_error or article is None or account is None:
+                    _mark_record_failed(
+                        db,
+                        task.id,
+                        next_record.id,
+                        validation_error or "Record article or account not found",
+                    )
+                    release_profile_lock_by_owner(owner_kind="publish", owner_id=next_record.id)
                     _release_account_lock(next_record.account_id)
                     db.commit()
                     continue
 
-            # claim：pending→running 条件 UPDATE，抢不到（被别人改了状态）就退还两把锁跳过
-            if not _claim_record(db, task.id, next_record):
-                release_profile_lock_by_owner(owner_kind="publish", owner_id=next_record.id)
-                _release_account_lock(next_record.account_id)
-                continue
-
-            if validation_error or article is None or account is None:
-                _mark_record_failed(
-                    db,
-                    task.id,
-                    next_record.id,
-                    validation_error or "Record article or account not found",
-                )
-                release_profile_lock_by_owner(owner_kind="publish", owner_id=next_record.id)
-                _release_account_lock(next_record.account_id)
+                # 把 ORM 对象从 session 摘下再交给发布线程：发布线程不碰 db（session 非线程安全）
+                _detach_record_inputs(db, next_record, article, account)
                 db.commit()
-                continue
-
-            # 把 ORM 对象从 session 摘下再交给发布线程：发布线程不碰 db（session 非线程安全）
-            _detach_record_inputs(db, next_record, article, account)
-            db.commit()
-            future = executor.submit(
-                _publish_record, next_record, article, account, task.stop_before_publish
-            )
-            running[future] = RunningRecord(
-                next_record.id, next_record.account_id, time.monotonic()
-            )
-            running_accounts.add(next_record.account_id)
-            slots -= 1
-        except Exception:
-            release_profile_lock_by_owner(owner_kind="publish", owner_id=next_record.id)
-            _release_account_lock(next_record.account_id)
-            raise
+                future = executor.submit(
+                    _publish_record, next_record, article, account, task.stop_before_publish
+                )
+                running[future] = RunningRecord(
+                    next_record.id, next_record.account_id, time.monotonic()
+                )
+                running_accounts.add(next_record.account_id)
+                slots -= 1
+                gate_transferred = True  # submit 成功并登记，槽位移交运行生命周期
+            except Exception:
+                release_profile_lock_by_owner(owner_kind="publish", owner_id=next_record.id)
+                _release_account_lock(next_record.account_id)
+                raise
+        finally:
+            if not gate_transferred:
+                _global_publish_gate.release()
 
 
 def _try_acquire_account_lock(account_id: int) -> bool:
@@ -437,6 +459,24 @@ def _release_account_lock(account_id: int) -> None:
             lock.release()
         except RuntimeError:
             pass  # 已释放，无害
+
+
+def _retire_running_slot(running_record: RunningRecord) -> None:
+    """记录退场：归还移交给运行生命周期的全局发布槽 + 账号锁（Task 4 Step 5）。
+
+    每条 RunningRecord 恰好持有一个闸槽（submit 成功时移交），退场处释放一次。over-release
+    会被 ObservableGate 抛 ValueError——这里吞掉并告警（执行循环不应因释放漏口崩溃，同
+    _release_account_lock 的防御姿态），异常本身也写进日志供排查。
+    """
+    try:
+        _global_publish_gate.release()
+    except ValueError:
+        _logger.warning(
+            "publish gate over-release for record %d (slot accounting bug?)",
+            running_record.record_id,
+            exc_info=True,
+        )
+    _release_account_lock(running_record.account_id)
 
 
 def _defer_record_for_profile_lock(
@@ -634,13 +674,13 @@ def _publish_record(
 ):
     """跑在线程池里的实际发布：构建 runner 调驱动，全程不碰 db（入参均为 detached ORM 对象）。
 
-    受 _global_publish_sem 跨任务封顶并发数。诊断事件挂到异常的 publish_diagnostics 属性上随 raise
-    带回主线程持久化（finally 必释放信号量）。
+    Task 4 Step 5/#8：全局并发封顶已由主线程在 submit 前用 `_global_publish_gate.try_acquire()`
+    把关，本函数**不再** acquire/release 闸——排队不再占记录执行预算（watchdog）、不在发布线程阻塞。
+    诊断事件挂到异常的 publish_diagnostics 属性上随 raise 带回主线程持久化。
     """
     _logger.info(
         "Publishing record %d for article %d to account %d", record.id, article.id, account.id
     )
-    _global_publish_sem.acquire()
     diagnostics: list[PublishDiagnosticEvent] = []
     try:
         with capture_publish_diagnostics(diagnostics):
@@ -651,8 +691,6 @@ def _publish_record(
     except Exception as exc:
         exc.publish_diagnostics = list(diagnostics)  # type: ignore[attr-defined]  # 动态属性，用于随异常传递诊断
         raise
-    finally:
-        _global_publish_sem.release()
 
 
 def _finish_record_future(db: Session, task: PublishTask, record_id: int, future: Future) -> None:

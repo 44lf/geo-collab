@@ -28,7 +28,7 @@ from server.app.modules.ai_generation.models import (
 from server.app.modules.ai_generation.scheme_service import get_line_questions, get_lines
 from server.app.modules.articles.ai_format import all_category_contexts, run_ai_format
 from server.app.modules.prompt_templates.service import get_visible_prompt_template
-from server.app.shared.concurrency import ObservableGate
+from server.app.shared.concurrency import ObservableGate, register_gate
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,9 @@ SessionFactory = Callable[[], Any]
 # 全局并发闸：限制单进程同时执行的方案运行数（与 pipeline executor 的 _RUN_SEMAPHORE 对称）。
 # 缺它时每次 POST /schemes/{id}/runs 都裸 fork 出 1+4 个线程争抢 DB 连接，连点即耗尽连接池
 # （连接池耗尽事故根因之一）。多于 cap 的运行线程阻塞在信号量上、不持 DB 连接，安全排队。
-_RUN_GATE = ObservableGate(max(1, get_settings().scheme_max_concurrent_runs), name="scheme")
+_RUN_GATE = register_gate(
+    ObservableGate(max(1, get_settings().scheme_max_concurrent_runs), name="scheme")
+)
 
 
 def _run_acquire_timeout() -> float:

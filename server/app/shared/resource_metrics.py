@@ -3,7 +3,7 @@
 提供一个依赖轻、可从任意线程安全调用的 `collect_resource_metrics()`，返回一份
 快照 dict，覆盖：
 - DB 连接池状态（`size` / `checked_out` / `overflow` / `checked_in` / 配置 `max`）；
-- 闸占用占位（`gates`）——Wave 2 才接 `ObservableGate.in_use/waiting`，现在留明确占位；
+- 闸占用（`gates`）——已注册 `ObservableGate` 的 in_use/waiting/capacity（pipeline/scheme/publish）；
 - 活跃发布记录数 / 过期租约数——仅当调用方传入 `db` Session 时才查（轻量 COUNT），
   否则留占位。`collect_resource_metrics()` 默认不开 session、不引入新依赖。
 
@@ -24,9 +24,19 @@ logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Any]
 
 
-# Wave 2 占位：接入 server/app/shared/concurrency.py 的 ObservableGate 后，这里改为
-# 汇总每个闸的 in_use / waiting。当前没有可观测闸，故返回空 dict + 明确占位标记。
-_GATES_PLACEHOLDER: dict[str, Any] = {}
+def _collect_gates() -> list[dict[str, Any]]:
+    """汇总所有已注册 ObservableGate 的占用快照（pipeline / scheme / publish）。
+
+    闸在各自模块加载时 register_gate(...)；这里只 import concurrency（无业务依赖、无 IO）。
+    失败时返回空 list、不抛错。
+    """
+    try:
+        from server.app.shared.concurrency import registered_gate_snapshots
+
+        return registered_gate_snapshots()
+    except Exception:
+        logger.exception("collect_resource_metrics: failed to read gate snapshots")
+        return []
 
 
 def _collect_pool() -> dict[str, Any]:
@@ -114,9 +124,8 @@ def collect_resource_metrics(db: Any | None = None) -> dict[str, Any]:
     """
     metrics: dict[str, Any] = {
         "pool": _collect_pool(),
-        # Wave 2 接入 ObservableGate（server/app/shared/concurrency.py）后填充每闸 in_use/waiting。
-        "gates": dict(_GATES_PLACEHOLDER),
-        "gates_placeholder": True,  # TODO(Wave 2): 接 ObservableGate 后移除此标记
+        # 每个 ObservableGate 的 in_use/waiting/capacity（pipeline / scheme / publish）。
+        "gates": _collect_gates(),
     }
     if db is not None:
         metrics.update(_collect_publish_records(db))
