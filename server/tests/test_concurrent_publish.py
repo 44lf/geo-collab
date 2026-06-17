@@ -1,10 +1,10 @@
 """
-并发稳定性测试 — Phase 5
+并发稳定性测试 — Phase 5（Task 4 Step 5 后：全局闸为主线程获取的 ObservableGate）
 
 验证：
-1. _global_publish_sem 在同一任务内正确限制并发（≤ MAX_CONCURRENT_RECORDS）
-2. _global_publish_sem 跨任务共享（两个任务并发时，总浏览器进程 ≤ 5）
-3. 发布抛异常时 semaphore 被正确释放（无泄漏）
+1. _global_publish_gate 在同一任务内正确限制并发（≤ MAX_CONCURRENT_RECORDS）
+2. _global_publish_gate 跨任务共享（两个任务并发时，总浏览器进程 ≤ 5）
+3. 发布抛异常 / 成功后闸槽被正确归还（in_use 回到 0，无泄漏）
 4. 多任务并发执行时状态不互相污染
 """
 
@@ -12,8 +12,19 @@ import threading
 import time
 from io import BytesIO
 
-from server.app.modules.tasks.executor import MAX_CONCURRENT_RECORDS, _global_publish_sem
+from server.app.modules.tasks.executor import MAX_CONCURRENT_RECORDS, _global_publish_gate
 from server.tests.utils import build_test_app
+
+
+def _wait_gate_idle(timeout: float = 5.0) -> int:
+    """轮询等全局闸归零（记录退场处释放，可能略晚于记录终态可见）。返回最终 in_use。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _global_publish_gate.in_use == 0:
+            return 0
+        time.sleep(0.02)
+    return _global_publish_gate.in_use
+
 
 _PNG = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
@@ -60,22 +71,22 @@ def _create_single_task(client, article_id: int, account_id: int, name: str = "t
 
 
 class TestSemaphoreIntegrity:
-    """验证 _global_publish_sem 的完整性（不依赖 Playwright）"""
+    """验证 _global_publish_gate 的完整性（不依赖 Playwright）"""
 
-    def test_semaphore_initial_value(self):
-        """semaphore 初始 value 等于 MAX_CONCURRENT_RECORDS"""
-        # 通过 acquire N 次确认可用槽数
+    def test_gate_capacity_matches_max(self):
+        """闸容量等于 MAX_CONCURRENT_RECORDS，且空闲时可连续取满再归还。"""
+        assert _global_publish_gate.capacity == MAX_CONCURRENT_RECORDS
+        _wait_gate_idle()
         acquired = 0
         for _ in range(MAX_CONCURRENT_RECORDS):
-            got = _global_publish_sem.acquire(blocking=False)
-            if got:
+            if _global_publish_gate.try_acquire():
                 acquired += 1
         for _ in range(acquired):
-            _global_publish_sem.release()
+            _global_publish_gate.release()
         assert acquired == MAX_CONCURRENT_RECORDS
 
     def test_semaphore_released_after_exception(self, monkeypatch):
-        """发布过程抛异常时 semaphore 槽必须被释放"""
+        """发布过程抛异常时闸槽必须被归还（in_use 回 0）"""
         from server.app.modules.tasks import executor as tasks_mod
 
         call_count = 0
@@ -109,16 +120,9 @@ class TestSemaphoreIntegrity:
                     break
                 time.sleep(0.05)
 
-            # 验证 semaphore 槽已被完整归还（可以 acquire MAX 次）
-            acquired = 0
-            for _ in range(MAX_CONCURRENT_RECORDS):
-                if _global_publish_sem.acquire(blocking=False):
-                    acquired += 1
-            for _ in range(acquired):
-                _global_publish_sem.release()
-            assert acquired == MAX_CONCURRENT_RECORDS, (
-                f"Semaphore leak: only {acquired}/{MAX_CONCURRENT_RECORDS} slots available after exception"
-            )
+            # 验证闸槽已被完整归还（记录退场处 release，in_use 回 0）
+            idle = _wait_gate_idle()
+            assert idle == 0, f"Gate leak after exception: in_use={idle} (expected 0)"
         finally:
             test_app.cleanup()
 
@@ -154,15 +158,8 @@ class TestSemaphoreIntegrity:
                     break
                 time.sleep(0.05)
 
-            acquired = 0
-            for _ in range(MAX_CONCURRENT_RECORDS):
-                if _global_publish_sem.acquire(blocking=False):
-                    acquired += 1
-            for _ in range(acquired):
-                _global_publish_sem.release()
-            assert acquired == MAX_CONCURRENT_RECORDS, (
-                f"Semaphore leak: only {acquired}/{MAX_CONCURRENT_RECORDS} slots after success"
-            )
+            idle = _wait_gate_idle()
+            assert idle == 0, f"Gate leak after success: in_use={idle} (expected 0)"
         finally:
             test_app.cleanup()
 

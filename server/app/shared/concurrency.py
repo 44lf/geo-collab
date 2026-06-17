@@ -84,3 +84,25 @@ class ObservableGate:
                 "in_use": self._in_use,
                 "waiting": self._waiting,
             }
+
+
+# ── 闸注册表（供 resource_metrics 统一上报，解耦：metrics 只 import 本模块）─────────
+# 生产侧三个闸（pipeline / scheme / publish）在各自模块加载时 register_gate(...)；
+# resource_metrics.registered_gate_snapshots() 读全部。测试里 new 出来的临时闸不注册，不污染上报。
+_REGISTRY: list[ObservableGate] = []
+_REGISTRY_LOCK = threading.Lock()
+
+
+def register_gate(gate: ObservableGate) -> ObservableGate:
+    """登记一个闸供 resource_metrics 汇总（同实例幂等）。返回该闸，便于 `_X = register_gate(ObservableGate(...))`。"""
+    with _REGISTRY_LOCK:
+        if gate not in _REGISTRY:
+            _REGISTRY.append(gate)
+    return gate
+
+
+def registered_gate_snapshots() -> list[dict[str, int | str]]:
+    """所有已注册闸的占用快照列表，供 resource_metrics 上报。"""
+    with _REGISTRY_LOCK:
+        gates = list(_REGISTRY)
+    return [gate.snapshot() for gate in gates]

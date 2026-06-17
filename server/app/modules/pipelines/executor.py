@@ -16,7 +16,7 @@ from server.app.modules.pipelines.flow_meta import apply_input_mapping, should_s
 from server.app.modules.pipelines.models import Pipeline, PipelineNode, PipelineRun
 from server.app.modules.pipelines.nodes.base import NodeRunContext, get_handler
 from server.app.modules.pipelines.snapshot import nodes_to_snapshot, snapshot_to_node_dicts
-from server.app.shared.concurrency import ObservableGate
+from server.app.shared.concurrency import ObservableGate, register_gate
 from server.app.shared.errors import ConflictError
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,9 @@ SessionFactory = Callable[[], Any]
 
 # 全局并发闸：限制单进程同时执行的 pipeline 运行数（与单主实例约束配合即为全局上限）。
 # ObservableGate 暴露 in_use/waiting 供 resource_metrics 上报，acquire(timeout) 不无限阻塞（#9）。
-_RUN_GATE = ObservableGate(max(1, _get_settings().pipeline_max_concurrent_runs), name="pipeline")
+_RUN_GATE = register_gate(
+    ObservableGate(max(1, _get_settings().pipeline_max_concurrent_runs), name="pipeline")
+)
 
 
 def _run_acquire_timeout() -> float:
