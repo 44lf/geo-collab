@@ -279,9 +279,9 @@
 - Modify: `server/app/modules/tasks/executor.py`（超时分支：线程未确认终止则不释放账号/profile 锁，标"僵尸待清"+ 告警，交下轮恢复）
 - Test: `server/tests/test_publish_timeout_lock_safety.py`（mock 卡死 future，纯逻辑）
 
-- [ ] **Step 1（失败测试 = 常驻 CI 回归，评审第 17 条）**：mock `future.result` 恒 TimeoutExpired，断言线程存活时账号锁 + profile 锁**均未**释放、记录被标"僵尸待清"。此纯逻辑测试进 CI，作为锁所有权不变式的**持续护栏**（与 Task 9 容器冒烟对齐回归级别）。
-- [ ] **Step 2:** 改超时分支。
-- [ ] **Step 3:** 跑测试绿；容器内实测一次真实卡死（不可重复路径，仅补充）。
+- [x] **Step 1（失败测试 = 常驻 CI 回归，评审第 17 条）**：`server/tests/test_publish_timeout_lock_safety.py` 用真实 RUNNING `Future`（`set_running_or_notify_cancel`）模拟卡死/已终止两态，断言线程存活时账号锁 + profile 锁 + 全局闸槽**均未**释放、记录标"僵尸待清"、走告警；线程终止时全部归还。纯逻辑无 DB，进 CI 作锁所有权不变式护栏。RED 已观测（`AttributeError: _handle_timed_out_record` 缺失）。
+- [x] **Step 2:** 改超时分支。`_stop_record_session` 拆成 `_close_record_browser`（关会话+清映射、**不放 profile 锁**）+ `_release_record_profile_lock`，常规收尾＝两者合并（11 个旧调用点行为不变）。新增 `_handle_timed_out_record`（标 failed→关 context→等线程终止：终止才放 profile 锁 + 退场归还闸槽/账号锁；仍存活则一律不放 + `_mark_record_zombie` 回填 queue_reason + `emit_resource_alert`，交下轮恢复）。执行循环超时分支改为单调 helper。
+- [x] **Step 3:** 跑测试绿（新 2 例 + 回归：state_machine 13、publish/worker 集群 26 全绿；ruff/format/mypy 通过；隐藏 .env 全量 768 用例 0 收集错误）。**容器内真实卡死实测＝不可重复路径，仅作补充、留待容器冒烟（与 Task 9 对齐），未在本地复现。**
 
 ## Task 9: display/port 回收对账（封堵 #3）+ 常驻回归
 
@@ -292,10 +292,10 @@
 - Test: `server/tests/test_browser_port_reaper.py`（**台账记账纯逻辑单测**，可本地跑）
 - Add: 容器冒烟脚本（CI 内可跑的 Xvfb 泄漏场景）
 
-- [ ] **Step 1（失败测试，纯逻辑）**：mock kill 后仍存活，断言号段不被永久占用、对账最终回收（不依赖真实进程）。
-- [ ] **Step 2:** 实现回收对账（持久泄漏表 + 重试 reap + 号段归还）。
-- [ ] **Step 3（常驻回归）**：容器冒烟脚本进 CI，覆盖真实 Xvfb/x11vnc 泄漏路径，防后续改动悄悄破坏。
-- [ ] **Step 4:** 跑测试绿。
+- [x] **Step 1（失败测试，纯逻辑）**：`server/tests/test_browser_port_reaper.py` 用假进程（poll/terminate/kill/wait 可控）覆盖「SIGTERM 死 / SIGKILL 死 / 怎么都不死」三态，断言泄漏号段被 `_reserve_numbers` 视为占用、对账（注入 is_alive）确认死透才回收、仍存活则重试强杀留账。无 DB、无真子进程。RED 已观测（`AttributeError: _register_leaked_session` 缺失）。
+- [x] **Step 2:** 实现回收对账。新增 `LeakedSession` 台账 `_leaked_sessions` + `_register_leaked_session`（杀不死即记号段 + `emit_resource_alert`）；`_stop_session_processes` 改为返回 survivors，两个调用点（启动失败 / 正常 stop）据此入账；`_reserve_numbers` 把台账号段并入「占用」绝不复用；`reconcile_leaked_sessions(is_alive=)` 重试强杀、全死则出账 + 关句柄 + 清 X11 socket 回收号段，接进 idle cleanup 30s 周期；`_reset_globals` 清台账。
+- [ ] **Step 3（常驻回归）**：容器冒烟脚本进 CI（真实 Xvfb/x11vnc 泄漏路径）—— **待补**。纯逻辑台账单测已作 CI 护栏；容器冒烟需 Linux 镜像，留待容器侧补。
+- [x] **Step 4:** 跑测试绿（新 5 例 + 回归：browser_sessions / login_session_cancel / recover_login_sessions 全绿；ruff/format/mypy 通过；隐藏 .env 全量 773 用例 0 收集错误）。
 
 ---
 
