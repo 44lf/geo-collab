@@ -216,7 +216,7 @@ def _run_scheme_inner(run_id: int, session_factory: SessionFactory) -> None:
         db.close()
 
     if task_ids:
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheme-run") as executor:
             futures = {
                 executor.submit(_execute_task, tid, user_id, session_factory, model_override): tid
                 for tid in task_ids

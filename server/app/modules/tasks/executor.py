@@ -235,7 +235,9 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
     """
     cancel_evt = _task_cancel.get(task.id)
     running: dict[Future, RunningRecord] = {}
-    executor = ThreadPoolExecutor(max_workers=_max_concurrent_records())
+    executor = ThreadPoolExecutor(
+        max_workers=_max_concurrent_records(), thread_name_prefix="publish"
+    )
 
     try:
         while True:
