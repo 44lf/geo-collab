@@ -84,9 +84,21 @@ class Settings(BaseSettings):
     pipeline_scheduler_interval_seconds: int = 60  # GEO_PIPELINE_SCHEDULER_INTERVAL_SECONDS
     scheduler_tz: str = "Asia/Shanghai"  # GEO_SCHEDULER_TZ
     run_startup_recovery: bool = True  # GEO_RUN_STARTUP_RECOVERY；多实例只在单一实例开启
+    # 资源指标周期采样（Task 3，封堵 #10）。后台守护线程每 N 秒采一份池/run 快照打点到日志，
+    # checked_out/max 超阈值升 WARNING。默认开启、可关闭；采样纯内存读 + 轻量 COUNT，不改并发。
+    resource_metrics_sampling_enabled: bool = True  # GEO_RESOURCE_METRICS_SAMPLING_ENABLED
+    resource_metrics_sample_interval_seconds: int = (
+        60  # GEO_RESOURCE_METRICS_SAMPLE_INTERVAL_SECONDS
+    )
+    resource_metrics_warn_ratio: float = (
+        0.8  # GEO_RESOURCE_METRICS_WARN_RATIO；checked_out/max 超此比例升 WARNING
+    )
     ai_generate_max_count: int = 20  # GEO_AI_GENERATE_MAX_COUNT
     pipeline_max_concurrent_runs: int = 3  # GEO_PIPELINE_MAX_CONCURRENT_RUNS
     scheme_max_concurrent_runs: int = 2  # GEO_SCHEME_MAX_CONCURRENT_RUNS（方案运行全局并发闸）
+    # 等并发槽超时（秒）：超时即把 run 置 failed、不无限阻塞（#9）。默认给够单 run ~25min 占槽下的排队余量。
+    pipeline_run_acquire_timeout_seconds: int = 1800  # GEO_PIPELINE_RUN_ACQUIRE_TIMEOUT_SECONDS
+    scheme_run_acquire_timeout_seconds: int = 1800  # GEO_SCHEME_RUN_ACQUIRE_TIMEOUT_SECONDS
     # [临时] 方案生文封面兜底存储桶（GEO_TEMP_COVER_BUCKET）。空字符串=禁用整段临时封面逻辑。
     temp_cover_bucket: str = "cantingyangchengji"
     # AI 生文（LangGraph 写作智能体）—— 保持 Claude

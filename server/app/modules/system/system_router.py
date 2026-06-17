@@ -19,6 +19,7 @@ from server.app.modules.accounts import remote_browser_runtime_status
 from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.system.models import User, WorkerHeartbeat
 from server.app.modules.system.schemas import SystemStatus
+from server.app.shared.resource_metrics import collect_resource_metrics
 from server.app.shared.system_status import get_system_status
 
 router = APIRouter()
@@ -139,3 +140,14 @@ def read_system_status(
     data["browser_ready"] = _browser_ready()
     data["novnc_runtime_ready"] = bool(remote_browser_runtime_status().get("ready"))
     return SystemStatus(**data)
+
+
+# DB 连接池 / 资源指标（仅 admin）。封堵 #10：暴露池占用 + 闸占位 + run/lease 计数，
+# 供运维实时排查连接池耗尽（重演 #110）。采集纯内存读 + 轻量 COUNT，不改任何并发行为。
+@router.get("/db-pool")
+def read_db_pool_metrics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+) -> dict:
+    """返回 DB 连接池状态 + 闸占用占位 + 活跃发布记录 / 过期租约计数。"""
+    return collect_resource_metrics(db)

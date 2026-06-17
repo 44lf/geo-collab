@@ -297,6 +297,19 @@ def create_app() -> FastAPI:
 
         _logging.getLogger(__name__).exception("start_pipeline_scheduler failed")
 
+    # 资源指标周期采样（Task 3，封堵 #10）：后台守护线程每 N 秒采池/run 快照打点 +
+    # checked_out/max 超阈值升 WARNING（走 resource_metrics.emit_resource_alert 统一告警 hook，
+    # Task 5 后续接同一通道）。开关 GEO_RESOURCE_METRICS_SAMPLING_ENABLED 默认开、可关。
+    # 线程 daemon + 每轮 try/except，启动失败只记日志、不阻塞 create_app。
+    try:
+        from server.app.shared.resource_metrics import start_resource_sampler
+
+        start_resource_sampler(SessionLocal)
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).exception("start_resource_sampler failed")
+
     try:
         # 挂载前端静态文件（Vite 构建产物）
         app.mount("/assets", StaticFiles(directory=f"{WEB_DIST_DIR}/assets"), name="web-assets")
