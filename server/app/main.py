@@ -49,6 +49,7 @@ from server.app.modules.ai_generation.scheme_router import scheme_router
 from server.app.modules.ai_models.router import router as ai_models_router
 from server.app.modules.articles.router import (
     article_groups_router,
+    articles_mcp_router,
     articles_router,
     assets_router,
     chunked_assets_router,
@@ -183,6 +184,12 @@ def create_app() -> FastAPI:
         generation_mcp_router,
         prefix="/api/generation",
         tags=["generation-mcp"],
+    )
+    app.include_router(
+        articles_mcp_router,
+        prefix="/api/articles",
+        tags=["articles-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验
     )
 
     # 注册 API 路由模块（全部需要 JWT cookie 鉴权）

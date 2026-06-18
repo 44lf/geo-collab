@@ -62,3 +62,28 @@ def compose_article(
         return _ok(data)
     except ApiError as exc:
         return _fail(str(exc))
+
+
+@mcp.tool()
+def illustrate_article(
+    article_id: int,
+    category_ids: list[int] | None = None,
+    image_positions: list[int] | None = None,
+) -> dict[str, Any]:
+    """Insert AI-selected stock images into article body.
+
+    Args:
+        article_id: Target article (must exist).
+        category_ids: Image library categories to draw from. None = use article's existing tags.
+        image_positions: Insertion indices in content array. None = auto [2, 4, 6].
+    """
+    body: dict[str, Any] = {}
+    if category_ids:
+        body["category_ids"] = category_ids
+    if image_positions:
+        body["image_positions"] = image_positions
+    try:
+        data = _client().post(f"/api/articles/{article_id}/illustrate", json=body)
+        return _ok(data)
+    except ApiError as exc:
+        return _fail(str(exc))

@@ -950,3 +950,61 @@ async def complete_chunked_upload(
             manager.cleanup_session(upload_id)
         except Exception:
             _logger.warning("Failed to cleanup chunked upload session %s", upload_id, exc_info=True)
+
+
+# === MCP-facing endpoints（不走 user JWT，走 MCP token）===
+# Reason: articles_router is mounted with Depends(get_current_user) globally.
+# MCP service calls have no user JWT, so we expose MCP endpoints on a separate sub-router.
+from server.app.core.mcp_auth import require_mcp_token  # noqa: E402
+from server.app.modules.image_library.hook import insert_images_for_article  # noqa: E402
+
+articles_mcp_router = APIRouter()
+
+
+class IllustratePayload(BaseModel):
+    category_ids: list[int] | None = None  # None = use article's existing stock_categories
+    image_positions: list[int] | None = None  # None = auto-detect from content
+
+
+class IllustrateResponse(BaseModel):
+    inserted_count: int
+
+
+@articles_mcp_router.post(
+    "/{article_id}/illustrate",
+    response_model=IllustrateResponse,
+    dependencies=[Depends(require_mcp_token)],
+)
+def illustrate_article_mcp(
+    article_id: int,
+    payload: IllustratePayload,
+    db: Session = Depends(get_db),
+) -> IllustrateResponse:
+    """[MCP] Insert AI-selected images into the article body.
+
+    Uses image_library/hook.py logic. POC 期：positions 默认按 content 顶层段落数自动均分。
+    """
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if article is None:
+        raise HTTPException(status_code=404, detail="article not found")
+
+    # 选 category：payload > article.stock_categories (many-to-many relationship)
+    if payload.category_ids:
+        cat_ids = payload.category_ids
+    else:
+        cat_ids = [sc.id for sc in (article.stock_categories or [])]
+    if not cat_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="no category_ids: either pass them or set article.stock_category_ids first",
+        )
+    category_id = cat_ids[0]
+
+    # 自动 positions：默认在 content_json 第 2、4、6 段后插
+    positions = payload.image_positions or [2, 4, 6]
+    before = len(article.content_json.get("content", [])) if isinstance(article.content_json, dict) else 0
+    insert_images_for_article(article_id, category_id, positions, db)
+    db.commit()
+    db.refresh(article)
+    after = len(article.content_json.get("content", [])) if isinstance(article.content_json, dict) else 0
+    return IllustrateResponse(inserted_count=max(0, after - before))
