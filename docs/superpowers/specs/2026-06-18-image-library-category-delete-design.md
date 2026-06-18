@@ -44,9 +44,15 @@ def empty_bucket(bucket_name: str) -> None:
 
 ### `image_library/router.py` — `delete_category`
 - **去掉** `image_count > 0 → raise HTTPException(409)` 那道拦截。
-- 删除流程改为：先 `empty_bucket(bucket_name)` 再 `remove_bucket(bucket_name)`，两步都 **best-effort**（捕获异常、只 log warning、不阻断），随后 `db.delete(cat)` + `db.commit()`（relationship `cascade="all, delete-orphan"` 会删该栏目所有 `StockImage` 行）。
+- **先解开指向本栏目的外键引用**（关键，否则 `db.delete(cat)` 触发 MySQL FK 约束 1451）：
+  - `articles.stock_category_id`：FK 无 `ON DELETE`（migration 0024）→ 默认 RESTRICT。必须先 `UPDATE articles SET stock_category_id = NULL WHERE stock_category_id = :id`（ORM bulk update，`synchronize_session=False`）。这是「主推栏目=封面来源」的单值关联，栏目没了置空是正确语义，静默清理、不计入预警。
+  - `article_stock_categories` 多对多：FK 带 `ON DELETE CASCADE`（migration 0028）→ DB 自动清理 join 行，**无需手动处理**。
+  - 无其它表 FK 指向 `stock_images.id`，图片记录级联删除安全。
+- 删除流程：先 `empty_bucket(bucket_name)` 再 `remove_bucket(bucket_name)`，两步都 **best-effort**（捕获异常、只 log warning、不阻断），随后 `db.delete(cat)` + `db.commit()`（relationship `cascade="all, delete-orphan"` 会删该栏目所有 `StockImage` 行）。
   - 理由：与现有 `delete_image`「MinIO 删失败不阻断，以 DB 记录为准，宁可残留孤儿对象」哲学一致，避免「DB 删了桶没删」或「桶删了 DB 没删」的半删状态。
   - 残留孤儿桶因桶名是 `_unique_bucket_name` 自动唯一生成，不影响后续建桶。
+- router.py 目前无 logger，需加 `import logging` + `logger = logging.getLogger(__name__)`。
+- 需 `from server.app.modules.articles.models import Article`（null 更新 + 引用扫描都要用；articles.models 不反向依赖 image_library，无循环导入）。
 - audit 沿用现有 `stock_category.delete`，payload 补 `image_count`。
 
 ### `image_library/router.py` — 新增删除预览端点
