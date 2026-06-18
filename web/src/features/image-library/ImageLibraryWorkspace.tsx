@@ -70,6 +70,9 @@ export function ImageLibraryWorkspace() {
 
   // Category sort state (does NOT reset when switching tabs)
   const [categorySort, setCategorySort] = useState<CategorySort>("created");
+  // Sort menu open/closed (React state, not DOM classList)
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -86,10 +89,14 @@ export function ImageLibraryWorkspace() {
       ) {
         setSearchOpen(false);
       }
+      // Close sort menu on outside click
+      if (sortMenuOpen && sortMenuRef.current && !sortMenuRef.current.contains(e.target as Node)) {
+        setSortMenuOpen(false);
+      }
     }
     document.addEventListener("click", handleClickOutside);
     return () => document.removeEventListener("click", handleClickOutside);
-  }, [searchOpen]);
+  }, [searchOpen, sortMenuOpen]);
 
   useEffect(() => {
     if (lightboxIndex === null) return;
@@ -102,20 +109,29 @@ export function ImageLibraryWorkspace() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [lightboxIndex, images]);
 
-  // ESC closes search overlay (when not in lightbox)
+  // ESC closes search overlay and sort menu (when not in lightbox)
   useEffect(() => {
-    if (!searchOpen) return;
+    if (!searchOpen && !sortMenuOpen) return;
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setSearchOpen(false);
+        setSortMenuOpen(false);
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [searchOpen]);
+  }, [searchOpen, sortMenuOpen]);
 
   useEffect(() => {
     // 切换主推/陪衬 tab 时按 kind 重新拉取栏目；若有 pendingJump 且目标在新列表里，选中它；否则选首项。
+    //
+    // Why pendingJump is intentionally omitted from deps:
+    // This effect must ONLY re-run when kindTab changes — not every time pendingJump updates
+    // (which would re-fetch categories on every search-result click). Correctness is guaranteed
+    // because handleSearchResultClick always calls setPendingJump(...) and setKindTab(...) in the
+    // same synchronous event handler: React batches both state updates into a single re-render, so
+    // by the time this effect fires (after the re-render), the .then closure already captures the
+    // updated pendingJump value.
     listCategories(kindTab)
       .then((cats) => {
         setCategories(cats);
@@ -172,21 +188,28 @@ export function ImageLibraryWorkspace() {
       setSearchError(false);
       return;
     }
+    // Guard against stale in-flight responses: if the input changes or the effect
+    // re-runs before the promise resolves, the cleanup sets cancelled=true so the
+    // stale .then/.catch won't overwrite results from the newer query.
+    let cancelled = false;
     searchDebounceRef.current = setTimeout(async () => {
       setSearchLoading(true);
       setSearchError(false);
       setSearchOpen(true);
       try {
         const results = await searchImages(trimmed);
-        setSearchResults(results);
+        if (!cancelled) setSearchResults(results);
       } catch {
-        setSearchError(true);
-        setSearchResults([]);
+        if (!cancelled) {
+          setSearchError(true);
+          setSearchResults([]);
+        }
       } finally {
-        setSearchLoading(false);
+        if (!cancelled) setSearchLoading(false);
       }
     }, 300);
     return () => {
+      cancelled = true;
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
   }, [searchInput]);
@@ -441,19 +464,18 @@ export function ImageLibraryWorkspace() {
           </div>
 
           {/* 排序下拉：替换原「筛选」按钮 */}
-          <div className="imageLibrarySortWrap">
+          <div className="imageLibrarySortWrap" ref={sortMenuRef}>
             <button
               type="button"
               className="secondaryButton imageLibrarySortBtn"
               onClick={(e) => {
                 e.stopPropagation();
-                const el = e.currentTarget.nextElementSibling as HTMLElement | null;
-                if (el) el.classList.toggle("imageLibrarySortMenuOpen");
+                setSortMenuOpen((prev) => !prev);
               }}
             >
               <ArrowUpDown size={15} /> 排序
             </button>
-            <div className="imageLibrarySortMenu">
+            <div className={`imageLibrarySortMenu${sortMenuOpen ? " imageLibrarySortMenuOpen" : ""}`}>
               {(
                 [
                   { value: "created", label: "创建时间（默认）" },
@@ -469,8 +491,7 @@ export function ImageLibraryWorkspace() {
                   onClick={(e) => {
                     e.stopPropagation();
                     setCategorySort(opt.value);
-                    const menu = (e.currentTarget.closest(".imageLibrarySortMenu")) as HTMLElement | null;
-                    if (menu) menu.classList.remove("imageLibrarySortMenuOpen");
+                    setSortMenuOpen(false);
                   }}
                 >
                   {opt.label}
