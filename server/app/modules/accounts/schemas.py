@@ -78,6 +78,9 @@ class LoginSessionStatusRead(BaseModel):
     error_message: str | None = None
     queue_reason: str | None = None
     browser_session_id: str | None = None
+    # 查重决议后的 canonical 账号 id（共享账号，见设计稿 §4）：worker finish 后非空时，
+    # 可能 != 发起登录的账号 id，前端据此跳到共享 canonical。
+    resolved_account_id: int | None = None
 
 
 # ── 请求体 ──────────────────────────────────────────────────────────────────

@@ -213,6 +213,7 @@ def get_login_session_status_endpoint(
         error_message=request.error_message,
         queue_reason=request.queue_reason,
         browser_session_id=request.browser_session_id,
+        resolved_account_id=request.resolved_account_id,
     )
 
 
