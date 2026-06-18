@@ -391,7 +391,7 @@ export function ImageLibraryWorkspace() {
     setDeletePreviewLoading(true);
     getCategoryDeletePreview(category.id)
       .then(setDeletePreview)
-      .catch(() => setDeletePreview(null))
+      .catch(() => setDeletePreview({ image_count: 0, referenced_article_count: null }))
       .finally(() => setDeletePreviewLoading(false));
   }
 

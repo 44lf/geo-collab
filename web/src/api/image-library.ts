@@ -41,7 +41,9 @@ export function deleteCategory(categoryId: number): Promise<void> {
 export function getCategoryDeletePreview(
   categoryId: number,
 ): Promise<{ image_count: number; referenced_article_count: number | null }> {
-  return api(`/api/image-library/categories/${categoryId}/delete-preview`);
+  return api<{ image_count: number; referenced_article_count: number | null }>(
+    `/api/image-library/categories/${categoryId}/delete-preview`,
+  );
 }
 
 export function listImages(params?: { category_id?: number; tag?: string }): Promise<StockImage[]> {
