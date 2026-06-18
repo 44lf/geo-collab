@@ -66,7 +66,7 @@ from server.app.modules.system.models import User
 from server.app.modules.system.system_router import mcp_system_router
 from server.app.modules.system.system_router import router as system_router
 from server.app.modules.system.users_router import router as users_router
-from server.app.modules.tasks.router import publish_records_router, tasks_router
+from server.app.modules.tasks.router import publish_records_router, tasks_mcp_router, tasks_router
 from server.app.shared.errors import AccountError, ClientError, ConflictError, ValidationError
 
 # PyInstaller 打包后 sys._MEIPASS 指向解压目录
@@ -251,6 +251,12 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         tasks_router, prefix="/api/tasks", tags=["tasks"], dependencies=[Depends(get_current_user)]
+    )
+    app.include_router(
+        tasks_mcp_router,
+        prefix="/api/tasks",
+        tags=["tasks-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验
     )
     app.include_router(
         prompt_templates_router,

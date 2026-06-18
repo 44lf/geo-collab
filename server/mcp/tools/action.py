@@ -172,3 +172,35 @@ def set_review_status(article_id: int, review_status: str) -> dict[str, Any]:
         return _ok(data)
     except ApiError as exc:
         return _fail(str(exc))
+
+
+@mcp.tool()
+def create_distribute_task(
+    name: str,
+    article_ids: list[int],
+    account_ids: list[int],
+    platform_code: str = "toutiao",
+    stop_before_publish: bool = False,
+) -> dict[str, Any]:
+    """Create an article_round_robin distribute task.
+
+    Args:
+        name: Human-readable task name (e.g. "Daily distribute 2026-06-18").
+        article_ids: Articles to distribute (must be review_status="approved" already).
+        account_ids: Target accounts. Round-robin maps article->account by sort_order.
+        platform_code: "toutiao" / "wechat_mp" etc. Default "toutiao".
+        stop_before_publish: If True, task pauses before actual publish (manual confirm needed).
+    """
+    body = {
+        "name": name,
+        "article_ids": article_ids,
+        "account_ids": account_ids,
+        "platform_code": platform_code,
+        "user_id": _OPERATOR_USER_ID,
+        "stop_before_publish": stop_before_publish,
+    }
+    try:
+        data = _client().post("/api/tasks/mcp", json=body)
+        return _ok(data)
+    except ApiError as exc:
+        return _fail(str(exc))
