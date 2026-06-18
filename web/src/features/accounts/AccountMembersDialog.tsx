@@ -84,11 +84,11 @@ export function AccountMembersDialog({
               {members.map((m) => (
                 <div key={m.user_id} className="accountMemberRow">
                   <div className="accountMemberAvatar">
-                    {m.username.slice(0, 1).toUpperCase()}
+                    {(m.display_name ?? m.username ?? "?").slice(0, 1).toUpperCase()}
                   </div>
                   <div className="accountMemberInfo">
                     <div className="accountMemberName">
-                      {m.username}
+                      {m.display_name ?? m.username ?? "未知用户"}
                       {m.is_owner && (
                         <span className="accountMemberOwnerBadge">
                           <Crown size={10} />
