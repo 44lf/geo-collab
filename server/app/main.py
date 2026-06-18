@@ -63,6 +63,7 @@ from server.app.modules.pipelines.router import router as pipelines_router
 from server.app.modules.prompt_templates.router import router as prompt_templates_router
 from server.app.modules.system.auth_router import router as auth_router
 from server.app.modules.system.models import User
+from server.app.modules.system.system_router import mcp_system_router
 from server.app.modules.system.system_router import router as system_router
 from server.app.modules.system.users_router import router as users_router
 from server.app.modules.tasks.router import publish_records_router, tasks_router
@@ -241,6 +242,12 @@ def create_app() -> FastAPI:
         prefix="/api/system",
         tags=["system"],
         dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        mcp_system_router,
+        prefix="/api/system",
+        tags=["system-mcp"],
+        # 不挂 get_current_user 依赖，MCP token 在 endpoint 内单独校验
     )
     app.include_router(
         tasks_router, prefix="/api/tasks", tags=["tasks"], dependencies=[Depends(get_current_user)]
