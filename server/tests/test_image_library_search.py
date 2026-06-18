@@ -5,12 +5,13 @@ TDD 先写测试，按 §测试 清单覆盖：
 - 跨栏目：两个栏目各放命中图，一次 q 都能搜到
 - 标签模糊：json_search 命中数组里的某个标签子串
 - limit clamp（>200 截到 200、缺省 50）
+- limit=0 → 422（ge=1 边界）
 - 空 q 返回 []
 - LIKE 转义：含 % / _ 的 q 按字面匹配，不当通配符
 - latest_image_at：有图栏目返回最新图 created_at、无图栏目返回 None
 """
 
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -41,7 +42,7 @@ def _insert_category(db, name, bucket, kind="companion"):
     return cat
 
 
-def _insert_image(db, category_id, filename, *, description=None, tags=None):
+def _insert_image(db, category_id, filename, *, description=None, tags=None, created_at=None):
     img = StockImage(
         category_id=category_id,
         minio_key=f"test-key-{filename}",
@@ -49,6 +50,8 @@ def _insert_image(db, category_id, filename, *, description=None, tags=None):
         description=description,
         tags=tags or [],
     )
+    if created_at is not None:
+        img.created_at = created_at
     db.add(img)
     db.flush()
     return img
@@ -262,6 +265,18 @@ def test_search_explicit_small_limit(monkeypatch):
         app.cleanup()
 
 
+@pytest.mark.mysql
+def test_search_limit_zero_returns_422(monkeypatch):
+    """limit=0 违反 ge=1 约束，FastAPI 应返回 422。"""
+    app = build_test_app(monkeypatch)
+    try:
+        _patch_minio(monkeypatch)
+        r = app.client.get("/api/image-library/search?q=anything&limit=0")
+        assert r.status_code == 422, f"预期 422，实际 {r.status_code}: {r.text}"
+    finally:
+        app.cleanup()
+
+
 # ── 空 q 返回 [] ──────────────────────────────────────────────────────────
 
 
@@ -306,22 +321,29 @@ def test_search_whitespace_only_q_returns_empty(monkeypatch):
 
 @pytest.mark.mysql
 def test_search_like_escape_percent(monkeypatch):
-    """q 中的 % 应按字面匹配，不当通配符。"""
+    """q 中的 % 应按字面匹配，不当通配符。
+
+    distractor 说明：
+    - "sale_50%_off.jpg" —— 含字面 "50%"，应命中
+    - "img_50abc.jpg"    —— 含 "50" 后跟其它字符；若 % 未转义，
+                           LIKE '%50%%' 会匹配它；若转义正确则不命中
+    """
     app = build_test_app(monkeypatch)
     try:
         _patch_minio(monkeypatch)
         with app.session_factory() as db:
             cat = _insert_category(db, "转义栏目", "escape-bucket", "companion")
-            # 只有含字面 "%" 的文件名应命中
+            # 含字面 "50%" 的文件名 —— 预期命中
             _insert_image(db, cat.id, "sale_50%_off.jpg")
-            _insert_image(db, cat.id, "regular_image.jpg")
+            # distractor：含 "50" 后跟非 % 字符；未转义的 %50%% 会过匹配它
+            _insert_image(db, cat.id, "img_50abc.jpg")
             db.commit()
 
-        # 搜 "50%" —— 若未转义，% 会当通配符，"regular_image.jpg" 等都会命中
+        # 搜 "50%" —— 若未转义，% 会当通配符，distractor 也会命中
         r = app.client.get("/api/image-library/search?q=50%25")
         assert r.status_code == 200, r.text
         results = r.json()
-        assert len(results) == 1
+        assert len(results) == 1, f"预期仅1条（字面匹配），实际: {[x['filename'] for x in results]}"
         assert results[0]["filename"] == "sale_50%_off.jpg"
     finally:
         app.cleanup()
@@ -329,24 +351,32 @@ def test_search_like_escape_percent(monkeypatch):
 
 @pytest.mark.mysql
 def test_search_like_escape_underscore(monkeypatch):
-    """q 中的 _ 应按字面匹配，不当通配符。"""
+    """q 中的 _ 应按字面匹配，不当通配符。
+
+    distractor 说明：
+    - "img_x_test.jpg" —— 含字面 "_x_"，应命中
+    - "imgXtest.jpg"   —— 含 "gXt"（大写 X）；MySQL 默认 ci 排序规则下，
+                          若 _ 未转义，LIKE '%_x_%' 把 _ 当单字符通配符，
+                          "gXt" 满足 _x_ 模式（g→_, X→x ci, t→_），会被命中；
+                          转义后 _ 是字面下划线，"imgXtest" 无字面 "_x_"，不命中
+    """
     app = build_test_app(monkeypatch)
     try:
         _patch_minio(monkeypatch)
         with app.session_factory() as db:
             cat = _insert_category(db, "下划线栏目", "underscore-bucket", "companion")
-            # 含字面 "_x_" 的文件名
+            # 含字面 "_x_" 的文件名 —— 预期命中
             _insert_image(db, cat.id, "img_x_test.jpg")
-            # 这个 "imgAtest.jpg" 若 _ 被当通配符则也会命中 "img_test"
-            _insert_image(db, cat.id, "imgAtest.jpg")
+            # distractor：未转义的 _x_ 会把 gXt 当 _x_（ci），转义后不命中
+            _insert_image(db, cat.id, "imgXtest.jpg")
             db.commit()
 
-        # 搜 "_x_" —— 若未转义，_ 匹配任意单字符，两者都可能命中
+        # 搜 "_x_" —— 若未转义，_ 匹配任意单字符，distractor 也会命中
         r = app.client.get("/api/image-library/search?q=_x_")
         assert r.status_code == 200, r.text
         results = r.json()
         # 只有字面含 "_x_" 的那张应命中
-        assert len(results) == 1
+        assert len(results) == 1, f"预期仅1条（字面匹配），实际: {[x['filename'] for x in results]}"
         assert results[0]["filename"] == "img_x_test.jpg"
     finally:
         app.cleanup()
@@ -435,21 +465,27 @@ def test_list_categories_latest_image_at_empty_category(monkeypatch):
 
 @pytest.mark.mysql
 def test_list_categories_latest_image_at_is_max(monkeypatch):
-    """latest_image_at 是该栏目中 created_at 最大的那张图的时间。"""
-    import time
+    """latest_image_at 是该栏目中 created_at 最大的那张图的时间。
 
+    created_at 是秒级精度 DATETIME + Python-side default，同一次 flush 内的两行
+    可能落同一秒。因此直接给两张图设显式、相差 60s 的 created_at，再断言
+    latest_image_at 精确等于较晚那张的时间（秒级）。
+    """
     app = build_test_app(monkeypatch)
     try:
         _patch_minio(monkeypatch)
+
+        # 使用固定、明确分离的时间戳（秒级截断，避免 Python 侧毫秒扰动）
+        base_time = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+        older_time = base_time                        # 2020-01-01T12:00:00Z
+        newer_time = base_time + timedelta(seconds=60)  # 2020-01-01T12:01:00Z
+
         with app.session_factory() as db:
             cat = _insert_category(db, "最新时间栏目", "max-time-bucket", "companion")
-            _insert_image(db, cat.id, "first.jpg")
-            db.flush()
-            # 稍微等一下让时间戳有差异
-            time.sleep(0.05)
-            img_latest = _insert_image(db, cat.id, "latest.jpg")
+            # 显式指定 created_at，绕过 Python-side default
+            _insert_image(db, cat.id, "first.jpg", created_at=older_time.replace(tzinfo=None))
+            _insert_image(db, cat.id, "latest.jpg", created_at=newer_time.replace(tzinfo=None))
             db.commit()
-            latest_created_at = img_latest.created_at
             cat_id = cat.id
 
         r = app.client.get("/api/image-library/categories")
@@ -457,13 +493,13 @@ def test_list_categories_latest_image_at_is_max(monkeypatch):
         categories = r.json()
         cat_data = next((c for c in categories if c["id"] == cat_id), None)
         assert cat_data is not None
-        # latest_image_at 应匹配最新那张图的 created_at（忽略毫秒以下精度差）
-        from datetime import datetime
+        assert cat_data["latest_image_at"] is not None
 
+        # latest_image_at 必须精确等于较晚那张图的 created_at（秒级）
         returned = datetime.fromisoformat(cat_data["latest_image_at"].replace("Z", "+00:00"))
-        expected = latest_created_at.replace(tzinfo=UTC)
+        expected = newer_time
         diff = abs((returned - expected).total_seconds())
-        assert diff < 2, f"时间差过大: {diff}s"
+        assert diff < 1, f"latest_image_at 应等于较晚图的时间戳，实际差: {diff}s (returned={returned}, expected={expected})"
     finally:
         app.cleanup()
 
