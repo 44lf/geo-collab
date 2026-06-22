@@ -19,6 +19,7 @@ from server.app.modules.auto_review.schemas import (
     ScoreResponse,
 )
 from server.app.modules.auto_review.service import score_articles, submit_decision
+from server.app.shared.errors import ClientError, ConflictError, ValidationError
 
 router = APIRouter()
 
@@ -37,6 +38,10 @@ def post_score(req: ScoreRequest, db: Session = Depends(get_db)) -> ScoreRespons
     """
     try:
         results = score_articles(db, req)
+    except HTTPException:
+        raise
+    except (ConflictError, ClientError, ValidationError):
+        raise
     except Exception as exc:
         raise mcp_exception_response(
             exc,
@@ -60,6 +65,11 @@ def post_auto_review(
         decision = submit_decision(db, article_id, req)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except (ConflictError, ClientError, ValidationError):
+        db.rollback()
+        raise
     except Exception as exc:
         db.rollback()
         raise mcp_exception_response(

@@ -84,7 +84,7 @@ from server.app.modules.articles.uploader import (
 from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.system.models import User
 from server.app.modules.tasks.models import PublishRecord
-from server.app.shared.errors import ClientError, ConflictError
+from server.app.shared.errors import ClientError, ConflictError, ValidationError
 
 articles_router = APIRouter()
 article_groups_router = APIRouter()
@@ -1011,6 +1011,11 @@ def illustrate_article_mcp(
     try:
         insert_images_for_article(article_id, category_id, positions, db)
         db.commit()
+    except HTTPException:
+        raise
+    except (ConflictError, ClientError, ValidationError):
+        db.rollback()
+        raise
     except Exception as exc:
         db.rollback()
         raise mcp_exception_response(
@@ -1098,6 +1103,11 @@ def save_article_from_mcp(
             existing["writer_model"] = payload.model_label
             article.metrics = existing
         db.commit()
+    except HTTPException:
+        raise
+    except (ConflictError, ClientError, ValidationError):
+        db.rollback()
+        raise
     except Exception as exc:
         db.rollback()
         raise mcp_exception_response(
