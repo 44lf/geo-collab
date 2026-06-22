@@ -47,7 +47,7 @@ def get_mcp_status(request: Request) -> McpStatusResponse:
     )
 
 
-# MCP token 鉴权（router-level dependency）—— /health 在 T6 加测试，此处仅占位
+# MCP token 鉴权（router-level dependency）
 mcp_connect_health_router = APIRouter(dependencies=[Depends(require_mcp_token)])
 
 
