@@ -149,8 +149,9 @@ class Settings(BaseSettings):
     )
 
     # MCP server（Claude Code 通过 stdio spawn 调用 GEO 能力）
+    # 注意：MCP server 子进程的 GEO_API_BASE_URL 由 server/mcp/config.py 直接读 os.environ，
+    # 不进 Settings——避免与服务端进程的 mcp_token 校验路径耦合。
     mcp_token: str = ""  # GEO_MCP_TOKEN（独立 service token，与 user JWT 隔离；空=禁用 MCP）
-    mcp_api_base_url: str = "http://127.0.0.1:8000"  # GEO_MCP_API_BASE_URL
 
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env", extra="ignore")
 
