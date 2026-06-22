@@ -417,12 +417,29 @@ def create_app() -> FastAPI:
     # **必须**挂在 SPA fallback `@app.get("/{full_path:path}")` 之前 —— 否则非 /api/ 路径
     # 全部被 fallback 兜住,/mcp 永远 404。
     try:
+        import contextlib
+
         from server.app.core.mcp_auth import McpTokenMiddleware
-        from server.mcp.server import build_http_app
+        from server.mcp.server import build_http_app, mcp
 
         mcp_app = build_http_app()
         mcp_app.add_middleware(McpTokenMiddleware)
         app.mount("/mcp", mcp_app)
+
+        # StreamableHTTPSessionManager.handle_request() checks `_task_group is not None`
+        # unconditionally (even in stateless mode) — the task group is initialized by the
+        # session manager's own lifespan context (`session_manager.run()`). Mounted sub-apps
+        # do NOT trigger their own lifespan in FastAPI/Starlette, so we hook it into
+        # the outer FastAPI app's lifespan here instead.
+        _mcp_session_manager = mcp.session_manager
+
+        @contextlib.asynccontextmanager
+        async def _lifespan_with_mcp(application):  # type: ignore[misc]
+            async with _mcp_session_manager.run():
+                yield
+
+        app.router.lifespan_context = _lifespan_with_mcp
+
     except Exception:
         import logging as _logging
 

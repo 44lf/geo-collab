@@ -21,7 +21,17 @@ from mcp.server.fastmcp import FastMCP
 
 from server.app.modules.mcp_catalog.connect_router import MCP_TOOLS_COUNT
 
-mcp = FastMCP("geo")
+# stateless_http + json_response: streamable_http_app's session manager requires anyio task
+# group via its own lifespan event, but mounted sub-apps don't trigger sub-app lifespans.
+# Stateless mode bypasses the task group requirement; json_response keeps wire format simple.
+# streamable_http_path="/": default is "/mcp", which stacks with our mount("/mcp", ...) into
+# external URL "/mcp/mcp/". Setting to "/" makes external URL just "/mcp/".
+mcp = FastMCP(
+    "geo",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+)
 
 # 触发各 tool 模块注册 (导入即调用 @mcp.tool 装饰器)
 from server.mcp.tools import action as _action  # noqa: F401,E402
