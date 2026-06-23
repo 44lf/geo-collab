@@ -10,9 +10,6 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeVar
-
-T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -62,7 +59,7 @@ def _backoff_delay(policy: RetryPolicy, attempt: int, rand: Callable[[], float])
     return max(0.0, raw)
 
 
-def retry_call(
+def retry_call[T](
     fn: Callable[[], T],
     *,
     policy: RetryPolicy,
@@ -88,7 +85,10 @@ def retry_call(
             if attempt >= policy.max_attempts or not is_transient(exc):
                 raise
             delay = _backoff_delay(policy, attempt, rand)
-            if policy.max_elapsed is not None and (monotonic() - start) + delay > policy.max_elapsed:
+            if (
+                policy.max_elapsed is not None
+                and (monotonic() - start) + delay > policy.max_elapsed
+            ):
                 raise
             if on_retry is not None:
                 on_retry(attempt, exc, delay)

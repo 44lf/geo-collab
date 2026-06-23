@@ -16,7 +16,9 @@ def _seed_record(db, *, status="pending", username="op_wiring"):
     user.set_password("pw-123456")
     db.add(user)
     db.flush()
-    platform = Platform(code="toutiao", name="头条号", base_url="https://mp.toutiao.com", enabled=True)
+    platform = Platform(
+        code="toutiao", name="头条号", base_url="https://mp.toutiao.com", enabled=True
+    )
     db.add(platform)
     db.flush()
     account = Account(
@@ -33,14 +35,20 @@ def _seed_record(db, *, status="pending", username="op_wiring"):
     db.add(article)
     db.flush()
     task = PublishTask(
-        user_id=user.id, name="task", task_type="single",
-        platform_id=platform.id, article_id=article.id,
+        user_id=user.id,
+        name="task",
+        task_type="single",
+        platform_id=platform.id,
+        article_id=article.id,
     )
     db.add(task)
     db.flush()
     record = PublishRecord(
-        task_id=task.id, article_id=article.id,
-        platform_id=platform.id, account_id=account.id, status=status,
+        task_id=task.id,
+        article_id=article.id,
+        platform_id=platform.id,
+        account_id=account.id,
+        status=status,
     )
     db.add(record)
     db.flush()

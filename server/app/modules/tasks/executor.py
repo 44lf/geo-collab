@@ -27,6 +27,10 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from server.app.modules.tasks.drivers.base import CommitGuard
 
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
@@ -1077,7 +1081,7 @@ def _store_failure_screenshot(
     return stored.asset.id
 
 
-def _make_commit_guard(record_id: int) -> "CommitGuard":
+def _make_commit_guard(record_id: int) -> CommitGuard:
     """构造该记录的提交守卫：mark_pending 自开 session 落 commit_attempted_at（发布线程内，
     入参均 detached，不复用外部 session；与 runner_api._resolve_access_token 同模式）。"""
     from server.app.modules.tasks.drivers.base import CommitGuard

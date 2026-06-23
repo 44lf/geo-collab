@@ -1126,8 +1126,12 @@ class ToutiaoDriver:
         retry_policy=None,
     ) -> PublishResult:
         return _do_publish(
-            page, context, payload, stop_before_publish,
-            commit_guard=commit_guard, retry_policy=retry_policy,
+            page,
+            context,
+            payload,
+            stop_before_publish,
+            commit_guard=commit_guard,
+            retry_policy=retry_policy,
         )
 
     def extract_platform_user_id_sync(self, *, page: Any) -> str | None:

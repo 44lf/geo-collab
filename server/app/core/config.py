@@ -20,9 +20,13 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from server.app.shared.resilience import RetryPolicy
 
 
 class AiEngineConfig(BaseModel):

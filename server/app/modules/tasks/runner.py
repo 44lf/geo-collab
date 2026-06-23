@@ -301,6 +301,7 @@ def run_publish(
     """
     if commit_guard is None:
         from server.app.modules.tasks.drivers.base import NOOP_COMMIT_GUARD
+
         commit_guard = NOOP_COMMIT_GUARD
 
     if not article.title or not article.title.strip():

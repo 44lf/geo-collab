@@ -1,10 +1,16 @@
 # server/tests/test_wechat_mp_retry.py
 import httpx
+import pytest
 
 from server.app.modules.articles.parser import BodySegment
-from server.app.modules.tasks.drivers.base import CommitGuard, CommitUncertainError, NOOP_COMMIT_GUARD
+from server.app.modules.tasks.drivers.base import (
+    NOOP_COMMIT_GUARD,
+    ApiPublishPayload,
+    CommitGuard,
+    CommitUncertainError,
+    PublishError,
+)
 from server.app.modules.tasks.drivers.wechat_mp import WeChatMpDriver
-from server.app.modules.tasks.drivers.base import ApiPublishPayload
 from server.app.shared.resilience import RetryPolicy
 
 
@@ -74,23 +80,18 @@ def test_add_draft_network_loss_is_commit_uncertain(tmp_path, monkeypatch):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     guard = CommitGuard(mark_pending=lambda: marked.__setitem__("n", marked["n"] + 1))
     driver = WeChatMpDriver()
-    try:
+    with pytest.raises(CommitUncertainError):
         driver.publish_api(
             payload=_payload(tmp_path),
             client=client,
             commit_guard=guard,
             retry_policy=RetryPolicy(max_attempts=3, base_delay=0.0, jitter=0.0, max_elapsed=None),
         )
-        assert False, "应抛 CommitUncertainError"
-    except CommitUncertainError:
-        pass
     assert marked["n"] == 1  # 进守卫前标记一次
     assert draft_calls["n"] == 1  # add_draft 未重试
 
 
 def test_business_errcode_stays_publish_error(tmp_path, monkeypatch):
-    from server.app.modules.tasks.drivers.base import PublishError
-
     monkeypatch.setattr(
         "server.app.modules.tasks.drivers.wechat_mp.compress_cover_to_jpeg", lambda b: b
     )
@@ -105,15 +106,11 @@ def test_business_errcode_stays_publish_error(tmp_path, monkeypatch):
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     driver = WeChatMpDriver()
-    try:
+    with pytest.raises(PublishError) as exc_info:
         driver.publish_api(
             payload=_payload(tmp_path),
             client=client,
             commit_guard=CommitGuard(mark_pending=lambda: None),
             retry_policy=RetryPolicy(max_attempts=3, base_delay=0.0, jitter=0.0, max_elapsed=None),
         )
-        assert False
-    except CommitUncertainError:
-        assert False, "业务错误码不应判为 uncertain"
-    except PublishError:
-        pass  # 干净失败
+    assert not isinstance(exc_info.value, CommitUncertainError)  # 业务错误码不应判为 uncertain
