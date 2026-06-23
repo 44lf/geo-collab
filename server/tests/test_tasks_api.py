@@ -1003,3 +1003,10 @@ def test_auto_distribute_multi_platform_splits_per_platform(monkeypatch):
                 assert account_ids == {tt}
     finally:
         test_app.cleanup()
+
+
+def test_record_read_exposes_failure_kind(monkeypatch):
+    """PublishRecordRead schema 必须包含 failure_kind 字段（默认 None）。"""
+    from server.app.modules.tasks.schemas import PublishRecordRead
+
+    assert "failure_kind" in PublishRecordRead.model_fields
