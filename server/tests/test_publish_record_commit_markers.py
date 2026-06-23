@@ -57,9 +57,14 @@ def test_commit_marker_columns_roundtrip(monkeypatch):
             _task, rec = _seed_record(db)
             rec.commit_attempted_at = utcnow()
             rec.failure_kind = "commit_uncertain"
+            record_id = rec.id
             db.commit()
-            db.refresh(rec)
-            assert rec.failure_kind == "commit_uncertain"
-            assert rec.commit_attempted_at is not None
+            db.expunge_all()                       # 清空 session 内存,强制下次从 DB 读
+            reloaded = db.get(PublishRecord, record_id)
+            assert reloaded.failure_kind == "commit_uncertain"
+            assert reloaded.commit_attempted_at is not None
+            # 双保险:确认两列是真实映射列,而非实例属性
+            assert "commit_attempted_at" in PublishRecord.__table__.columns.keys()
+            assert "failure_kind" in PublishRecord.__table__.columns.keys()
     finally:
         test_app.cleanup()
