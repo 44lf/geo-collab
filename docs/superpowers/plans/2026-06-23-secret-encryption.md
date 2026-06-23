@@ -728,15 +728,25 @@ def downgrade() -> None:
 
 > downgrade 把 TEXT 转回 JSON：若此时列里仍有 `enc:v1:` 密文，MySQL 会因非法 JSON 报错——所以 downgrade 前必须先解密回填（运维手册写明）。本期不为 downgrade 自动解密（YAGNI）。
 
-- [ ] **Step 6: 验证迁移可上可下** — 对**本地 dev 库**（非测试库，`GEO_DATABASE_URL` 指向 dev）：
+- [ ] **Step 6: 验证迁移可上可下（用一次性 scratch 库，绝不碰本地 `geo_collab`）**
 
-Run:
+`alembic.ini` 在**仓库根** `e:\geo`（不是 `server/`）——在根目录跑 alembic。本地 `geo_collab` 是开发全栈在用的库、迁移头停在旧版本，**禁止**对它 `alembic upgrade`。改用临时库从 base 跑全链验证：
+
 ```bash
-cd server && alembic upgrade head && alembic downgrade -1 && alembic upgrade head
+PY="/c/Users/Administrator/miniconda3/envs/geo_xzpt/python.exe"
+# 1) 建 scratch 库
+"$PY" -c "import pymysql; c=pymysql.connect(host='127.0.0.1',port=3306,user='geo_user',password='GeoUser20260513A1'); c.cursor().execute('DROP DATABASE IF EXISTS geo_scratch_mig'); c.cursor().execute('CREATE DATABASE geo_scratch_mig'); c.commit()"
+# 2) 从 base 跑到 head（含新 0049），再 downgrade -1，再 upgrade head
+GEO_DATABASE_URL="mysql+pymysql://geo_user:GeoUser20260513A1@127.0.0.1:3306/geo_scratch_mig" "$PY" -m alembic upgrade head
+GEO_DATABASE_URL="mysql+pymysql://geo_user:GeoUser20260513A1@127.0.0.1:3306/geo_scratch_mig" "$PY" -c "import pymysql; cur=pymysql.connect(host='127.0.0.1',port=3306,user='geo_user',password='GeoUser20260513A1',database='geo_scratch_mig').cursor(); cur.execute(\"SHOW COLUMNS FROM accounts LIKE 'api_credentials'\"); print(cur.fetchone())"
+GEO_DATABASE_URL="mysql+pymysql://geo_user:GeoUser20260513A1@127.0.0.1:3306/geo_scratch_mig" "$PY" -m alembic downgrade -1
+GEO_DATABASE_URL="mysql+pymysql://geo_user:GeoUser20260513A1@127.0.0.1:3306/geo_scratch_mig" "$PY" -m alembic upgrade head
+# 3) 删 scratch 库
+"$PY" -c "import pymysql; pymysql.connect(host='127.0.0.1',port=3306,user='geo_user',password='GeoUser20260513A1').cursor().execute('DROP DATABASE geo_scratch_mig')"
 ```
-Expected: 三步均无错；`upgrade head` 后 `SHOW COLUMNS FROM accounts LIKE 'api_credentials'` 类型为 `text`。
+Expected: `upgrade head` 无错；`SHOW COLUMNS` 输出第二列（Type）为 `text`；`downgrade -1` 把它变回 `json`；再 `upgrade head` 无错。
 
-> 若 dev 库无法连，至少 `alembic upgrade head --sql` 离线生成 SQL 人工核对 `ALTER TABLE accounts MODIFY api_credentials TEXT`。
+> 若从 base 的全链 upgrade 因**与 0049 无关**的历史迁移问题失败，退而用 `GEO_DATABASE_URL=...geo_scratch_mig "$PY" -m alembic upgrade 0048:head --sql` 离线生成 SQL，人工核对 0049 段产出 `ALTER TABLE accounts MODIFY api_credentials ... TEXT`（两列），并在报告里说明走了哪条路径 + 证据。无论哪条路径，结束都要 DROP 掉 scratch 库。
 
 - [ ] **Step 7: 跑账号相关回归确认未破坏**
 
