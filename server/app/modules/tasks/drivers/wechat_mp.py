@@ -14,10 +14,12 @@ import httpx
 from server.app.modules.articles.parser import BodySegment
 from server.app.modules.tasks.drivers import register
 from server.app.modules.tasks.drivers.base import (
+    NOOP_COMMIT_GUARD,
     ApiPublishPayload,
     PublishError,
     PublishResult,
 )
+from server.app.shared.resilience import RetryPolicy, retry_call
 from server.app.modules.tasks.drivers.wechat_client import (
     WeChatApiError,
     add_draft,
@@ -30,6 +32,14 @@ from server.app.modules.tasks.drivers.wechat_images import (
     compress_content_image,
     compress_cover_to_jpeg,
 )
+
+
+def _wechat_is_transient(exc: BaseException) -> bool:
+    """WeChatApiError(errcode=None)=网络不可达(见 wechat_client._request)→可重试；
+    errcode 非空=业务错误→永久不重试。"""
+    if isinstance(exc, WeChatApiError):
+        return exc.errcode is None
+    return False
 
 
 def segments_to_html(segments: list[BodySegment], image_urls: dict[int, str]) -> str:
@@ -82,18 +92,23 @@ class WeChatMpDriver:
         commit_guard=None,
         retry_policy=None,
     ) -> PublishResult:
+        if commit_guard is None:
+            commit_guard = NOOP_COMMIT_GUARD
+        policy = retry_policy or RetryPolicy()
         owns_client = client is None
         if client is None:
             client = make_default_client()
         try:
-            return self._publish_api(payload=payload, client=client)
+            return self._publish_api(
+                payload=payload, client=client, commit_guard=commit_guard, policy=policy
+            )
         except WeChatApiError as exc:
             raise PublishError(str(exc)) from exc
         finally:
             if owns_client:
                 client.close()
 
-    def _publish_api(self, *, payload: ApiPublishPayload, client: httpx.Client) -> PublishResult:
+    def _publish_api(self, *, payload: ApiPublishPayload, client: httpx.Client, commit_guard, policy) -> PublishResult:
         token = payload.access_token
 
         cover_path = payload.cover_path
@@ -104,8 +119,13 @@ class WeChatMpDriver:
             )
         if cover_path is None:
             raise PublishError("公众号草稿需要封面图（或正文至少一张图）")
-        thumb_media_id = upload_thumb(
-            token, "cover.jpg", compress_cover_to_jpeg(cover_path.read_bytes()), client=client
+
+        thumb_media_id = retry_call(
+            lambda: upload_thumb(
+                token, "cover.jpg", compress_cover_to_jpeg(cover_path.read_bytes()), client=client
+            ),
+            policy=policy,
+            is_transient=_wechat_is_transient,
         )
 
         image_urls: dict[int, str] = {}
@@ -115,7 +135,13 @@ class WeChatMpDriver:
             data, filename = compress_content_image(
                 seg.image_path.read_bytes(), seg.image_path.name
             )
-            image_urls[index] = upload_content_image(token, filename, data, client=client)
+            image_urls[index] = retry_call(
+                lambda data=data, filename=filename: upload_content_image(
+                    token, filename, data, client=client
+                ),
+                policy=policy,
+                is_transient=_wechat_is_transient,
+            )
 
         content_html = segments_to_html(payload.body_segments, image_urls)
         if not content_html:
@@ -123,7 +149,9 @@ class WeChatMpDriver:
         article = build_draft_article(
             title=payload.title, content_html=content_html, thumb_media_id=thumb_media_id
         )
-        media_id = add_draft(token, article, client=client)
+        # 提交边界：add_draft 非幂等，不进 retry_call，只进 commit_guard
+        with commit_guard.committing():
+            media_id = add_draft(token, article, client=client)
         return PublishResult(
             url=None,
             title=payload.title,
