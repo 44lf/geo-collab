@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,3 +71,15 @@ def build_bundle() -> SkillBundle:
         bundle_sha256=bundle_sha,
         files=files,
     )
+
+
+def build_zip(bundle: SkillBundle) -> bytes:
+    """打包成 zip bytes。文件路径保持模板的目录结构（不带顶层前缀）。
+
+    解压到 .claude/ 后直接是 README.md / commands/ / skills/。
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for f in bundle.files:
+            zf.writestr(f.path, f.content)
+    return buf.getvalue()

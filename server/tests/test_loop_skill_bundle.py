@@ -72,3 +72,25 @@ def test_build_bundle_sha_changes_when_content_changes(tmp_path, monkeypatch):
 
     after = service.build_bundle().bundle_sha256
     assert before != after, "bundle_sha256 should change when a template changes"
+
+
+def test_build_zip_round_trip():
+    """build_zip 解压出来的文件名 + 内容跟 bundle.files 一对一吻合。"""
+    import io
+    import zipfile
+
+    from server.app.modules.loop_skills.service import build_bundle, build_zip
+
+    bundle = build_bundle()
+    data = build_zip(bundle)
+
+    # 解压验证
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        zip_names = set(zf.namelist())
+        bundle_paths = {f.path for f in bundle.files}
+        assert zip_names == bundle_paths, "zip entries should match bundle paths"
+
+        for f in bundle.files:
+            with zf.open(f.path) as fp:
+                content = fp.read().decode("utf-8")
+            assert content == f.content, f"{f.path} content mismatch after round-trip"
