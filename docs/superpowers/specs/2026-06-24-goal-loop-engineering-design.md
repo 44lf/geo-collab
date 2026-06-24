@@ -45,7 +45,7 @@
 
 server/app/modules/auto_review/
 ├── service.py                            # +list_recent_decisions(...)
-└── router.py                             # +GET /api/auto-review/today-loop-decisions
+└── router.py                             # +GET /api/articles/today-loop-decisions
 
 server/mcp/tools/catalog.py               # +list_today_loop_articles MCP tool
 
@@ -575,7 +575,7 @@ async def list_today_loop_articles(
     """
     return await _fetch_catalog(
         "GET",
-        "/api/auto-review/today-loop-decisions",
+        "/api/articles/today-loop-decisions",
         params={
             "decided_by": decided_by,
             "decision": decision,
@@ -670,7 +670,7 @@ def get_today_loop_decisions(
 | 维度 | 选择 | 原因 |
 |---|---|---|
 | MCP tool 文件 | `server/mcp/tools/catalog.py` | 工具是只读 catalog 风格；高频调用 |
-| 后端路由前缀 | `/api/auto-review/today-loop-decisions` | 数据归属 auto_review 模块；不混入 `/api/articles/*` 的 article-id 风格路径 |
+| 后端路由前缀 | `/api/articles/today-loop-decisions` | 沿用 `auto_review` 现有 router 在 `main.py` 的 `/api/articles` 挂载前缀（与 `POST /api/articles/score`、`POST /api/articles/{id}/auto-review` 同根） |
 | 鉴权 | `Depends(require_mcp_token)` | 与现有 auto_review MCP 端点一致 |
 | 工具命名 | `list_today_loop_articles` | "list" 前缀和 catalog 组一致；"loop" 词标识用途 |
 
