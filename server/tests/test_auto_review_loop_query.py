@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from server.app.core.time import utcnow
 from server.tests.utils import build_test_app
 
 
@@ -118,7 +119,7 @@ def test_list_recent_decisions_time_window(monkeypatch):
         a_old = _mk_article(test_app, title="old")
         a_new = _mk_article(test_app, title="new")
 
-        _mk_decision(test_app, article_id=a_old, created_at=datetime.utcnow() - timedelta(hours=26))
+        _mk_decision(test_app, article_id=a_old, created_at=utcnow() - timedelta(hours=26))
         _mk_decision(test_app, article_id=a_new)  # 默认 utcnow
 
         db = test_app.session_factory()

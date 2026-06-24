@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import litellm
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from server.app.core.time import utcnow
 from server.app.modules.ai_models.service import resolve_ai_format_model
 from server.app.modules.articles.models import Article
 from server.app.modules.auto_review.models import AutoReviewDecision
@@ -165,6 +166,8 @@ def list_recent_decisions(
     """返回 (total_count, items[:limit])。
 
     items: [{article_id, title, decided_at, score_total}], newest first.
+    decided_at 是 raw `datetime`（无时区 UTC），由 main.py 全局序列化器在响应层
+    统一补 "Z" 后缀；service 自己不格式化避免双 Z。
     total_count 是滚动时间窗内全部命中行数（不被 limit 影响）。
 
     用于 `/goal` orchestrator 的净产出验证 —— 主对话每轮调一次拿 ground truth
@@ -178,7 +181,7 @@ def list_recent_decisions(
             None 表示不过滤这个维度。
         limit: items 数组的截断上限；count 不受影响。
     """
-    since = datetime.utcnow() - timedelta(hours=since_hours)
+    since = utcnow() - timedelta(hours=since_hours)
 
     q = (
         db.query(AutoReviewDecision, Article)
@@ -200,7 +203,7 @@ def list_recent_decisions(
         {
             "article_id": a.id,
             "title": a.title,
-            "decided_at": d.created_at.isoformat() + "Z",
+            "decided_at": d.created_at,
             "score_total": d.score_total,
         }
         for d, a in rows
