@@ -217,7 +217,9 @@ def test_run_downgraded_when_grouping_fails(monkeypatch):
     from server.app.modules.articles.schemas import ArticleCreate
     from server.app.modules.articles.service import create_article
 
-    def _fake_generate(*, session_factory, user_id, template_content, question_text, model=None, **_):
+    def _fake_generate(
+        *, session_factory, user_id, template_content, question_text, model=None, **_
+    ):
         db = session_factory()
         try:
             art = create_article(
@@ -408,7 +410,9 @@ def test_terminal_status_written_once_after_grouping(monkeypatch):
     from server.app.modules.articles.schemas import ArticleCreate
     from server.app.modules.articles.service import create_article
 
-    def _fake_generate(*, session_factory, user_id, template_content, question_text, model=None, **_):
+    def _fake_generate(
+        *, session_factory, user_id, template_content, question_text, model=None, **_
+    ):
         db = session_factory()
         try:
             art = create_article(
