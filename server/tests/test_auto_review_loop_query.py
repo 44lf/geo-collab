@@ -225,3 +225,79 @@ def test_list_recent_decisions_limit_caps_items_not_count(monkeypatch):
             db.close()
     finally:
         test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_today_loop_decisions_requires_mcp_token(monkeypatch):
+    """无 X-MCP-Token → 401。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        r = test_app.client.get("/api/articles/today-loop-decisions")
+        assert r.status_code == 401
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_today_loop_decisions_returns_count_and_items(monkeypatch):
+    """有 token + 命中 2 条 → count=2, items=2，结构符合契约。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        a1 = _mk_article(test_app, title="x1")
+        a2 = _mk_article(test_app, title="x2")
+        _mk_decision(test_app, article_id=a1, score_total=82)
+        _mk_decision(test_app, article_id=a2, score_total=75)
+
+        r = test_app.client.get(
+            "/api/articles/today-loop-decisions",
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is True
+        assert body["data"]["count"] == 2
+        items = body["data"]["items"]
+        assert len(items) == 2
+        assert {it["title"] for it in items} == {"x1", "x2"}
+        assert all("decided_at" in it for it in items)
+        assert all(it["article_id"] in {a1, a2} for it in items)
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_today_loop_decisions_since_hours_param(monkeypatch):
+    """since_hours=1 → 2 小时前的 decision 不算。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        a1 = _mk_article(test_app, title="recent")
+        a2 = _mk_article(test_app, title="2h-ago")
+        _mk_decision(test_app, article_id=a1)
+        _mk_decision(test_app, article_id=a2, created_at=utcnow() - timedelta(hours=2))
+
+        r = test_app.client.get(
+            "/api/articles/today-loop-decisions",
+            params={"since_hours": 1},
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["data"]["count"] == 1
+        assert body["data"]["items"][0]["title"] == "recent"
+    finally:
+        test_app.cleanup()
