@@ -26,6 +26,6 @@ KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
         # v4 (2026-06-25, this PR): orchestrator skill 主对话叙述深度中文化
         # （6 行日志 / 伪码 echo / notify_feishu / subagent description + 新增叙述规范段）
         "506d2a045eee9106962e97bad0cdf287d6a36f0de2cf2b62265c904be3f22b5c",  # CRLF (Windows host)
-        # LF sha 由 CI 首跑 fail 后从 log 拿，第二 commit 追加
+        "3c668186ff4edcd42b95f6b59cdc79b2c9045c09bd00692f4f11990c2de6f53b",  # LF (CI canonical)
     }
 )
