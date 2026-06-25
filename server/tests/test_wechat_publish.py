@@ -58,13 +58,19 @@ def test_publish_api_faithful_html_and_order(tmp_path):
     content_json = {
         "type": "doc",
         "content": [
-            {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "小标题"}]},
+            {
+                "type": "heading",
+                "attrs": {"level": 3},
+                "content": [{"type": "text", "text": "小标题"}],
+            },
             {
                 "type": "bulletList",
                 "content": [
                     {
                         "type": "listItem",
-                        "content": [{"type": "paragraph", "content": [{"type": "text", "text": "条目"}]}],
+                        "content": [
+                            {"type": "paragraph", "content": [{"type": "text", "text": "条目"}]}
+                        ],
                     }
                 ],
             },

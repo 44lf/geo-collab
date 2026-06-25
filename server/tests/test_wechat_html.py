@@ -128,7 +128,7 @@ def test_unknown_block_degrades_to_paragraph():
 
 
 def test_text_escaped():
-    doc = _doc(_p(_text("a<b>&\"c")))
+    doc = _doc(_p(_text('a<b>&"c')))
     html = tiptap_to_wechat_html(doc)
     assert "a&lt;b&gt;&amp;" in html
 

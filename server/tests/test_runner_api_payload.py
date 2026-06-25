@@ -18,7 +18,9 @@ def _fake_article(*, content_json: str, plain_text: str = ""):
 def test_content_json_passthrough_no_images():
     from server.app.modules.tasks.runner_api import _resolve_content_body
 
-    raw = '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"正文"}]}]}'
+    raw = (
+        '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"正文"}]}]}'
+    )
     content_json, image_paths, temp_files = _resolve_content_body(_fake_article(content_json=raw))
     assert content_json["content"][0]["content"][0]["text"] == "正文"
     assert image_paths == {}
