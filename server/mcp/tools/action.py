@@ -280,6 +280,7 @@ async def ai_illustrate_article(
     set_cover: bool = True,
     web_fallback: bool = False,
     format_engine: str | None = None,
+    game_positions: list[dict] | None = None,
 ) -> dict[str, Any]:
     """AI-driven illustration + auto cover for one article (Web UI parity).
 
@@ -307,6 +308,9 @@ async def ai_illustrate_article(
             想让"图库无图也走百度补图"就传 web_fallback=True。
         format_engine: 配图所用 LLM 模型串（scope=ai_format，需在「AI 模型管理」里存在并启用）。
             None = 用默认格式模型。用于给配图换中转/不同模型，与 Web UI「AI配图」节点的下拉等价。
+        game_positions: 上游识别分支产出的显式游戏清单 [{"game": str, "category_id"?: int, "index"?: int}]。
+            给了则配图走确定性落图：按游戏名在正文 heading 里定位、确定性插图、**不调配图 LLM**；
+            game 名为权威锚点，category_id/index 可选。None（默认）=走现有 AI 模型识别路径。
 
     Returns:
         {"ok": True, "data": {
@@ -339,5 +343,6 @@ async def ai_illustrate_article(
         "set_cover": set_cover,
         "web_fallback": web_fallback,
         "format_engine": format_engine,
+        "game_positions": game_positions,
     }
     return await _apost(f"/api/articles/{article_id}/ai-illustrate", json=body)
