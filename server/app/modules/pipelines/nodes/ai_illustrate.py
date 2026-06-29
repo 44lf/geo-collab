@@ -80,6 +80,7 @@ def run_ai_illustrate(ctx: NodeRunContext) -> NodeResult:
         )
 
     images_inserted = 0
+    fallback_inserted = 0
     covers_set = 0
     cover_errors: list[str] = []
     format_errors_from_results: list[str] = []
@@ -89,6 +90,7 @@ def run_ai_illustrate(ctx: NodeRunContext) -> NodeResult:
             try:
                 result = fut.result()
                 images_inserted += result.images_inserted
+                fallback_inserted += result.fallback_inserted
                 if result.cover_status == "set":
                     covers_set += 1
                 elif result.cover_status == "error" and result.cover_error:
@@ -105,6 +107,7 @@ def run_ai_illustrate(ctx: NodeRunContext) -> NodeResult:
             "article_ids": article_ids,
             "errors": errors,
             "images_inserted": images_inserted,
+            "fallback_inserted": fallback_inserted,
             "format_errors": format_errors_from_results,
             "covers_set": covers_set,
             "cover_errors": cover_errors,
