@@ -26,6 +26,7 @@ from server.app.modules.image_library.cover import (
     CoverResult,
     set_random_cover_from_category,
 )
+from server.app.modules.image_library.fallback import apply_image_fallback
 
 _logger = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ class IllustrateResult:
     requested: int = 0
     missed: int = 0
     missed_games: list[str] = field(default_factory=list)
+    fallback_inserted: int = 0
 
 
 def _resolve_illustration_outcome(
@@ -206,6 +208,22 @@ def illustrate_one(
             out_diagnostics=fmt_diag,
         )
 
+    fallback_inserted = 0
+    try:
+        requested = int(fmt_diag.get("requested", 0) or 0)
+        category_ids = [
+            c["id"] for c in candidate_categories if isinstance(c, dict) and c.get("id")
+        ]
+        fallback_inserted = apply_image_fallback(
+            article_id=article_id,
+            requested=requested,
+            category_ids=category_ids,
+            max_images=max_images,
+            session_factory=session_factory,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.exception("fallback random fill failed for article %s", article_id)
+
     # 阶段 2: 封面 (独立短 session)
     cover_status = "skipped"
     cover_error: str | None = None
@@ -237,15 +255,16 @@ def illustrate_one(
     finally:
         db.close()
 
+    total_inserted = (images_inserted or 0) + fallback_inserted
     format_error, warning, requested, missed, missed_games = _resolve_illustration_outcome(
         raw_error=raw_error,
-        images_inserted=images_inserted or 0,
+        images_inserted=total_inserted,
         fmt_diag=fmt_diag,
     )
 
     return IllustrateResult(
         article_id=article_id,
-        images_inserted=images_inserted or 0,
+        images_inserted=total_inserted,
         cover_status=cover_status,
         cover_error=cover_error,
         format_error=format_error,
@@ -253,4 +272,5 @@ def illustrate_one(
         requested=requested,
         missed=missed,
         missed_games=missed_games,
+        fallback_inserted=fallback_inserted,
     )
