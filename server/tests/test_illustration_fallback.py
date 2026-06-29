@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from server.app.modules.image_library import fallback as fb
 from server.app.modules.image_library.selector import StockImageRef
 
@@ -125,3 +127,131 @@ def test_spread_positions_skips_adjacent_images_and_spreads():
     assert pos[0] in {2, 3, 4}
     # 空文档 → []
     assert fb._spread_positions(_doc(), 2) == []
+
+
+@pytest.mark.mysql
+def test_illustrate_one_fills_missed_via_endpoint(monkeypatch):
+    """run_ai_format inserts 1 image but requested=3, so fallback fills 2 more."""
+    from server.app.modules.articles.models import Article
+    from server.app.modules.articles.parser import dumps_content_json, loads_content_json
+    from server.app.modules.image_library.models import StockCategory, StockImage
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        with test_app.session_factory() as db:
+            cat = StockCategory(name="main-test", bucket_name="b-main-test", kind="main")
+            db.add(cat)
+            db.flush()
+            for i in range(3):
+                db.add(
+                    StockImage(
+                        category_id=cat.id,
+                        minio_key=f"k-fallback-{i}",
+                        filename=f"img{i}.jpg",
+                        width=800,
+                        height=400,
+                    )
+                )
+
+            article = Article(
+                user_id=test_app.admin_id,
+                title="top games",
+                content_json=dumps_content_json(
+                    {
+                        "type": "doc",
+                        "content": [
+                            {
+                                "type": "heading",
+                                "attrs": {"level": 2},
+                                "content": [{"type": "text", "text": "Game A"}],
+                            },
+                            {"type": "paragraph", "content": [{"type": "text", "text": "Body 1"}]},
+                            {"type": "paragraph", "content": [{"type": "text", "text": "Body 2"}]},
+                        ],
+                    }
+                ),
+                content_html="<h2>Game A</h2><p>Body 1</p><p>Body 2</p>",
+                plain_text="Game A Body 1 Body 2",
+                version=1,
+            )
+            db.add(article)
+            db.commit()
+            cat_id = cat.id
+            article_id = article.id
+
+        def fake_run_ai_format(article_id_, **kwargs):
+            with test_app.session_factory() as db:
+                art = db.get(Article, article_id_)
+                content = loads_content_json(art.content_json)
+                nodes = list(content.get("content") or [])
+                nodes.insert(1, {"type": "image", "attrs": {"src": "/x", "stockImageId": None}})
+                art.content_json = dumps_content_json({**content, "content": nodes})
+                art.version = (art.version or 0) + 1
+                db.commit()
+            out = kwargs.get("out_diagnostics")
+            if out is not None:
+                out.update(
+                    {"requested": 3, "inserted": 1, "missed": 2, "missed_games": ["B", "C"]}
+                )
+            return 1
+
+        monkeypatch.setattr(
+            "server.app.modules.articles.ai_illustrate_svc.run_ai_format",
+            fake_run_ai_format,
+        )
+
+        r = test_app.client.post(
+            f"/api/articles/{article_id}/ai-illustrate",
+            json={"main_category_id": cat_id, "set_cover": False},
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["fallback_inserted"] == 2
+        assert body["images_inserted"] == 3
+
+        with test_app.session_factory() as db:
+            art = db.get(Article, article_id)
+            content = loads_content_json(art.content_json)
+            img_count = sum(
+                1
+                for node in content["content"]
+                if isinstance(node, dict) and node.get("type") == "image"
+            )
+            assert img_count == 3
+    finally:
+        test_app.cleanup()
+
+
+def test_ai_illustrate_node_aggregates_fallback(monkeypatch):
+    """Node output sums fallback_inserted across articles."""
+    from server.app.modules.articles.ai_illustrate_svc import IllustrateResult
+    from server.app.modules.pipelines.nodes import ai_illustrate as node_mod
+    from server.app.modules.pipelines.nodes.base import NodeRunContext
+
+    returns = {
+        1: IllustrateResult(
+            article_id=1, images_inserted=3, fallback_inserted=2, cover_status="skipped"
+        ),
+        2: IllustrateResult(
+            article_id=2, images_inserted=2, fallback_inserted=1, cover_status="skipped"
+        ),
+    }
+    monkeypatch.setattr(node_mod, "illustrate_one", lambda *, article_id, **kw: returns[article_id])
+
+    ctx = NodeRunContext(
+        session_factory=lambda: None,
+        user_id=1,
+        config={"main_category_id": 5},
+        inputs={"article_ids": [1, 2]},
+        upstream={},
+    )
+    result = node_mod.run_ai_illustrate(ctx)
+    assert result.output["fallback_inserted"] == 3
+    assert result.output["images_inserted"] == 5

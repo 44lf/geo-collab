@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from server.app.modules.articles.parser import dumps_content_json, loads_content_json
 from server.app.modules.image_library.inserter import insert_images_at_positions
 from server.app.modules.image_library.selector import (
     ImageQuery,
@@ -37,7 +38,22 @@ def collect_used_stock_image_ids(content_json: dict) -> set[int]:
             sid = (node.get("attrs") or {}).get("stockImageId")
             if isinstance(sid, int):
                 used.add(sid)
+            elif isinstance(sid, str) and sid.isdigit():
+                used.add(int(sid))
     return used
+
+
+def _load_article_content(article: Any) -> tuple[dict, bool]:
+    raw = article.content_json or {}
+    if isinstance(raw, str):
+        return loads_content_json(raw), True
+    if isinstance(raw, dict):
+        return raw, False
+    return {}, False
+
+
+def _store_article_content(article: Any, content_json: dict, *, serialize: bool) -> None:
+    article.content_json = dumps_content_json(content_json) if serialize else content_json
 
 
 def _spread_positions(content_json: dict, n: int) -> list[int]:
@@ -71,7 +87,7 @@ def fill_random_images(db: Session, article: Any, *, category_ids: list[int], ga
 
     best-effort：候选不足时按实际数量补；一张都取不到则返回 0、不改文档。
     """
-    content = article.content_json or {}
+    content, serialize = _load_article_content(article)
     excluded = list(collect_used_stock_image_ids(content))
     refs = []
     for _ in range(max(0, gap)):
@@ -87,7 +103,8 @@ def fill_random_images(db: Session, article: Any, *, category_ids: list[int], ga
     positions = _spread_positions(content, len(refs))
     if not positions:
         return 0
-    article.content_json = insert_images_at_positions(content, refs, positions)
+    new_content = insert_images_at_positions(content, refs, positions)
+    _store_article_content(article, new_content, serialize=serialize)
     article.version = (article.version or 0) + 1
     db.commit()
     return len(refs)
@@ -114,7 +131,7 @@ def apply_image_fallback(
         article = db.get(Article, article_id)
         if article is None or getattr(article, "is_deleted", False):
             return 0
-        content = article.content_json or {}
+        content, _ = _load_article_content(article)
         current = count_body_images(content)
         target = min(max(requested, 1), max_images)
         gap = target - current

@@ -1071,6 +1071,7 @@ class AiIllustrateResponse(BaseModel):
     requested: int = 0
     missed: int = 0
     missed_games: list[str] = Field(default_factory=list)
+    fallback_inserted: int = 0
 
 
 @articles_mcp_router.post(
@@ -1128,6 +1129,7 @@ def ai_illustrate_article_mcp(
         requested=result.requested,
         missed=result.missed,
         missed_games=result.missed_games,
+        fallback_inserted=result.fallback_inserted,
     )
 
 
