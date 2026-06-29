@@ -43,7 +43,9 @@ KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
         # v7 (2026-06-29, 显式游戏清单产清单): writer SKILL step5 + 调用约定 加 game_positions —
         # 每款一标题的推荐 / 盘点文逐款产 game_positions 走确定性落图（修弱模型漏点缺图），
         # 散文 / 综述回退现有模型识别路径。配合已合并的端点 + MCP 工具 game_positions 形参。
-        "06df0c1fb709cc3e5e8f4edbf110a7005e1fa1bce16597c9ef42dde9ee5a5c36",  # CRLF (Windows host)
-        "03b209b8c580e6dee185a3a7c465a5fc6c6584d54d340876987d0fb346fc6071",  # LF (CI canonical)
+        "06df0c1fb709cc3e5e8f4edbf110a7005e1fa1bce16597c9ef42dde9ee5a5c36",  # Windows 本地工作区 (autocrlf → uniform CRLF)
+        # CI canonical = git blob 字节（模板全是 LF；Linux runner autocrlf=off，checkout 即 blob）。
+        # 实测 GitHub Actions run 28347499953 backend-tests(2)。算法务必读 blob 而非工作区归一化。
+        "23707c7eb05343471cd8bc313d2685822395a93fa9f75ebdff6d4d692d16d7c6",  # LF (CI canonical, blob)
     }
 )
