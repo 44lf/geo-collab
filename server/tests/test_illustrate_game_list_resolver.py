@@ -61,3 +61,52 @@ def test_category_id_passthrough():
         doc, [{"game": "餐厅养成记", "category_id": 12}]
     )
     assert positions == [{"index": 0, "game": "餐厅养成记", "category_id": 12}]
+
+
+def test_run_from_game_list_counts_unmatched_as_missed(monkeypatch):
+    import server.app.modules.articles.ai_format as m
+
+    class _Prep:
+        content_json = {"type": "doc", "content": [
+            {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "游戏一、《餐厅养成记》"}]},
+        ]}
+        available_categories = []
+        image_search_query = None
+
+    monkeypatch.setattr(m, "_ai_format_prepare", lambda *a, **k: _Prep())
+
+    captured = {}
+
+    def _fake_collect(article_id, *, parsed, out_diagnostics=None, **kw):
+        captured["parsed"] = parsed
+        captured["heading_indices"] = kw.get("heading_indices")
+        if out_diagnostics is not None:
+            out_diagnostics["inserted"] = 1
+            out_diagnostics["missed_games"] = []
+        return 1
+
+    monkeypatch.setattr(m, "_web_fallback_collect_and_write_back", _fake_collect)
+
+    diag: dict = {}
+    inserted = m.run_ai_format_from_game_list(
+        1,
+        lock_started_at=None,
+        game_list=[{"game": "餐厅养成记"}, {"game": "查无此游戏"}],
+        preset_id=None,
+        user_id=1,
+        candidate_categories=None,
+        max_images=12,
+        min_spacing=1,
+        builtin_variant="aggressive",
+        out_diagnostics=diag,
+    )
+    assert inserted == 1
+    # 合成 parsed 只含命中的那一个
+    assert captured["parsed"]["image_positions"] == [{"index": 0, "game": "餐厅养成记"}]
+    # 不提升标题
+    assert captured["heading_indices"] == set()
+    # 计数：expected=2、inserted=1、missed=1、missed_games 含未命中的游戏
+    assert diag["requested"] == 2
+    assert diag["inserted"] == 1
+    assert diag["missed"] == 1
+    assert "查无此游戏" in diag["missed_games"]

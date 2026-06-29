@@ -1025,6 +1025,76 @@ def run_ai_format(
         return 0
 
 
+def run_ai_format_from_game_list(
+    article_id: int,
+    *,
+    lock_started_at: datetime | None,
+    game_list: list[dict],
+    preset_id: int | None,
+    user_id: int | None,
+    candidate_categories: list[dict[str, Any]] | None,
+    max_images: int | None,
+    min_spacing: int | None,
+    builtin_variant: str,
+    out_diagnostics: dict[str, Any] | None = None,
+) -> int:
+    """确定性配图：拿显式游戏清单落图，不调 ai_format LLM、不提升标题。
+
+    段1 prepare（取 content_json/栏目/搜图模板，复用现有锁检查）→ resolver 合成 parsed →
+    复用 _web_fallback_collect_and_write_back（heading_indices=set()）落图 → 用 len(清单) 修正计数。
+    """
+    try:
+        prep = _ai_format_prepare(
+            article_id,
+            lock_started_at=lock_started_at,
+            include_images=True,
+            preset_id=preset_id,
+            user_id=user_id,
+            candidate_categories=candidate_categories,
+            max_images=max_images,
+            min_spacing=min_spacing,
+            builtin_variant=builtin_variant,
+            web_fallback=True,
+        )
+    except Exception as exc:
+        _ai_format_finalize_error(article_id, lock_started_at, exc)
+        return 0
+    if prep is None:
+        return 0
+
+    positions, unmatched = build_image_positions_from_game_list(prep.content_json, game_list)
+    parsed = {"image_positions": positions}
+
+    fmt_diag: dict[str, Any] = {}
+    try:
+        inserted = _web_fallback_collect_and_write_back(
+            article_id,
+            lock_started_at=lock_started_at,
+            new_content_json=prep.content_json,  # 不提升标题：原样
+            parsed=parsed,
+            available_categories=prep.available_categories,
+            heading_indices=set(),
+            image_search_query=prep.image_search_query,
+            max_images=max_images,
+            out_diagnostics=fmt_diag,
+        )
+    except Exception as exc:
+        _ai_format_finalize_error(article_id, lock_started_at, exc)
+        return 0
+
+    if out_diagnostics is not None:
+        expected = len(
+            [g for g in (game_list or []) if isinstance(g, dict) and (g.get("game") or "").strip()]
+        )
+        out_diagnostics["requested"] = expected
+        out_diagnostics["inserted"] = inserted
+        out_diagnostics["missed"] = max(0, expected - inserted)
+        missed_games = list(fmt_diag.get("missed_games", []) or [])
+        missed_games += [u["game"] for u in unmatched]
+        out_diagnostics["missed_games"] = missed_games
+    return inserted
+
+
 class _AiFormatPrep:
     """段1 产物：模型调用所需的纯数据（不含 ORM/session），可安全跨段、跨「无连接」窗口传递。
 
