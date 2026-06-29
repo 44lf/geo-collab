@@ -165,6 +165,68 @@ def _node_text(node: dict) -> str:
     return "".join(parts)
 
 
+_GAME_PREFIX_RE = re.compile(r"^游戏[0-9一二三四五六七八九十百]+、\s*")
+_BRACKET_CHARS = "《》〈〉「」『』\"'“”‘’ 	　"
+
+
+def _normalize_game_name(s: str) -> str:
+    """归一化游戏名/heading 文本：去『游戏N、』前缀、去书名号/引号/空白。用于 contains 匹配。"""
+    t = (s or "").strip()
+    t = _GAME_PREFIX_RE.sub("", t)
+    return t.strip(_BRACKET_CHARS)
+
+
+def _find_heading_index(content_json: dict, game: str) -> int | None:
+    """在顶层 heading 节点里找文本含 game 的，返回其绝对下标；多命中取首个；无则 None。"""
+    target = _normalize_game_name(game)
+    if not target:
+        return None
+    for i, node in enumerate(content_json.get("content") or []):
+        if not isinstance(node, dict) or node.get("type") != "heading":
+            continue
+        if target in _normalize_game_name(_node_text(node)):
+            return i
+    return None
+
+
+def build_image_positions_from_game_list(
+    content_json: dict, game_list: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """游戏清单 → (合成 image_positions, unmatched)。game 名为权威锚点，index 仅未命中时兜底。
+
+    - 同一 game 命中多个 heading：取首个。
+    - 多个 game 解析到同一 index：按 index 去重，保留先到的，其余记 index_conflict。
+    - 命中不到 heading 且无 index 提示：记 heading_not_found。
+    """
+    positions: list[dict] = []
+    unmatched: list[dict] = []
+    used_index: set[int] = set()
+    for item in game_list or []:
+        if not isinstance(item, dict):
+            continue
+        game = (item.get("game") or "").strip()
+        if not game:
+            continue
+        idx = _find_heading_index(content_json, game)
+        if idx is None:
+            hint = item.get("index")
+            if isinstance(hint, int):
+                idx = hint
+            else:
+                unmatched.append({"game": game, "reason": "heading_not_found"})
+                continue
+        if idx in used_index:
+            unmatched.append({"game": game, "reason": "index_conflict"})
+            continue
+        used_index.add(idx)
+        pos: dict = {"index": idx, "game": game}
+        cat = item.get("category_id")
+        if isinstance(cat, int):
+            pos["category_id"] = cat
+        positions.append(pos)
+    return positions, unmatched
+
+
 def _node_label(node: dict) -> str:
     return "[小标题]" if node.get("type") == "heading" else "[段落]"
 
@@ -422,23 +484,80 @@ def _to_paragraph(node: dict) -> dict:
     return {"type": "paragraph", "content": node.get("content", [])}
 
 
-def _node_html(node: dict) -> str:
-    inner_parts = []
-    for child in node.get("content") or []:
+_INLINE_MARK_TAGS = {
+    "bold": ("<strong>", "</strong>"),
+    "italic": ("<em>", "</em>"),
+    "code": ("<code>", "</code>"),
+    "underline": ("<u>", "</u>"),
+    "strike": ("<s>", "</s>"),
+}
+
+
+def _inline_html(children: list | None) -> str:
+    """渲染一组 inline 子节点（text/hardBreak）为 HTML，保留 marks。与既有风格一致：text 不转义。"""
+    parts: list[str] = []
+    for child in children or []:
         if not isinstance(child, dict):
             continue
-        if child.get("type") != "text":
+        ctype = child.get("type")
+        if ctype == "hardBreak":
+            parts.append("<br>")
+            continue
+        if ctype != "text":
             continue
         text = child.get("text", "")
-        marks = child.get("marks") or []
-        is_bold = any(isinstance(m, dict) and m.get("type") == "bold" for m in marks)
-        inner_parts.append(f"<strong>{text}</strong>" if is_bold else text)
-    inner = "".join(inner_parts)
-    node_type = node.get("type")
-    if node_type == "heading":
+        for mark in child.get("marks") or []:
+            if not isinstance(mark, dict):
+                continue
+            mtype = mark.get("type")
+            if mtype == "link":
+                href = (mark.get("attrs") or {}).get("href", "")
+                text = f'<a href="{href}">{text}</a>'
+            elif mtype in _INLINE_MARK_TAGS:
+                open_tag, close_tag = _INLINE_MARK_TAGS[mtype]
+                text = f"{open_tag}{text}{close_tag}"
+        parts.append(text)
+    return "".join(parts)
+
+
+def _node_html(node: dict) -> str:
+    """单个块节点 → HTML。递归处理列表/引用/列表项内的块子节点。"""
+    ntype = node.get("type")
+    if ntype == "heading":
         level = (node.get("attrs") or {}).get("level", 1)
-        return f"<h{level}>{inner}</h{level}>"
-    return f"<p>{inner}</p>"
+        return f"<h{level}>{_inline_html(node.get('content'))}</h{level}>"
+    if ntype == "paragraph":
+        return f"<p>{_inline_html(node.get('content'))}</p>"
+    if ntype == "image":
+        attrs = node.get("attrs") or {}
+        src = attrs.get("src", "")
+        alt = attrs.get("alt", "") or ""
+        return f'<img src="{src}" alt="{alt}">'
+    if ntype in ("bulletList", "orderedList"):
+        tag = "ul" if ntype == "bulletList" else "ol"
+        items = "".join(_node_html(c) for c in node.get("content") or [] if isinstance(c, dict))
+        return f"<{tag}>{items}</{tag}>"
+    if ntype == "listItem":
+        return f"<li>{''.join(_node_html(c) for c in node.get('content') or [] if isinstance(c, dict))}</li>"
+    if ntype == "blockquote":
+        return f"<blockquote>{''.join(_node_html(c) for c in node.get('content') or [] if isinstance(c, dict))}</blockquote>"
+    if ntype == "codeBlock":
+        return f"<pre><code>{_inline_html(node.get('content'))}</code></pre>"
+    # 未知块节点：尽量取 inline 文本，不静默吞整块
+    return f"<p>{_inline_html(node.get('content'))}</p>"
+
+
+def _node_plain_text(node: dict) -> str:
+    """单个块节点 → 纯文本（递归）。列表项各成一行。"""
+    ntype = node.get("type")
+    if ntype in ("heading", "paragraph", "codeBlock"):
+        return _node_text(node)
+    if ntype in ("bulletList", "orderedList", "blockquote", "listItem"):
+        lines = [_node_plain_text(c) for c in node.get("content") or [] if isinstance(c, dict)]
+        return "\n".join(t for t in lines if t.strip())
+    if ntype == "image":
+        return ""
+    return _node_text(node)
 
 
 def _derive_html_and_text(content_json: dict) -> tuple[str, str]:
@@ -447,12 +566,10 @@ def _derive_html_and_text(content_json: dict) -> tuple[str, str]:
     for node in content_json.get("content") or []:
         if not isinstance(node, dict):
             continue
-        ntype = node.get("type")
-        if ntype in ("heading", "paragraph"):
-            html_parts.append(_node_html(node))
-            t = _node_text(node)
-            if t.strip():
-                text_parts.append(t)
+        html_parts.append(_node_html(node))
+        t = _node_plain_text(node)
+        if t.strip():
+            text_parts.append(t)
     return "".join(html_parts), "\n".join(text_parts)
 
 
@@ -908,6 +1025,79 @@ def run_ai_format(
         return 0
 
 
+def run_ai_format_from_game_list(
+    article_id: int,
+    *,
+    lock_started_at: datetime | None,
+    game_list: list[dict],
+    preset_id: int | None,
+    user_id: int | None,
+    candidate_categories: list[dict[str, Any]] | None,
+    max_images: int | None,
+    min_spacing: int | None,
+    builtin_variant: str,
+    out_diagnostics: dict[str, Any] | None = None,
+) -> int:
+    """确定性配图：拿显式游戏清单落图，不调 ai_format LLM、不提升标题。
+
+    段1 prepare（取 content_json/栏目/搜图模板，复用现有锁检查）→ resolver 合成 parsed →
+    复用 _web_fallback_collect_and_write_back（heading_indices=set()）落图 → 用 len(清单) 修正计数。
+
+    注：min_spacing 在本路径不生效（仅影响 LLM 提示词，而本路径不调 LLM）；max_images 仍作为硬上限有效。
+    """
+    try:
+        prep = _ai_format_prepare(
+            article_id,
+            lock_started_at=lock_started_at,
+            include_images=True,
+            preset_id=preset_id,
+            user_id=user_id,
+            candidate_categories=candidate_categories,
+            max_images=max_images,
+            min_spacing=min_spacing,
+            builtin_variant=builtin_variant,
+            web_fallback=True,
+            require_llm=False,
+        )
+    except Exception as exc:
+        _ai_format_finalize_error(article_id, lock_started_at, exc)
+        return 0
+    if prep is None:
+        return 0
+
+    positions, unmatched = build_image_positions_from_game_list(prep.content_json, game_list)
+    parsed = {"image_positions": positions}
+
+    fmt_diag: dict[str, Any] = {}
+    try:
+        inserted = _web_fallback_collect_and_write_back(
+            article_id,
+            lock_started_at=lock_started_at,
+            new_content_json=prep.content_json,  # 不提升标题：原样
+            parsed=parsed,
+            available_categories=prep.available_categories,
+            heading_indices=set(),
+            image_search_query=prep.image_search_query,
+            max_images=max_images,
+            out_diagnostics=fmt_diag,
+        )
+    except Exception as exc:
+        _ai_format_finalize_error(article_id, lock_started_at, exc)
+        return 0
+
+    if out_diagnostics is not None:
+        expected = len(
+            [g for g in (game_list or []) if isinstance(g, dict) and (g.get("game") or "").strip()]
+        )
+        out_diagnostics["requested"] = expected
+        out_diagnostics["inserted"] = inserted
+        out_diagnostics["missed"] = max(0, expected - inserted)
+        missed_games = list(fmt_diag.get("missed_games", []) or [])
+        missed_games += [u["game"] for u in unmatched]
+        out_diagnostics["missed_games"] = missed_games
+    return inserted
+
+
 class _AiFormatPrep:
     """段1 产物：模型调用所需的纯数据（不含 ORM/session），可安全跨段、跨「无连接」窗口传递。
 
@@ -934,7 +1124,7 @@ class _AiFormatPrep:
         system_prompt: str,
         available_categories: list[dict[str, Any]],
         model: str,
-        api_key: str,
+        api_key: str | None,
         timeout_seconds: int,
         base_url: str | None = None,
         image_search_query: str | None = None,
@@ -963,11 +1153,15 @@ def _ai_format_prepare(
     builtin_variant: str,
     format_model_selected: str | None = None,
     web_fallback: bool = False,
+    require_llm: bool = True,
 ) -> _AiFormatPrep | None:
     """段1（短借连接）：读文章 + 第一道锁检查 + 拼提示词，return 前归还连接。
 
     返回 None = 本次应安静跳过（无文章 / 锁失配 / 无文本节点；无文本节点时已清本次锁，与旧行为一致）。
     缺 API Key 抛 AIFormatConfigurationError，由调用方走 _ai_format_finalize_error 落错 + 解锁。
+
+    require_llm=False（确定性/无 LLM 路径）时不因缺 Key 而 abort——确定性路径根本不调 LLM。
+    默认 True 保持 LLM 路径行为不变。
 
     web_fallback=True 时一并解析联网搜图关键词模板（image_search scope）随 prep 带出，
     使后续下载段无需再开连接读模板。
@@ -1003,7 +1197,8 @@ def _ai_format_prepare(
             db, format_model_selected
         )
         api_key = format_key or None
-        if not api_key:
+        # require_llm=False（确定性/无 LLM 路径）时不因缺 key 而 abort
+        if not api_key and require_llm:
             raise AIFormatConfigurationError(
                 "AI 排版失败：未配置 API Key，请设置 GEO_AI_FORMAT_API_KEY。"
             )

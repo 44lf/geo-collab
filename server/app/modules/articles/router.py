@@ -1053,6 +1053,9 @@ class AiIllustratePayload(BaseModel):
     set_cover: bool = True
     # 配图模型（litellm 模型串，scope=ai_format）；None/"" = 默认格式模型
     format_engine: str | None = None
+    # 上游识别分支产出的显式游戏清单 [{"game": str, "category_id"?: int, "index"?: int}]；
+    # None=走现有模型识别路径。给了则走确定性落图、按游戏名匹配 heading、不调配图模型。
+    game_positions: list[dict] | None = None
 
 
 class AiIllustrateResponse(BaseModel):
@@ -1102,6 +1105,7 @@ def ai_illustrate_article_mcp(
                 preset_id=payload.preset_id,
                 set_cover=payload.set_cover,
                 format_model=payload.format_engine,
+                game_list=payload.game_positions,
             ),
             session_factory=SessionLocal,
         )
