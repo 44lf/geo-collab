@@ -6,7 +6,7 @@ fail + 提示开发者：把新 sha 加进 KNOWN_BUNDLE_SHAS 并 bump
 LOOP_SKILL_BUNDLE_VERSION，强制「改模板必同步 bump 版本」纪律。
 """
 
-LOOP_SKILL_BUNDLE_VERSION = "2026-06-29-v7"
+LOOP_SKILL_BUNDLE_VERSION = "2026-06-29-v8"
 
 KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
     {
@@ -47,5 +47,13 @@ KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
         # CI canonical = git blob 字节（模板全是 LF；Linux runner autocrlf=off，checkout 即 blob）。
         # 实测 GitHub Actions run 28347499953 backend-tests(2)。算法务必读 blob 而非工作区归一化。
         "23707c7eb05343471cd8bc313d2685822395a93fa9f75ebdff6d4d692d16d7c6",  # LF (CI canonical, blob)
+        # v8 (2026-06-29, prompt_template_name 展示参数): writer SKILL step 4 + save_article
+        # MCP 工具签名加 prompt_template_name + question_text_preview 两个可选展示参数。
+        # Claude Code UI 在工具调用渲染时会同时显示中文名（如
+        # `prompt_template_id: 13, prompt_template_name: "游戏情绪清单"`），运营在主对话里
+        # 不用回头查数字。后端 SaveArticleFromMcpPayload 用 Pydantic 默认 extra='ignore'
+        # 丢弃这两字段，无需后端 schema 改动。
+        "128eb1d6a0198fe62313474ef47f0c63788068c348814177853cb790cec404b7",  # CRLF (Windows host)
+        "e9da575b99e750f919713f1f8f678f0fbb17d71713ce91849bcf911321343111",  # LF (CI canonical)
     }
 )
