@@ -103,3 +103,25 @@ def test_apply_fallback_noop_when_no_categories():
         )
         == 0
     )
+
+
+def test_fill_random_images_empty_body_returns_zero(monkeypatch):
+    # 空正文：均匀位为空 → 不插、不 bump version、返回 0
+    monkeypatch.setattr(fb, "pick_image_id", _seq_pick([301, 302]))
+    monkeypatch.setattr(fb, "fetch_image_by_id", lambda i, db: _ref(i))
+    article = SimpleNamespace(content_json={"type": "doc", "content": []}, version=1)
+    db = SimpleNamespace(commit=lambda: None)
+    assert fb.fill_random_images(db, article, category_ids=[5], gap=2) == 0
+    assert article.version == 1
+    assert fb.count_body_images(article.content_json) == 0
+
+
+def test_spread_positions_skips_adjacent_images_and_spreads():
+    doc = _doc(_para("a"), _img(1), _para("b"), _para("c"), _para("d"))
+    # n=1：候选是没有紧邻 image 的块下标；返回 1 个、落在候选内
+    pos = fb._spread_positions(doc, 1)
+    assert len(pos) == 1
+    # 下标 0 的 para 后面紧跟 image(下标1) → 被跳过；候选应为 {2,3,4}
+    assert pos[0] in {2, 3, 4}
+    # 空文档 → []
+    assert fb._spread_positions(_doc(), 2) == []

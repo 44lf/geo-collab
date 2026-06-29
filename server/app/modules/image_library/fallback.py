@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -19,8 +18,6 @@ from server.app.modules.image_library.selector import (
     fetch_image_by_id,
     pick_image_id,
 )
-
-_logger = logging.getLogger(__name__)
 
 
 def count_body_images(content_json: dict) -> int:
@@ -88,6 +85,8 @@ def fill_random_images(db: Session, article: Any, *, category_ids: list[int], ga
     if not refs:
         return 0
     positions = _spread_positions(content, len(refs))
+    if not positions:
+        return 0
     article.content_json = insert_images_at_positions(content, refs, positions)
     article.version = (article.version or 0) + 1
     db.commit()
