@@ -33,7 +33,8 @@
 ## 流程（伪码）
 
 ```
-notify_feishu(title="生文 Loop 开始", message="目标 5 篇过自评 / 餐厅养成记", level="info")
+loop_start_time = now()
+notify_feishu(title="生文流程开始", message="目标：今天产出 5 篇过自评的文章 / 餐厅养成记矩阵", level="info")
 
 pools = list_question_pools()
 pool_id = pools.data[0].id  # 默认取第一个
@@ -42,12 +43,36 @@ candidates = list_question_items(pool_id=pool_id, limit=10).data
 templates = list_prompt_templates(scope="generation").data
 success_count = 0
 attempts = 0
+consecutive_mcp_fail = 0  # 连续 MCP 调用失败计数（save_article 失败即 +1，成功清零）
 illustration_misses = []  # 记录配上图失败/0 张的文章，结尾汇报，便于发现"无图入库"
+exit_reason = None  # None=正常达标；否则记录中止/失败原因，退出时统一播报用
+run_log = []  # 本次运行逐篇产出：{qid, question, article_id, title, decision, score_total}
+
+# 统一退出播报：固定结构——目标回显 → 本次产出明细（每条固定 3 行：选题/产出/评审）→
+# 配图缺失提示（如有）→ 产出计数 + 耗时 → 原因（如有）。任何退出路径都走这一个函数，
+# 不要在各分支里现场现编措辞——既要格式统一，也不能为了统一把选题/文章标题/评审分数
+# 这些运营真正关心的内容压没了。
+def notify_exit(title, level, reason=None):
+    minutes = minutes_since(loop_start_time)
+    lines = ["目标：今天产出 5 篇过自评的文章 / 餐厅养成记矩阵"]
+    if run_log:
+        lines.append("本次产出：")
+        for i, e in enumerate(run_log, 1):
+            lines.append(f"  {i}. 选题：问题 #{e.qid}「{e.question}」")
+            lines.append(f"     产出：文章 #{e.article_id}《{e.title}》")
+            lines.append(f"     评审：{e.decision} · {e.score_total} 分")
+    if illustration_misses:
+        lines.append(f"⚠️ {len(illustration_misses)} 篇配图缺失（见日志）")
+    lines.append(f"产出 {success_count}/5 篇过自评候选 · 共尝试 {attempts} 轮 · 共耗时 {minutes} 分钟")
+    if reason:
+        lines.append(f"原因：{reason}")
+    notify_feishu(title=title, message="\n".join(lines), level=level)
 
 while success_count < 5 and attempts < 15:
     attempts += 1
     if attempts > len(candidates):
-        break  # 候选用完
+        exit_reason = "候选问题已用完"
+        break
     qid = candidates[attempts - 1].id
     question_text = candidates[attempts - 1].question_text
     category = candidates[attempts - 1].category
@@ -72,8 +97,13 @@ while success_count < 5 and attempts < 15:
         model_label="claude-opus-4-7",  # 让 metrics 能追溯写作者
     )
     if not r.ok:
-        notify_feishu("save 失败", f"qid={qid} err={r.error}", "warning")
-        continue
+        consecutive_mcp_fail += 1
+        if consecutive_mcp_fail >= 3:
+            exit_reason = f"接口连续失败 3 次（最近一次 qid={qid} err={r.error}），请检查服务连接/凭证"
+            notify_exit(title="生文流程中止", level="error", reason=exit_reason)
+            return ABORT
+        continue  # 单次失败静默跳过，不逐次发飞书（节制）
+    consecutive_mcp_fail = 0
     aid = r.data.article_id
 
     # 配图 + 封面（失败不影响主流程；只记录不阻塞）
@@ -127,22 +157,31 @@ while success_count < 5 and attempts < 15:
     # 注意：submit_review_decision 只写 AuthReviewDecision 记录，不动 article.review_status
     # —— 文章仍以 pending 等人工终审，符合 POC 期"自评辅助 + 人审决断"的约束
 
-notify_feishu(
-    title="生文 Loop 完成",
-    message=(
-        f"产出 {success_count}/5 篇过自评候选 · 共尝试 {attempts} 轮"
-        + (f" · ⚠️ {len(illustration_misses)} 篇配图缺失（见日志）" if illustration_misses else "")
-    ),
-    level="done",
-)
+    run_log.append(RunLogEntry(
+        qid=qid, question=question_text, article_id=aid, title=title,
+        decision=decision, score_total=score_total,
+    ))
+    # 不管 decision 是 approved/needs_rewrite/rejected 都记一条——退出播报的「本次产出」
+    # 要如实列出这轮到底写了什么、评了多少分，即便最终没算进 success_count
+
+# 循环正常退出（success_count>=5 达标，或 attempts>=15 轮数耗尽）时统一在这里播报；
+# 候选用完 / MCP 连续失败 3 次已在上面 break/return 路径里各自播报过，不会走到这里。
+if exit_reason is None and success_count >= 5:
+    notify_exit(title="生文流程完成", level="done")
+elif exit_reason is None and attempts >= 15:
+    notify_exit(title="生文流程中止", level="warning", reason="产能不足，请检查 prompt/选题")
+elif exit_reason == "候选问题已用完":
+    notify_exit(title="生文流程中止", level="warning", reason=exit_reason)
 ```
 
 ## 停止条件
 
+四种退出路径**都**走 `notify_exit()`，固定字段顺序「产出 X/5 篇 · 共尝试 K 轮 · 共耗时 M 分钟」+（原因）+（配图缺失提示），不要现场另编格式：
+
 - 成功达成 5 篇 → 退出 + 飞书 done
-- 累计 15 轮仍未达成 → 退出 + 飞书 warning（"产能不足，请检查 prompt/选题"）
-- 候选问题用完（attempts > len(candidates)）→ 退出 + 飞书 warning
-- 任意 MCP 工具连续失败 3 次 → 退出 + 飞书 error
+- 累计 15 轮仍未达成 → 退出 + 飞书 warning（原因："产能不足，请检查 prompt/选题"）
+- 候选问题用完（attempts > len(candidates)）→ 退出 + 飞书 warning（原因："候选问题已用完"）
+- `save_article` 连续失败 3 次 → 退出 + 飞书 error（单次/两次失败静默跳过，不逐次发飞书）
 
 ## 注意事项
 
@@ -150,9 +189,9 @@ notify_feishu(
 - **始终通过 MCP 工具**：除了写 markdown 本身（属于主对话的输出），所有数据流动经过 `mcp__geo__*`。
 - **title vs markdown_content**：title 单字段传，**不要**在 markdown 顶部再写一遍 `# 标题`（save 端会把整块 markdown 转成 Tiptap 段落树，重复标题会进段落里）。
 - **正文引号不要 JSON 转义**：`markdown_content` 不是 JSON 字符串源码；不要写 `\"平板好玩\"`，应写 `“平板好玩”` / `「平板好玩」` 或 `"平板好玩"`。
-- **失败 fallback**：单次失败 → 跳过这个 qid 而不是停整个 Loop；配图失败不影响主流程。
+- **失败 fallback**：单次失败 → 跳过这个 qid 而不是停整个 Loop（不发飞书）；配图失败不影响主流程；只有连续 3 次才中止整个 Loop 并飞书 error。
 - **配图机制（主推 vs 陪衬）**：`ai_illustrate_article` 一次调用就把「主推栏目（餐厅养成记）+ 全部陪衬栏目」一起喂给 AI，AI 按正文里点到的游戏分别匹配各自栏目插图——**主推和陪衬游戏都会配**，不用为陪衬游戏单独再调一次。陪衬出图的前提是：① 正文用规范中文名点到了那款游戏；② 该游戏在图库里有对应陪衬栏目且有图（dev 库现有 554 个有图的陪衬栏目，覆盖很全）。
 - **图库无图时走百度（`web_fallback=True`，默认开）**：上面伪码调用 `ai_illustrate_article` 时已默认带 `web_fallback=True`。开了它，库里【完全没有】对应栏目的全新游戏不再被放弃——AI 用规范中文名点名后，GEO 自动建一个陪衬栏目 + 走百度（千帆 AI 搜索）联网搜一张横版图补进去，这样图库里没有的新游戏也配得上图。**前提**：app 容器配了 `GEO_BAIDU_API_KEY`；这是 best-effort——key 缺失 / 网络失败 / 搜不到横版图时静默跳过、不报错（行为退化成跟关掉时一样，绝不会让配图或主流程失败）。所以放心默认开着：配了 key 多一层联网兜底，没配也无副作用。
-- **飞书节制**：开始、结束、严重失败发；中间进度不发。
+- **飞书节制 + 固定模板**：开始、结束、中止、严重失败各发一条，中间单次失败/单篇进度不发；所有退出通知一律走 `notify_exit()` 走固定字段格式，不要临场改措辞（这是本次统一格式的落地点，避免每次 Loop 播报长得不一样）。
 - **policy_safety 维度从严**：合规分 < 80 一律不能给 approved（即使总分高）——人审兜底但减轻审核负担。
 - **写作风格**：餐厅养成记矩阵偏轻松实用，避免"开篇一段宏大的引入"——直接进主题。模板里的具体指引以模板为准。

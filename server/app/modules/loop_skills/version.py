@@ -6,7 +6,7 @@ fail + 提示开发者：把新 sha 加进 KNOWN_BUNDLE_SHAS 并 bump
 LOOP_SKILL_BUNDLE_VERSION，强制「改模板必同步 bump 版本」纪律。
 """
 
-LOOP_SKILL_BUNDLE_VERSION = "2026-07-01-v10"
+LOOP_SKILL_BUNDLE_VERSION = "2026-07-02-v11"
 
 KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
     {
@@ -78,5 +78,26 @@ KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
         # 环境实测：CI canonical 直接取自 pipeline #419 的 Linux runner 输出。
         "20ed5901f0e51ea21d1e889c692f26566a412b879b1adee784a4a389541ea42d",  # Linux序+LF (CI canonical, blob，实测 pipeline #419)
         "a4c3c4bb2a51a8f2ee7c84eeaf08530274790cc2a20ef723294fdd1633977501",  # Windows序+CRLF (autocrlf=true 本地工作区, 实测 build_bundle)
+        # v11 (2026-07-02, 飞书通知统一 + 保留富文本): orchestrator SKILL Required Checklist
+        # 加第 4 步「开始飞书播报」（此前完全没有开始通知，只在退出前发一次）+ 主循环加
+        # notify_exit(title, level, reason=None) helper，五个退出闸门全部改走它。第一版
+        # 曾把消息压成纯计数「累计通过 X/N 篇 · 共耗时 M 分钟」，但对照真实生产消息发现
+        # 运营依赖的选题/文章标题/评审分数这些明细全被砍掉了——改成 run_log 逐轮累积
+        # {qid, question, article_id, title, decision, score_total}，退出播报固定按
+        # 「目标回显 → 本次产出明细（每条 3 行：选题/产出/评审）→ 累计通过 + 耗时 → 原因」
+        # 渲染，格式统一的同时不再损失信息量。同批把配套的 claude-loops/generation-loop.md
+        # （不在本 bundle 内，无需 sha 登记）也做了同构改造：补齐此前只有文字描述、没有
+        # 实际 notify_feishu 调用的 3 条退出路径（15 轮耗尽/候选用完/MCP 连续失败 3 次），
+        # 砍掉每次 save 失败就发一条 "save 失败" warning 的噪音通知，并同样加上 run_log
+        # 逐篇明细。
+        # 本次改动先用 pytest 实测拿到 Windows序+CRLF 值，再写脚本复刻 build_bundle 的
+        # 排序/hash 算法，分别模拟 Linux序/Windows序 × LF/CRLF 四种组合，并用实测值校验
+        # 脚本准确性（Windows序+CRLF 完全对上实测），据此推算 Linux序+LF 的 CI canonical——
+        # 避免像 v10 那样漏跑 CI 先致 pipeline 全红。四值仍是推算，首次真实 CI 跑过后
+        # 如与此处不符，以 CI 报的 current 值为准并在此补注「实测」。
+        "e6a95d2fa2c0740c111c69842c9bcdb36b459f117e06e6a7d222293f0d535b92",  # Windows序+CRLF (autocrlf=true 本地工作区, 实测 pytest)
+        "37b008734533f12c77b0209399559570b2d5ad3475295a49af1fcd3376564db3",  # Linux序+LF (推算 CI canonical，脚本复刻未跑真实 CI)
+        "2c27fb2dd50043797c39232d285741e63b2daca38d81a1d7c90900ce45e0d743",  # Windows序+LF (推算，autocrlf=false Windows checkout)
+        "cdc2d515eb9b84308ca278f6cf2a6c3d5cfb99b946943c6a296dd3c2c737f734",  # Linux序+CRLF (推算，理论组合，正常环境不应出现)
     }
 )
