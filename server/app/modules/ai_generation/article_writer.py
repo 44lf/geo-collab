@@ -13,6 +13,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from server.app.core.logging import add_run_tokens
+
 logger = logging.getLogger(__name__)
 
 _QUESTION_PLACEHOLDER = "{{问题}}"
@@ -220,6 +222,14 @@ def generate_article_from_prompt(
         deep_thinking=deep_thinking,
         logger=logger,
     )
+    # [TOKEN统计] 写作模型 usage 取自 litellm 返回：打一行逐次明细 + 累加到运行汇总（见 executor 的 [TOKEN汇总]）。
+    _u = getattr(response, "usage", None)
+    _pt = getattr(_u, "prompt_tokens", None)
+    _ct = getattr(_u, "completion_tokens", None)
+    _tt = getattr(_u, "total_tokens", None)
+    logger.info("[TOKEN统计] 写作 model=%s prompt=%s completion=%s total=%s", model_str, _pt, _ct, _tt)
+    add_run_tokens("write", prompt=_pt, completion=_ct, total=_tt)
+
     md_content = response.choices[0].message.content or ""
 
     # 先剥掉模型尾部的 {"games":[...]} 哨兵块，再抽标题正文（否则 json 块会泄进正文）

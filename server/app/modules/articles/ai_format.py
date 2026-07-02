@@ -26,6 +26,7 @@ from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
 from server.app.core.config import get_settings
+from server.app.core.logging import add_run_tokens
 from server.app.modules.articles.parser import dumps_content_json, loads_content_json
 from server.app.modules.image_library.inserter import (
     has_images_in_content,
@@ -653,7 +654,7 @@ def _call_litellm_completion(
 ) -> Any:
     from litellm import completion
 
-    return completion(
+    resp = completion(
         model=model,
         api_key=api_key,
         messages=messages,
@@ -661,6 +662,14 @@ def _call_litellm_completion(
         timeout=timeout_seconds,
         api_base=api_base or None,
     )
+    # [TOKEN统计] 配图/排版模型 usage 取自 litellm 返回：逐次明细 + 累加到运行汇总（见 executor 的 [TOKEN汇总]）。
+    _u = getattr(resp, "usage", None)
+    _pt = getattr(_u, "prompt_tokens", None)
+    _ct = getattr(_u, "completion_tokens", None)
+    _tt = getattr(_u, "total_tokens", None)
+    logger.info("[TOKEN统计] 配图 model=%s prompt=%s completion=%s total=%s", model, _pt, _ct, _tt)
+    add_run_tokens("illustrate", prompt=_pt, completion=_ct, total=_tt)
+    return resp
 
 
 # 联网兜底提示：仅 web_fallback 开时由 _load_ai_format_prompt 拼到系统提示词末尾。
