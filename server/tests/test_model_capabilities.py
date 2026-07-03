@@ -47,6 +47,41 @@ def _capture(final="ok"):
     return fake
 
 
+# ── 假 Ark Responses API 响应（litellm ResponsesAPIResponse.model_dump() 结构）───────
+class _FakeResponses:
+    """最小 stub：只实现 model_dump()，返回 Responses API 的 output/usage 结构。"""
+
+    def __init__(self, data):
+        self._data = data
+
+    def model_dump(self):
+        return self._data
+
+
+def _make_responses(content="", reasoning=None, citations=0, tokens=(0, 0, 0)):
+    output = []
+    if reasoning:
+        output.append(
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": reasoning}]}
+        )
+    if citations:
+        output.append({"type": "web_search_call", "action": {"query": "q"}})
+    anns = [
+        {"type": "url_citation", "url": f"http://x/{i}", "title": "t"} for i in range(citations)
+    ]
+    output.append(
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": content, "annotations": anns}],
+        }
+    )
+    ip, op, tp = tokens
+    return _FakeResponses(
+        {"output": output, "usage": {"input_tokens": ip, "output_tokens": op, "total_tokens": tp}}
+    )
+
+
 def test_provider_detection():
     assert _provider_of("moonshot/kimi-k2.5") == "moonshot"
     assert _provider_of("kimi-thinking") == "moonshot"
@@ -168,8 +203,10 @@ def test_capability_result_marks_not_requested_when_disabled(caplog):
     assert _result_line(caplog) is None
 
 
-def test_doubao_result_logs_web_search_enabled(caplog):
-    """豆包：联网开启走原生 web_search_options → 结果行标「联网搜索=已启用（web_search_options）…」。"""
+def test_doubao_result_logs_web_search_enabled(caplog, monkeypatch):
+    """开关关（=0）时豆包仍走旧的 web_search_options → 结果行标「联网搜索=已启用（web_search_options）…」。
+    （开关默认开时豆包改走 Responses API，见 test_doubao_web_search_routes_to_responses_api。）"""
+    monkeypatch.setenv("GEO_DOUBAO_WEB_SEARCH_VIA_RESPONSES", "0")
     fake = _capture()
     with caplog.at_level(logging.INFO):
         completion_with_capabilities(
@@ -248,9 +285,10 @@ def test_anthropic_official_still_tries_native_web_search():
     assert fake.calls[0]["web_search_options"] == {}
 
 
-def test_doubao_web_search_uses_native_options():
-    """豆包联网：走原生 web_search_options（与 anthropic/openai/gemini/xai 同路径，
-    litellm volcengine 翻译成豆包联网工具）。provider 识别为 doubao（深度思考/日志标注用）。"""
+def test_doubao_web_search_uses_native_options(monkeypatch):
+    """开关关（=0）时豆包联网仍走旧的原生 web_search_options（回归护栏）。
+    默认开时改走 Responses API，见 test_doubao_web_search_routes_to_responses_api。"""
+    monkeypatch.setenv("GEO_DOUBAO_WEB_SEARCH_VIA_RESPONSES", "0")
     fake = _capture()
     completion_with_capabilities(
         completion=fake,
@@ -365,3 +403,143 @@ def test_moonshot_web_search_failure_falls_back_to_plain():
         logger=LOG,
     )
     assert resp.choices[0].message.content == "fallback-ok"  # 联网失败 → 回退普通生文
+
+
+# ── 豆包联网走 Ark Responses API（GEO_DOUBAO_WEB_SEARCH_VIA_RESPONSES 默认开）───────
+def test_doubao_web_search_routes_to_responses_api(monkeypatch):
+    """豆包+联网+开关默认开 → 走 litellm.responses（Ark Responses API），请求体正确、chat 不被调。"""
+    import litellm
+
+    resp_calls = []
+
+    def fake_responses(**kwargs):
+        resp_calls.append(kwargs)
+        return _make_responses(content="正文", reasoning="想", citations=1, tokens=(1, 1, 2))
+
+    monkeypatch.setattr(litellm, "responses", fake_responses)
+    chat = _capture()
+    completion_with_capabilities(
+        completion=chat,
+        base_kwargs={
+            "model": "volcengine/ep-x",
+            "messages": [
+                {"role": "system", "content": "你是编辑"},
+                {"role": "user", "content": "写新游速报"},
+            ],
+            "max_tokens": 1200,
+            "timeout": 300,
+            "api_key": "k",
+        },
+        model="volcengine/ep-x",
+        web_search=True,
+        deep_thinking=True,
+        logger=LOG,
+    )
+    assert len(resp_calls) == 1  # 走了 Responses
+    assert chat.calls == []  # 没走 chat/completions
+    kw = resp_calls[0]
+    assert kw["tools"] == [{"type": "web_search"}]
+    assert kw["instructions"] == "你是编辑"  # system → 顶层 instructions
+    assert all(m["role"] != "system" for m in kw["input"])  # input 里没有 system
+    assert kw["input"][0]["content"] == "写新游速报"
+    assert kw["max_output_tokens"] == 1200  # max_tokens → max_output_tokens
+    assert kw["timeout"] == 300  # 超时透传
+    assert kw["extra_body"]["thinking"]["type"] == "enabled"  # 深度思考走 Ark 原生 thinking
+
+
+def test_doubao_responses_wrapped_as_chat(monkeypatch):
+    """Responses 返回 → 包装成 chat 同构：content/reasoning/annotations/usage 全映射，检测器判定生效。"""
+    import litellm
+
+    from server.app.modules.ai_generation.model_capabilities import (
+        _extract_reasoning_text,
+        _web_search_was_used,
+    )
+
+    monkeypatch.setattr(
+        litellm,
+        "responses",
+        lambda **kw: _make_responses(
+            content="正文内容", reasoning="思考过程文本", citations=2, tokens=(4369, 391, 4760)
+        ),
+    )
+    resp = completion_with_capabilities(
+        completion=_capture(),
+        base_kwargs={"model": "volcengine/ep-x", "messages": [{"role": "user", "content": "q"}]},
+        model="volcengine/ep-x",
+        web_search=True,
+        deep_thinking=False,
+        logger=LOG,
+    )
+    msg = resp.choices[0].message
+    assert msg.content == "正文内容"
+    assert msg.reasoning_content == "思考过程文本"
+    assert len(msg.annotations) == 2
+    assert resp.usage.prompt_tokens == 4369  # input_tokens → prompt_tokens
+    assert resp.usage.completion_tokens == 391  # output_tokens → completion_tokens
+    assert resp.usage.total_tokens == 4760
+    assert _extract_reasoning_text(resp) == "思考过程文本"
+    assert _web_search_was_used(resp) is True
+
+
+def test_doubao_responses_failure_falls_back_to_plain(monkeypatch):
+    """Responses 调用抛异常 → best-effort 回退普通 chat/completions，不崩、不丢文章。"""
+    import litellm
+
+    attempted = []
+
+    def boom(**kwargs):
+        attempted.append(1)
+        raise RuntimeError("ark boom")
+
+    monkeypatch.setattr(litellm, "responses", boom)
+    resp = completion_with_capabilities(
+        completion=lambda **kw: _Resp(_Msg(content="回退正文")),
+        base_kwargs={"model": "volcengine/ep-x", "messages": []},
+        model="volcengine/ep-x",
+        web_search=True,
+        deep_thinking=False,
+        logger=LOG,
+    )
+    assert attempted == [1]  # Responses 确被尝试
+    assert resp.choices[0].message.content == "回退正文"  # 回退到 chat
+
+
+def test_doubao_no_web_search_uses_chat_not_responses(monkeypatch):
+    """豆包 web_search=False → 走 chat/completions（深度思考），绝不入 Responses。"""
+    import litellm
+
+    def guard(**kwargs):
+        raise AssertionError("web_search=False 不应走 Responses")
+
+    monkeypatch.setattr(litellm, "responses", guard)
+    fake = _capture()
+    completion_with_capabilities(
+        completion=fake,
+        base_kwargs={"model": "volcengine/ep-x", "messages": []},
+        model="volcengine/ep-x",
+        web_search=False,
+        deep_thinking=True,
+        logger=LOG,
+    )
+    assert fake.calls[0]["reasoning_effort"] == "high"
+
+
+def test_non_doubao_unaffected_by_responses_flag(monkeypatch):
+    """开关默认开，但非豆包（openai）仍走 web_search_options、不碰 Responses。"""
+    import litellm
+
+    def guard(**kwargs):
+        raise AssertionError("非豆包不应走 Responses")
+
+    monkeypatch.setattr(litellm, "responses", guard)
+    fake = _capture()
+    completion_with_capabilities(
+        completion=fake,
+        base_kwargs={"model": "openai/gpt-4o", "messages": []},
+        model="openai/gpt-4o",
+        web_search=True,
+        deep_thinking=False,
+        logger=LOG,
+    )
+    assert fake.calls[0]["web_search_options"] == {}
