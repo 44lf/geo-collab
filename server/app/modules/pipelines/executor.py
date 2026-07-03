@@ -340,7 +340,9 @@ def run_pipeline(run_id: int, session_factory: SessionFactory) -> None:
         logger.exception("pipeline run %s crashed at top level", run_id)
         _mark_run_failed(run_id, session_factory, "执行器内部异常，运行已中止")
     finally:
-        pop_run_tokens(run_id)  # 兜底清累加器：正常路径已在 inner pop 过（此处为 no-op），崩溃路径防泄漏
+        pop_run_tokens(
+            run_id
+        )  # 兜底清累加器：正常路径已在 inner pop 过（此处为 no-op），崩溃路径防泄漏
         clear_run_context()  # 清空，避免污染复用线程的后续日志
         _RUN_GATE.release()
 

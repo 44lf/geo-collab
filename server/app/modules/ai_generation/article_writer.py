@@ -227,7 +227,9 @@ def generate_article_from_prompt(
     _pt = getattr(_u, "prompt_tokens", None)
     _ct = getattr(_u, "completion_tokens", None)
     _tt = getattr(_u, "total_tokens", None)
-    logger.info("[TOKEN统计] 写作 model=%s prompt=%s completion=%s total=%s", model_str, _pt, _ct, _tt)
+    logger.info(
+        "[TOKEN统计] 写作 model=%s prompt=%s completion=%s total=%s", model_str, _pt, _ct, _tt
+    )
     add_run_tokens("write", prompt=_pt, completion=_ct, total=_tt)
 
     md_content = response.choices[0].message.content or ""
