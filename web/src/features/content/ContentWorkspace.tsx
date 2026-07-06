@@ -728,6 +728,16 @@ export function ContentWorkspace({
     }
   }
 
+  async function copyArticleLink(id: number) {
+    const url = `${window.location.origin}/article/${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("链接已复制", "success");
+    } catch {
+      toast(`复制失败，链接：${url}`, "info"); // 无剪贴板权限时把链接显示出来供手动复制
+    }
+  }
+
   function applySavedArticle(saved: Article, contentJson?: Record<string, unknown>) {
     setSelectedArticle(saved);
     setDraft({
@@ -1129,6 +1139,11 @@ export function ContentWorkspace({
             {imageUploading > 0 && <span className="statusHint">图片传输中</span>}
             {loading && statusText ? <span className="statusHint">{statusText}</span> : null}
           </div>
+          {draft.id ? (
+            <button className="secondaryButton" type="button" onClick={() => void copyArticleLink(draft.id!)}>
+              复制链接
+            </button>
+          ) : null}
           <button className="secondaryButton" disabled={refreshing} type="button" onClick={() => void manualRefresh()} title="拉取最新列表">
             <RefreshCw size={16} className={refreshing ? "spin" : ""} />
             刷新
@@ -1234,6 +1249,13 @@ export function ContentWorkspace({
                         }}
                       >
                         加入分组
+                      </button>
+                      <button
+                        className="inlineMiniButton"
+                        type="button"
+                        onClick={() => void copyArticleLink(item.article.id)}
+                      >
+                        复制链接
                       </button>
                     </div>
                   </div>
