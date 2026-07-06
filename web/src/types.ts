@@ -232,6 +232,8 @@ export type Article = ArticleSummary & {
   stock_category_ids: number[];
   ai_checking: boolean;
   ai_format_error: string | null;
+  /** 当前登录用户是否可编辑该文章：属主/admin 为 true；他人只读分享时 false。缺省（列表铺入等）视作 true */
+  can_edit?: boolean;
 };
 
 export type ArticleReviewSummary = {
