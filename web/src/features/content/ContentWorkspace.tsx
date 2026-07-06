@@ -10,7 +10,7 @@ import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
-import { Plus, Save, Search, Trash2, Upload, ChevronRight, Check, Send, ShieldCheck, ListChecks } from "lucide-react";
+import { Plus, Save, Search, Trash2, Upload, ChevronRight, Check, Send, ShieldCheck, ListChecks, RefreshCw } from "lucide-react";
 import { useToast } from "../../components/Toast";
 import {
   approveArticle,
@@ -337,6 +337,7 @@ export function ContentWorkspace({
   const [articlePage, setArticlePage] = useState(0);
   const [draft, setDraft] = useState<Draft>(makeEmptyDraft);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [statusText, setStatusText] = useState("");
   const [pendingCoverUrl, setPendingCoverUrl] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
@@ -359,6 +360,9 @@ export function ContentWorkspace({
 
   const pasteImageRef = useRef<(file: File) => void>(() => {});
   const isInitialMountRef = useRef(true);
+  const refreshingRef = useRef(false);
+  const lastAutoRefreshRef = useRef(0);
+  const manualRefreshRef = useRef<() => void>(() => {});
   const [charCount, setCharCount] = useState(0);
   const [imageUploading, setImageUploading] = useState(0);
   const pendingBlobsRef = useRef<Set<string>>(new Set());
@@ -554,9 +558,23 @@ export function ContentWorkspace({
     }
   }
 
+  // 列表 + 分组一起重拉，并驱动「刷新中」指示。refreshingRef 防重入（聚焦事件可能连发、或与手动
+  // 点击撞车）。闭包读当前 query / articlePage，故 refreshArticles() 用默认参即保留当前搜索与页码。
+  async function manualRefresh() {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setRefreshing(true);
+    try {
+      await Promise.all([refreshArticles(), refreshGroups()]);
+    } finally {
+      refreshingRef.current = false;
+      setRefreshing(false);
+    }
+  }
+  manualRefreshRef.current = manualRefresh;
+
   useEffect(() => {
-    void refreshArticles();
-    void refreshGroups();
+    void manualRefresh();
     listAccounts().then(setAccounts).catch(() => {});
   }, []);
 
@@ -566,9 +584,27 @@ export function ContentWorkspace({
       return;
     }
     if (!isActive) return;
-    void refreshArticles();
-    void refreshGroups();
+    void manualRefresh();
   }, [isActive]);
+
+  // 窗口 / 标签重新获得焦点时自动拉最新——覆盖「停在内容管理页、后台又生成了新文章」的场景
+  // （子 tab 切换与审核操作都不触发重拉）。经 manualRefreshRef 调最新闭包，故只订阅一次；
+  // 轻 throttle 5s 防 alt-tab 频繁触发；只更新列表数据、不动编辑器 / 草稿，编辑中也安全。
+  useEffect(() => {
+    function onFocus() {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastAutoRefreshRef.current < 5000) return;
+      lastAutoRefreshRef.current = now;
+      manualRefreshRef.current();
+    }
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   function resetDraft() {
     setDraft(makeEmptyDraft());
@@ -1025,6 +1061,10 @@ export function ContentWorkspace({
             {imageUploading > 0 && <span className="statusHint">图片传输中</span>}
             {loading && statusText ? <span className="statusHint">{statusText}</span> : null}
           </div>
+          <button className="secondaryButton" disabled={refreshing} type="button" onClick={() => void manualRefresh()} title="拉取最新列表">
+            <RefreshCw size={16} className={refreshing ? "spin" : ""} />
+            刷新
+          </button>
           <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
             <Trash2 size={16} />
             删除
@@ -1244,7 +1284,9 @@ export function ContentWorkspace({
                 </div>
               );
             })}
-            {unifiedList.length === 0 ? <p className="emptyText">暂无文章</p> : null}
+            {unifiedList.length === 0 ? (
+              <p className="emptyText">{refreshing && articles.length === 0 ? "加载中…" : "暂无文章"}</p>
+            ) : null}
           </div>
 
           <Pagination

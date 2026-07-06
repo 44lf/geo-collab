@@ -16,7 +16,7 @@ import logging
 
 from sqlalchemy import bindparam, func, select, text
 from sqlalchemy import delete as sa_delete
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, lazyload, load_only, selectinload
 
 from server.app.core.time import utcnow
 from server.app.modules.articles.models import (
@@ -88,6 +88,34 @@ def get_article(db: Session, article_id: int) -> Article | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
+# 列表 / 检索只消费 ArticleListRead 的 summary 字段（见 articles/router.py 与 mcp_catalog/router.py
+# 的逐字段构造）。显式 load_only 精简列，避免把 content_json / content_html / plain_text 三个大 Text 列
+# 白搬进内存；lazyload(Article.tags) 压掉 mapper 级 lazy="selectin" 的多余 tags 往返；列表不展示
+# body_assets 故不再 selectinload（默认 lazy="select"，不访问即不查）。改这里前先确认 ArticleListRead
+# 的字段集是否新增了列——漏列会退化成逐行懒加载的 N+1。
+def _list_summary_load_options():
+    # 必须在函数内（运行时）构造，不能放模块顶层：load_only() 会触发 Article mapper 配置，而本模块在
+    # import 链早期被加载时 StockCategory 等关系目标类尚未注册，顶层调用会抛 InvalidRequestError
+    # (failed to locate a name 'StockCategory')。
+    return (
+        load_only(
+            Article.title,
+            Article.author,
+            Article.cover_asset_id,
+            Article.word_count,
+            Article.status,
+            Article.version,
+            Article.review_status,
+            Article.source_agent_name,
+            Article.source_template_name,
+            Article.source_template_id,
+            Article.created_at,
+            Article.updated_at,
+        ),
+        lazyload(Article.tags),
+    )
+
+
 def _search_articles(db: Session, query: str, user_id: int | None = None) -> list[Article]:
     # MySQL FULLTEXT（ngram parser）自然语言检索 title/author/plain_text。
     # 自然语言模式（不带 IN BOOLEAN MODE）：用户输入里的 + - " * ( ) 等被当词分隔符、不当布尔操作符，
@@ -98,9 +126,15 @@ def _search_articles(db: Session, query: str, user_id: int | None = None) -> lis
     match_clause = text(
         "MATCH (articles.title, articles.author, articles.plain_text) AGAINST (:q) > 0"
     ).bindparams(bindparam("q", query))
-    stmt = select(Article).where(
-        Article.is_deleted == False,  # noqa: E712
-        match_clause,
+    # 结果仅用于取 id / review_status / updated_at 做切片与排序（见 list_articles FTS 分支），
+    # 故只 load 这两列 + PK，别 hydrate 全部命中行的正文。
+    stmt = (
+        select(Article)
+        .options(load_only(Article.review_status, Article.updated_at), lazyload(Article.tags))
+        .where(
+            Article.is_deleted == False,  # noqa: E712
+            match_clause,
+        )
     )
 
     if user_id is not None:
@@ -131,7 +165,7 @@ def list_articles(
                 return []
             stmt = (
                 select(Article)
-                .options(selectinload(Article.body_assets))
+                .options(*_list_summary_load_options())
                 .where(Article.id.in_(ids), Article.is_deleted == False)  # noqa: E712
                 .order_by(Article.updated_at.desc())
             )
@@ -144,7 +178,7 @@ def list_articles(
     stmt = (
         select(Article)
         .where(Article.is_deleted == False)  # noqa: E712
-        .options(selectinload(Article.body_assets))
+        .options(*_list_summary_load_options())
         .order_by(Article.updated_at.desc())
     )
 
