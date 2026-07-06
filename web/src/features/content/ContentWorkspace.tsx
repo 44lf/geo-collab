@@ -320,6 +320,7 @@ interface Props {
   reviewTab?: ReviewStatus;
   onReviewTabChange?: (t: ReviewStatus) => void;
   isMobile?: boolean;
+  deepLinkArticleId?: number;
 }
 
 export function ContentWorkspace({
@@ -327,6 +328,7 @@ export function ContentWorkspace({
   reviewTab: reviewTabProp,
   onReviewTabChange,
   isMobile,
+  deepLinkArticleId,
 }: Props = {}) {
   const { toast } = useToast();
   const [articles, setArticles] = useState<ArticleSummary[]>([]);
@@ -430,8 +432,9 @@ export function ContentWorkspace({
   }, []);
 
   // 路由切换拦截：离开「内容管理」且有未保存改动时确认（覆盖侧栏点击、移动端导航、浏览器前进/后退）。
+  const inWorkspace = (p: string) => p.startsWith("/content") || p.startsWith("/article");
   const blocker = useBlocker(
-    ({ nextLocation }) => isDirty() && !nextLocation.pathname.startsWith("/content"),
+    ({ nextLocation }) => isDirty() && !inWorkspace(nextLocation.pathname),
   );
   const promptingRef = useRef(false);
   useEffect(() => {
@@ -459,6 +462,17 @@ export function ContentWorkspace({
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
+
+  // 深链进入 /article/:id：等 editor 就绪后按 id 载入；仅在 id 变化时触发（换 id 经未保存守卫）。
+  // useEditor 首帧返回 null，未就绪时调 loadArticleById 会被 editor?. 静默跳过、停在空白，故必须 gate 在 editor。
+  const lastDeepLinkRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!editor || !deepLinkArticleId) return;
+    if (lastDeepLinkRef.current === deepLinkArticleId) return;
+    lastDeepLinkRef.current = deepLinkArticleId;
+    void loadArticleGuarded(() => loadArticleById(deepLinkArticleId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, deepLinkArticleId]);
 
   const groupedArticleIdSet = useMemo(() => {
     const ids = new Set<number>();
@@ -631,6 +645,52 @@ export function ContentWorkspace({
     setStatusText("加载中");
     try {
       const detail = await getArticle(article.id);
+      setSelectedArticle(detail);
+      setDraft({
+        id: detail.id,
+        title: detail.title,
+        author: detail.author ?? "",
+        cover_asset_id: detail.cover_asset_id,
+        status: detail.status,
+        version: detail.version,
+        stock_category_ids: detail.stock_category_ids ?? [],
+      });
+      const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
+      editor?.commands.setContent(displayDoc);
+      const bodyState = editor
+        ? editorBodyState(editor)
+        : stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save"));
+      savedStateRef.current = {
+        title: detail.title?.trim() ?? "",
+        author: detail.author?.trim() ?? "",
+        cover_asset_id: detail.cover_asset_id,
+        bodyState,
+      };
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "加载文章失败", "error");
+    } finally {
+      setLoading(false);
+      setStatusText("");
+    }
+  }
+
+  // 统一「载入另一篇文章」入口：当前有未保存改动先确认，取消则不载入。
+  // 列表点选与深链换 id 都经此守卫（顺带修好现有列表点选直接冲掉未保存内容的老 gap）。
+  async function loadArticleGuarded(loader: () => Promise<void>) {
+    if (isDirty() && !window.confirm("当前文章有未保存内容，确定切换吗？未保存的修改将丢失。")) {
+      return;
+    }
+    await loader();
+  }
+
+  // 按 id 直接载入（深链用）：不依赖列表 summary 预填，直接拉详情灌入编辑器。
+  // savedStateRef 设置顺序照抄 loadArticle：先 setContent → 再算 bodyState → 写 ref，否则离开误弹「未保存」。
+  async function loadArticleById(id: number) {
+    setPendingCoverUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
+    setLoading(true);
+    setStatusText("加载中");
+    try {
+      const detail = await getArticle(id);
       setSelectedArticle(detail);
       setDraft({
         id: detail.id,
@@ -1139,7 +1199,7 @@ export function ContentWorkspace({
                       draftId={draft.id}
                       selectedIds={selectedArticleIds}
                       onToggle={toggleSelectedArticle}
-                      onSelect={(article) => void loadArticle(article)}
+                      onSelect={(article) => void loadArticleGuarded(() => loadArticle(article))}
                     />
                     <div className="articleRowActions">
                       {item.article.review_status === "pending" ? (
