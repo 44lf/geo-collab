@@ -33,9 +33,6 @@ const TasksWorkspace = lazy(() =>
 const SystemWorkspace = lazy(() =>
   import("./features/system/SystemWorkspace").then((m) => ({ default: m.SystemWorkspace })),
 );
-const HotListsWorkspace = lazy(() =>
-  import("./features/hot-lists/HotListsWorkspace").then((m) => ({ default: m.HotListsWorkspace })),
-);
 const McpConnectWorkspace = lazy(() =>
   import("./features/mcp/McpConnectWorkspace").then((m) => ({ default: m.McpConnectWorkspace })),
 );
@@ -113,7 +110,6 @@ export const router = createBrowserRouter([
       { path: "media", element: <AccountsWorkspace isActive /> },
       { path: "tasks", element: <TasksWorkspace isActive /> },
       { path: "system", element: <SystemWorkspace /> },
-      { path: "hot-lists", element: <HotListsWorkspace /> },
       { path: "mcp-connect", element: <McpConnectWorkspace /> },
       {
         path: "admin",

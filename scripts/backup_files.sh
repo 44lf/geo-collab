@@ -91,12 +91,25 @@ backup_minio_data() {
     local target="$BACKUP_DIR/minio_data_${TIMESTAMP}.tar.gz"
     log "▶ minio_data: 开始备份 → $target"
 
+    # MinIO 运行时会在 .minio.sys/tmp/.trash/ 下持续新建 / 删除临时文件，tar 读取
+    # 期间这些文件可能消失 → tar 以非零码退出（"file changed as we read it"）。
+    #   ① 排除易变的 .minio.sys/tmp（纯 scratch，无需备份）消除主要竞态；
+    #   ② tar 的非零退出不再直接 abort（`|| rc=$?` 关掉 set -e），改由 gzip 完整性
+    #      校验作为唯一成败判据——否则一次良性竞态就会中止整个脚本、连带跳过末尾的
+    #      过期清理，导致旧备份永远堆积（见 issue：07-04 起 minio tar 每天报错、清理连跳）。
+    local rc=0
     docker run --rm \
         -v "${MINIO_VOLUME}:/source:ro" \
         -v "${BACKUP_DIR}:/backup" \
         busybox \
         tar -czf "/backup/minio_data_${TIMESTAMP}.tar.gz" \
-            -C /source .
+            --exclude='./.minio.sys/tmp' \
+            --exclude='./.minio.sys/tmp/*' \
+            -C /source . || rc=$?
+
+    if [[ "$rc" -ne 0 ]]; then
+        log "⚠ minio_data: tar 返回码 $rc（多为运行时临时文件消失，非致命），以 gzip 校验为准"
+    fi
 
     if ! gzip -t "$target" 2>/dev/null; then
         log "❌ minio_data 备份损坏，已删除"
@@ -110,12 +123,14 @@ backup_minio_data() {
 }
 
 # ── 主流程 ──
+# 关键：单个备份失败绝不能 abort 掉后面的过期清理，否则旧备份会无限堆积撑爆磁盘。
+# 用 `|| log` 兜住每个备份步骤的失败（set -e 在 `||` 左侧自动失效），保证末尾的清理必然执行。
 check_volume "$APP_VOLUME"
-backup_app_data
+backup_app_data || log "❌ app_data 备份失败（不中止，继续执行过期清理）"
 
 if [[ "${BACKUP_SKIP_MINIO:-0}" != "1" ]]; then
     check_volume "$MINIO_VOLUME"
-    backup_minio_data
+    backup_minio_data || log "❌ minio_data 备份失败（不中止，继续执行过期清理）"
 else
     log "▶ 跳过 minio_data 备份（BACKUP_SKIP_MINIO=1）"
 fi

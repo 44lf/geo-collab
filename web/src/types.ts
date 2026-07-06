@@ -1,7 +1,7 @@
-import { Bot, FileText, Flame, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
+import { Bot, FileText, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "agents" | "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "hot-lists" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
+export type NavKey = "agents" | "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -591,7 +591,6 @@ export const navItems: {
   { key: "media", label: "媒体矩阵", icon: RadioTower },
   { key: "tasks", label: "分发引擎", icon: Send },
   { key: "system", label: "系统状态", icon: MonitorCog },
-  { key: "hot-lists", label: "热榜", icon: Flame },
   { key: "mcp-connect", label: "MCP 接入", icon: Plug },
 ];
 

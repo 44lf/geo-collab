@@ -1,4 +1,4 @@
-"""通用退避重试：平台无关、零 ORM。供发布链路（及未来 hot_lists/feishu/litellm）复用。
+"""通用退避重试：平台无关、零 ORM。供发布链路（及未来 feishu/litellm）复用。
 
 retry_call 只对 is_transient(exc)==True 的异常退避重试；其余立即抛。
 不在此判定「提交边界是否安全」——那是 drivers.base.CommitGuard 的职责。

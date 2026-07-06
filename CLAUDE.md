@@ -8,8 +8,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Geo 协作平台** — 多平台内容自动化发布平台。后端 FastAPI + SQLAlchemy/Alembic（MySQL only），前端 React 19 + Vite + TypeScript + Tiptap，浏览器自动化 Playwright + Xvfb/x11vnc/websockify/noVNC（远程人工接管），AI 生文走 LiteLLM + LangGraph，生产部署用 Docker Compose。
 
-仓库里还 vendored 一个独立的 Node 子服务 `services/dailyhot-api/`（第三方 [DailyHotApi](https://github.com/imsyy/DailyHotApi)，热榜聚合，端口 6688）——后端 `hot_lists` 模块只是它的反向代理。这是仓库内**唯一**的非 Python 子服务，本地默认不跑、CI 不测；详见下文「热榜」与 `hot_lists/` 模块。
-
 **设计文档 / 在途计划**：模块级 rationale 见各专题文档（`docs/AI_GENERATION.md`、`docs/DEPLOYMENT.md`）；feature 级计划 / 设计稿按日期命名落在 `docs/plans/YYYY-MM-DD-*.md` 与 `docs/specs/*-design.md`（superpowers 流程产出在 `docs/superpowers/`）。改某块前先 grep `docs/` 找有没有现成计划，避免与在途方案打架。`openspec/` 是新引入的变更提案工作流（`changes/` + `specs/`），目前主要走 archive。
 
 ## Dev Commands
@@ -79,7 +77,7 @@ CI（`.github/workflows/ci.yml`，push 到 main 和所有 PR 触发）：**后�
 ### Backend (`server/app/`)
 
 - 应用工厂：`server/app/main.py:create_app()`。
-- API 路由（全部挂在 `/api/` 下）：`auth`、`users`、`accounts`、`articles`、`article-groups`、`assets`、`chunked-assets`、`publish-records`、`system`、`tasks`、`prompt-templates`、`ai-models`、`generation`、`pipelines`、`image-library`、`stock-images`、`audit-logs`、`hot-lists`，外加 `mcp`（catalog / 接入指引 / loop-skill 包的统一前缀，见下文 MCP 章节）。（`skills` 已下线、不再挂载，见下文 `skills/` 与「AI 生文模块」。）
+- API 路由（全部挂在 `/api/` 下）：`auth`、`users`、`accounts`、`articles`、`article-groups`、`assets`、`chunked-assets`、`publish-records`、`system`、`tasks`、`prompt-templates`、`ai-models`、`generation`、`pipelines`、`image-library`、`stock-images`、`audit-logs`，外加 `mcp`（catalog / 接入指引 / loop-skill 包的统一前缀，见下文 MCP 章节）。（`skills` 已下线、不再挂载，见下文 `skills/` 与「AI 生文模块」。）
 - 鉴权：除 `auth`、`users`、`/api/bootstrap`、`/api/stock-images/*` 外，全部走 `Depends(get_current_user)` 的 JWT cookie。
   - `/api/stock-images/*` 是**有意公开**的图片文件服务，前端 image-library 依赖；改动前先确认。
   - `/api/audit-logs` 用 `require_admin`，只允许 admin。
@@ -108,7 +106,6 @@ CI（`.github/workflows/ci.yml`，push 到 main 和所有 PR 触发）：**后�
 - `prompt_templates/` — PromptTemplate 模型、CRUD、路由。
 - `ai_models/` — **AI 模型注册表**（前端「AI 模型管理」），DB 持久化可选模型行（`AiModel`，`scope ∈ generation | ai_format`，每 scope 至多一个默认靠 `is_default_key` 唯一约束）；CRUD 在 `/api/ai-models`。**密钥绝不入库**——行只存 `api_key_env`（环境变量名），运行时 `_resolve_key` 从 `os.environ` 取，取不到回落该 scope 全局 key。`service.py` 的解析器被 `article_writer` / `ai_format` 调用（须用短生命周期 session）：DB 行命中优先，无任何行才回落旧路径（写作走 `config.resolve_engine`、认 `GEO_AI_ENGINES` 内联 key；格式走 `settings.ai_format_*`）。
 - `audit/` — 审计日志：`AuditLog` 模型 + `service.list_audit_logs()` 游标分页；路由 `/api/audit-logs`，**仅 admin**，参数 `user_id` / `action_prefix` / `target_type` / `target_id` / `start_at` / `end_at` / `cursor` / `limit≤500`。
-- `hot_lists/` — **「热榜」tab 的后端代理**，故意**不遵守**「每模块 `models.py + schemas.py + service.py + router.py`」约定：无 model / 无 schema / 无 DB / 无缓存（缓存交给上游的 NodeCache），只有 `service.py`（`httpx.AsyncClient` 异步转发）+ `router.py`。把请求转给独立 Node 子服务 `services/dailyhot-api/`（DailyHotApi）。上游地址读 **`GEO_HOTLIST_API_URL`**（默认 `http://127.0.0.1:6688`），**直接 `os.environ` 读、故意不进 `Settings`/`get_settings()`**（避免与在途改 `config.py` 的 WIP 冲突）。路由 `/api/hot-lists`（`/all` 全量）和 `/api/hot-lists/{source}`（单源，`limit≤500` + `cache` 开关；`source` 必须匹配 `^[a-z0-9-]+$`，否则 400）。上游连不上 / 超时 → service 抛 `HotListUpstreamError`，router 转 **502**。鉴权在 `main.py` 注册时统一加 `Depends(get_current_user)`，router 自身不带。测试 `test_hot_lists_service.py`（用 `httpx.MockTransport` 打桩、**无需 DB**）和 `test_hot_lists_api.py`。
 - `auto_review/` — Loop 自动审核：`AutoReviewDecision` 表 + `POST /api/articles/score`（LLM 批量评分，用 ai_format_model）+ `POST /api/articles/{id}/auto-review`（写 decision）。**不直接动 `article.review_status`，最终人审兜底**。MCP token 鉴权（独立 service token、与 user JWT 隔离）。
 - `performance/` — 模板 / 账号产出 metrics 聚合：`GET /api/prompt-templates/{id}/performance` + `GET /api/accounts/{id}/performance` + `POST /api/publish-records/{id}/metrics`（回流写入，合并到 `Article.metrics` JSON 列）。POC 期 template 聚合是 stub（缺 article→template 反向引用），v2 改造。（迁移 `0052` 给 `articles` 加了去规范化的 `source_agent_name` / `source_template_name` 仅展示字段，不是聚合用的反向引用。）
 - `mcp_catalog/` — MCP **只读 catalog 端点**（`router.py`，挂 `/api/mcp/*`，被 catalog 类 tool 复用）+ **接入指引**（`connect_router.py`）：`/api/mcp/status`（user JWT，回 `configured` / `suggested_base_url` / `tools_count`）+ `/api/mcp/health`（MCP token）。前端「MCP 接入」tab 用。**MCP 工具总数的唯一真值在 `connect_router.py:MCP_TOOLS_COUNT`（当前 21）**，增减 tool 时改这里。
@@ -123,7 +120,7 @@ CI（`.github/workflows/ci.yml`，push 到 main 和所有 PR 触发）：**后�
 
 ### Frontend (`web/`)
 
-React 19 + Vite + TypeScript（strict）+ Tiptap + Lucide。Feature 拆分在 `web/src/features/`：`content/`、`accounts/`、`tasks/`、`system/`、`ai-generation/`、`pipelines/`（UI 标题「智能体管理」，含 `PipelineEditor` 节点编辑器 + `VersionHistory` + `AgentLogsView`）、`image-library/`、`prompt-templates/`、`hot-lists/`（「热榜」tab，`HotListsWorkspace`）、`mcp/`（「MCP 接入」tab，`McpConnectWorkspace`）、`auth/`。API 客户端在 `web/src/api/`（按后端路由对应，pipelines 对应 `web/src/api/pipelines.ts`、热榜对应 `web/src/api/hot-lists.ts`）。`App.tsx` 顶部 tab 用 `visitedTabs` 懒挂载 + `display:none` 缓存，每个 tab 包 `ErrorBoundary`。开发时 Vite 把 `/api` 代理到 `127.0.0.1:8000`。
+React 19 + Vite + TypeScript（strict）+ Tiptap + Lucide。Feature 拆分在 `web/src/features/`：`content/`、`accounts/`、`tasks/`、`system/`、`ai-generation/`、`pipelines/`（UI 标题「智能体管理」，含 `PipelineEditor` 节点编辑器 + `VersionHistory` + `AgentLogsView`）、`image-library/`、`prompt-templates/`、`mcp/`（「MCP 接入」tab，`McpConnectWorkspace`）、`auth/`。API 客户端在 `web/src/api/`（按后端路由对应，pipelines 对应 `web/src/api/pipelines.ts`）。`App.tsx` 顶部 tab 用 `visitedTabs` 懒挂载 + `display:none` 缓存，每个 tab 包 `ErrorBoundary`。开发时 Vite 把 `/api` 代理到 `127.0.0.1:8000`。
 
 ## MCP Server（Claude Code Loop 调用入口）
 
