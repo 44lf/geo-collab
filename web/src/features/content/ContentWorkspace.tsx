@@ -637,6 +637,33 @@ export function ContentWorkspace({
     savedStateRef.current = null;
   }
 
+  // 把已拉取的文章详情灌入编辑器：setSelectedArticle → setDraft → setContent → 算 bodyState → 写 savedStateRef。
+  // loadArticle（列表点选）与 loadArticleById（深链）共用，集中保证「先 setContent 再算 bodyState 再写 ref」的顺序，
+  // 避免两处各自照抄、日后单边改漏导致离开时误弹「未保存」。
+  function applyLoadedArticleDetail(detail: Article) {
+    setSelectedArticle(detail);
+    setDraft({
+      id: detail.id,
+      title: detail.title,
+      author: detail.author ?? "",
+      cover_asset_id: detail.cover_asset_id,
+      status: detail.status,
+      version: detail.version,
+      stock_category_ids: detail.stock_category_ids ?? [],
+    });
+    const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
+    editor?.commands.setContent(displayDoc);
+    const bodyState = editor
+      ? editorBodyState(editor)
+      : stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save"));
+    savedStateRef.current = {
+      title: detail.title?.trim() ?? "",
+      author: detail.author?.trim() ?? "",
+      cover_asset_id: detail.cover_asset_id,
+      bodyState,
+    };
+  }
+
   async function loadArticle(article: ArticleSummary) {
     setPendingCoverUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
     // Pre-populate title/metadata immediately from the list summary (no API wait)
@@ -653,27 +680,7 @@ export function ContentWorkspace({
     setStatusText("加载中");
     try {
       const detail = await getArticle(article.id);
-      setSelectedArticle(detail);
-      setDraft({
-        id: detail.id,
-        title: detail.title,
-        author: detail.author ?? "",
-        cover_asset_id: detail.cover_asset_id,
-        status: detail.status,
-        version: detail.version,
-        stock_category_ids: detail.stock_category_ids ?? [],
-      });
-      const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
-      editor?.commands.setContent(displayDoc);
-      const bodyState = editor
-        ? editorBodyState(editor)
-        : stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save"));
-      savedStateRef.current = {
-        title: detail.title?.trim() ?? "",
-        author: detail.author?.trim() ?? "",
-        cover_asset_id: detail.cover_asset_id,
-        bodyState,
-      };
+      applyLoadedArticleDetail(detail);
     } catch (error) {
       toast(error instanceof Error ? error.message : "加载文章失败", "error");
     } finally {
@@ -691,35 +698,14 @@ export function ContentWorkspace({
     await loader();
   }
 
-  // 按 id 直接载入（深链用）：不依赖列表 summary 预填，直接拉详情灌入编辑器。
-  // savedStateRef 设置顺序照抄 loadArticle：先 setContent → 再算 bodyState → 写 ref，否则离开误弹「未保存」。
+  // 按 id 直接载入（深链用）：不依赖列表 summary 预填，直接拉详情经 applyLoadedArticleDetail 灌入编辑器。
   async function loadArticleById(id: number) {
     setPendingCoverUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
     setLoading(true);
     setStatusText("加载中");
     try {
       const detail = await getArticle(id);
-      setSelectedArticle(detail);
-      setDraft({
-        id: detail.id,
-        title: detail.title,
-        author: detail.author ?? "",
-        cover_asset_id: detail.cover_asset_id,
-        status: detail.status,
-        version: detail.version,
-        stock_category_ids: detail.stock_category_ids ?? [],
-      });
-      const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
-      editor?.commands.setContent(displayDoc);
-      const bodyState = editor
-        ? editorBodyState(editor)
-        : stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save"));
-      savedStateRef.current = {
-        title: detail.title?.trim() ?? "",
-        author: detail.author?.trim() ?? "",
-        cover_asset_id: detail.cover_asset_id,
-        bodyState,
-      };
+      applyLoadedArticleDetail(detail);
     } catch (error) {
       toast(error instanceof Error ? error.message : "加载文章失败", "error");
     } finally {
