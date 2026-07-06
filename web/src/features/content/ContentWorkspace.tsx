@@ -20,8 +20,8 @@ import {
   deleteArticle,
   deleteArticleGroup,
   getArticle,
+  listArticleFeed,
   listArticleGroups,
-  listArticles,
   revokeArticleApproval,
   updateArticle,
   updateArticleCover,
@@ -31,7 +31,7 @@ import {
 import { listAccounts } from "../../api/accounts";
 import { uploadAsset as uploadAssetRequest } from "../../api/assets";
 import { assetSrc, assetThumbSrc, countWords, emptyDoc, newClientRequestId, singleFlight, withAssetToken } from "../../api/core";
-import type { Account, Article, ArticleCreatePayload, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleSummary, ArticleUpdatePayload, Draft, ReviewStatus } from "../../types";
+import type { Account, Article, ArticleCreatePayload, ArticleFeedItem, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleGroupWithMembers, ArticleSummary, ArticleUpdatePayload, Draft, ReviewStatus } from "../../types";
 import { formatDateTime } from "../../utils/dateFormat";
 import { EditorToolbar } from "../../components/editor/EditorToolbar";
 import { ImageSaveDialog } from "../../components/editor/ImageSaveDialog";
@@ -309,11 +309,10 @@ const CustomImage = Image.extend({
 });
 
 const LIST_PAGE_SIZE = 10;
-const ARTICLE_FETCH_LIMIT = 200;
 
 type UnifiedListItem =
-  | { type: "article"; article: ArticleSummary; sortTime: number }
-  | { type: "group"; group: ArticleGroup; sortTime: number };
+  | { type: "article"; article: ArticleSummary }
+  | { type: "group"; group: ArticleGroupWithMembers };
 
 interface Props {
   isActive?: boolean;
@@ -329,7 +328,13 @@ export function ContentWorkspace({
   isMobile,
 }: Props = {}) {
   const { toast } = useToast();
-  const [articles, setArticles] = useState<ArticleSummary[]>([]);
+  // 主列表数据源：服务端合并分页 feed（散篇文章 + 分组混排的一页）+ 两 tab 计数。
+  const [feedItems, setFeedItems] = useState<ArticleFeedItem[]>([]);
+  const [feedCounts, setFeedCounts] = useState<{ pending: number; approved: number }>({
+    pending: 0,
+    approved: 0,
+  });
+  // groups 仅供「加入分组」选择器与分组编辑用（需全量分组列表），不再喂主列表。
   const [groups, setGroups] = useState<ArticleGroup[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [selectedArticleIds, setSelectedArticleIds] = useState<number[]>([]);
@@ -349,11 +354,18 @@ export function ContentWorkspace({
   const [confirmDeleteArticle, setConfirmDeleteArticle] = useState(false);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(false);
   const [confirmUnsavedNew, setConfirmUnsavedNew] = useState(false);
-  const [reviewTab, setReviewTab] = useState<ReviewStatus>("pending");
+  const [reviewTab, setReviewTab] = useState<ReviewStatus>(reviewTabProp ?? "pending");
   const [reviewBusyId, setReviewBusyId] = useState<number | null>(null);
 
+  // reviewTab 由 URL 段 /content/:status 驱动。tab 切换（点击或浏览器前进/后退）都经 reviewTabProp 变化，
+  // 由本 effect 统一 setReviewTab + 重取该 tab 第 0 页——单一入口，避免与 selectReviewTab 双取。
+  // 首次挂载时 reviewTab 已用 prop 初始化，prop===当前 tab 故跳过（初始拉取交给 mount 的 manualRefresh）。
   useEffect(() => {
-    if (reviewTabProp) setReviewTab(reviewTabProp);
+    if (!reviewTabProp || reviewTabProp === reviewTab) return;
+    setReviewTab(reviewTabProp);
+    setSelectedArticleIds([]);
+    void refreshArticles(query, 0, reviewTabProp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewTabProp]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [distributeTarget, setDistributeTarget] = useState<DistributeTarget | null>(null);
@@ -460,13 +472,15 @@ export function ContentWorkspace({
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
-  const groupedArticleIdSet = useMemo(() => {
-    const ids = new Set<number>();
-    for (const g of groups) for (const item of g.items) ids.add(item.article_id);
-    return ids;
-  }, [groups]);
-
-  const articleById = useMemo(() => Object.fromEntries(articles.map((a) => [a.id, a])), [articles]);
+  // articleById：本页出现过的文章（散篇 + 分组内嵌组员），供分组展开 / 分发 / 勾选反查。
+  const articleById = useMemo(() => {
+    const map: Record<number, ArticleSummary> = {};
+    for (const it of feedItems) {
+      if (it.kind === "article" && it.article) map[it.article.id] = it.article;
+      if (it.kind === "group" && it.group) for (const m of it.group.members) map[m.id] = m;
+    }
+    return map;
+  }, [feedItems]);
 
   function groupReviewCounts(group: ArticleGroup): { total: number; approved: number } {
     if (group.review_summary) return group.review_summary;
@@ -482,67 +496,44 @@ export function ContentWorkspace({
     return { total, approved };
   }
 
-  // 组在某标签是否可见：有该状态成员就出现（混合组两个标签都在）。空组(total=0)算 pending。
-  function groupHasStatus(group: ArticleGroup, status: ReviewStatus): boolean {
-    const counts = groupReviewCounts(group);
-    if (counts.total === 0) return status === "pending";
-    const pendingCount = counts.total - counts.approved;
-    return status === "approved" ? counts.approved > 0 : pendingCount > 0;
-  }
+  // 主列表直接用服务端返回的混排项（已按 created_at 倒序合并 + 切好当前页），前端不再合并/排序/切片。
+  const unifiedList: UnifiedListItem[] = useMemo(
+    () =>
+      feedItems.map((it) =>
+        it.kind === "article"
+          ? { type: "article" as const, article: it.article as ArticleSummary }
+          : { type: "group" as const, group: it.group as ArticleGroupWithMembers },
+      ),
+    [feedItems],
+  );
 
-  // Tab counts: standalone (ungrouped) articles + groups, split by (derived) review status.
-  const reviewCounts = useMemo(() => {
-    let pending = 0;
-    let approved = 0;
-    for (const article of articles) {
-      if (groupedArticleIdSet.has(article.id)) continue;
-      if (article.review_status === "approved") approved += 1;
-      else pending += 1;
-    }
-    for (const group of groups) {
-      if (groupHasStatus(group, "pending")) pending += 1;
-      if (groupHasStatus(group, "approved")) approved += 1;
-    }
-    return { pending, approved };
-  }, [articles, groups, groupedArticleIdSet, articleById]);
+  const pagedUnifiedList = unifiedList; // 服务端已切页
+  const reviewCounts = feedCounts; // 角标用服务端计数
+  const totalArticlePages = Math.max(1, Math.ceil(feedCounts[reviewTab] / LIST_PAGE_SIZE));
 
-  const unifiedList = useMemo(() => {
-    const items: UnifiedListItem[] = [];
-    for (const article of articles) {
-      if (groupedArticleIdSet.has(article.id)) continue;
-      if (article.review_status !== reviewTab) continue;
-      items.push({ type: "article", article, sortTime: new Date(article.created_at).getTime() });
-    }
-    // 混合组双标签可见：当前标签有对应状态成员就纳入。
-    for (const group of groups) {
-      if (!groupHasStatus(group, reviewTab)) continue;
-      if (!query || group.name.toLowerCase().includes(query.toLowerCase()) || group.items.some((item) => articleById[item.article_id])) {
-        items.push({ type: "group", group, sortTime: new Date(group.created_at).getTime() });
-      }
-    }
-    return items.sort((a, b) => b.sortTime - a.sortTime);
-  }, [articles, groups, groupedArticleIdSet, query, reviewTab, articleById]);
-
-  const totalArticlePages = Math.max(1, Math.ceil(unifiedList.length / LIST_PAGE_SIZE));
-  const pagedUnifiedList = unifiedList.slice(articlePage * LIST_PAGE_SIZE, (articlePage + 1) * LIST_PAGE_SIZE);
-
-  useEffect(() => {
-    if (articlePage >= totalArticlePages) {
-      setArticlePage(totalArticlePages - 1);
-    }
-  }, [articlePage, totalArticlePages]);
-
-  async function refreshArticles(nextQuery = query, nextPage = articlePage) {
+  // 一页一查：入参 (query, page, tab)。翻页 / 切 tab / 改搜索都触发重取。
+  async function refreshArticles(
+    nextQuery = query,
+    nextPage = articlePage,
+    nextTab: ReviewStatus = reviewTab,
+  ) {
     try {
-      const allArticles: ArticleSummary[] = [];
-      for (let skip = 0; ; skip += ARTICLE_FETCH_LIMIT) {
-        const params = new URLSearchParams({ skip: String(skip), limit: String(ARTICLE_FETCH_LIMIT) });
-        if (nextQuery) params.set("q", nextQuery);
-        const batch = await listArticles(params);
-        allArticles.push(...batch);
-        if (batch.length < ARTICLE_FETCH_LIMIT) break;
+      const resp = await listArticleFeed({
+        review_status: nextTab,
+        q: nextQuery || undefined,
+        skip: nextPage * LIST_PAGE_SIZE,
+        limit: LIST_PAGE_SIZE,
+      });
+      // 删到当前页空且非首页：按 counts 夹紧页码回退再取，避免卡在空页。
+      if (resp.items.length === 0 && nextPage > 0) {
+        const lastPage = Math.max(0, Math.ceil(resp.counts[nextTab] / LIST_PAGE_SIZE) - 1);
+        if (lastPage < nextPage) {
+          await refreshArticles(nextQuery, lastPage, nextTab);
+          return;
+        }
       }
-      setArticles(allArticles);
+      setFeedItems(resp.items);
+      setFeedCounts(resp.counts);
       setArticlePage(nextPage);
     } catch {
       toast("加载文章列表失败", "error");
@@ -718,11 +709,7 @@ export function ContentWorkspace({
           });
       if (!saved) return null;
       applySavedArticle(saved, contentJson);
-      setArticles((prev) =>
-        prev.some((a) => a.id === saved.id)
-          ? prev.map((a) => (a.id === saved.id ? { ...a, ...saved, published_count: a.published_count } : a))
-          : [saved, ...prev],
-      );
+      void refreshArticles(); // 重取当前 feed 页，让新建/改动的文章反映到列表
       if (!quiet) toast("文章已保存", "success");
       return saved;
     } catch (error) {
@@ -751,9 +738,7 @@ export function ContentWorkspace({
         if (savedStateRef.current) {
           savedStateRef.current = { ...savedStateRef.current, cover_asset_id: saved.cover_asset_id };
         }
-        setArticles((prev) =>
-          prev.map((a) => (a.id === saved.id ? { ...a, cover_asset_id: saved.cover_asset_id, version: saved.version } : a)),
-        );
+        void refreshArticles(); // 封面变化反映到列表卡片
         toast("封面已上传并保存", "success");
       } else {
         toast("封面已上传，保存文章后生效", "success");
@@ -843,7 +828,7 @@ export function ContentWorkspace({
       const deletedId = draft.id;
       await deleteArticle(deletedId);
       resetDraft();
-      setArticles((prev) => prev.filter((a) => a.id !== deletedId));
+      void refreshArticles(); // 重取当前页（内部会在删到空页时回退页码）
       toast("文章已删除", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "删除失败", "error");
@@ -861,20 +846,20 @@ export function ContentWorkspace({
     }
     setLoading(true);
     try {
-      let group = editingGroupId
+      const group = editingGroupId
         ? await updateArticleGroup(editingGroupId, { name, version: groups.find((item) => item.id === editingGroupId)?.version })
         : await createArticleGroup({ name });
       if (!editingGroupId && selectedArticleIds.length > 0) {
         const payload: ArticleGroupUpdateItemsPayload = {
           items: selectedArticleIds.map((articleId, index) => ({ article_id: articleId, sort_order: index })),
         };
-        group = await updateArticleGroupItems(group.id, { ...payload, version: group.version });
+        await updateArticleGroupItems(group.id, { ...payload, version: group.version });
       }
       const isEditing = Boolean(editingGroupId);
       setGroupName("");
       setEditingGroupId(null);
       setSelectedArticleIds([]);
-      setGroups((prev) => (isEditing ? prev.map((g) => (g.id === group.id ? group : g)) : [group, ...prev]));
+      void manualRefresh(); // 新建/更新分组反映到 feed 列表 + 分组选择器
       toast(isEditing ? "分组已更新" : "分组已创建", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "保存分组失败", "error");
@@ -892,7 +877,7 @@ export function ContentWorkspace({
       setEditingGroupId(null);
       setGroupName("");
       setSelectedArticleIds([]);
-      setGroups((prev) => prev.filter((g) => g.id !== deletedGroupId));
+      void manualRefresh(); // 删除分组反映到 feed 列表 + 分组选择器
       toast("分组已删除", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "删除分组失败", "error");
@@ -914,8 +899,7 @@ export function ContentWorkspace({
   }
 
   async function searchArticles() {
-    setArticlePage(0);
-    await refreshArticles(query, 0);
+    await refreshArticles(query, 0, reviewTab);
   }
 
   async function addArticleToGroup() {
@@ -930,10 +914,10 @@ export function ContentWorkspace({
           { article_id: groupPickerArticle.id, sort_order: group.items.length },
         ],
       };
-      const updated = await updateArticleGroupItems(group.id, { ...payload, version: group.version });
+      await updateArticleGroupItems(group.id, { ...payload, version: group.version });
       setGroupPickerArticle(null);
       setGroupPickerSelectedId(null);
-      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+      void manualRefresh(); // 加入分组后：feed 列表与分组选择器都需刷新（含新版本号）
       toast("文章已加入分组", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "加入分组失败", "error");
@@ -950,8 +934,8 @@ export function ContentWorkspace({
           .filter((item) => item.article_id !== articleId)
           .map((item, index) => ({ article_id: item.article_id, sort_order: index })),
       };
-      const updated = await updateArticleGroupItems(group.id, { ...payload, version: group.version });
-      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+      await updateArticleGroupItems(group.id, { ...payload, version: group.version });
+      void manualRefresh(); // 移出分组后：feed 列表与分组选择器都需刷新（含新版本号）
       toast("文章已移出分组", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "移出分组失败", "error");
@@ -961,22 +945,25 @@ export function ContentWorkspace({
   }
 
   async function changeArticlePage(nextPage: number) {
-    setArticlePage(Math.min(Math.max(nextPage, 0), totalArticlePages - 1));
+    const clamped = Math.min(Math.max(nextPage, 0), totalArticlePages - 1);
+    await refreshArticles(query, clamped, reviewTab);
   }
 
   function applyReviewedArticle(updated: Article) {
-    setArticles((prev) =>
-      prev.map((a) => (a.id === updated.id ? { ...a, review_status: updated.review_status, version: updated.version } : a)),
-    );
     setSelectedArticle((prev) => (prev && prev.id === updated.id ? { ...prev, review_status: updated.review_status, version: updated.version } : prev));
     setDraft((prev) => (prev.id === updated.id ? { ...prev, version: updated.version } : prev));
+    void refreshArticles(); // 审核后该文可能离开当前 tab，重取当前 feed 页 + counts
   }
 
   function selectReviewTab(tab: ReviewStatus) {
-    setReviewTab(tab);
-    onReviewTabChange?.(tab);
-    setArticlePage(0);
     setSelectedArticleIds([]);
+    if (onReviewTabChange) {
+      // URL 驱动：navigate 后 reviewTabProp 变化 → 同步 effect 负责 setReviewTab + 重取，避免双取。
+      onReviewTabChange(tab);
+    } else {
+      setReviewTab(tab);
+      void refreshArticles(query, 0, tab);
+    }
   }
 
   async function approveOne(articleId: number) {
@@ -1009,11 +996,9 @@ export function ContentWorkspace({
     setReviewBusyId(-group.id);
     try {
       const updated = await approveGroup(group.id);
-      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
-      // Reflect approval on the member articles already loaded.
       const memberIds = new Set(updated.items.map((item) => item.article_id));
-      setArticles((prev) => prev.map((a) => (memberIds.has(a.id) ? { ...a, review_status: "approved" } : a)));
       setSelectedArticle((prev) => (prev && memberIds.has(prev.id) ? { ...prev, review_status: "approved" } : prev));
+      void manualRefresh(); // 组内成员审核状态变化 + counts：重取 feed 页 + groups
       toast("分组已全部通过审核", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "分组审核失败", "error");
@@ -1285,7 +1270,7 @@ export function ContentWorkspace({
               );
             })}
             {unifiedList.length === 0 ? (
-              <p className="emptyText">{refreshing && articles.length === 0 ? "加载中…" : "暂无文章"}</p>
+              <p className="emptyText">{refreshing && feedItems.length === 0 ? "加载中…" : "暂无文章"}</p>
             ) : null}
           </div>
 
