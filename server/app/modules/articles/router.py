@@ -41,6 +41,7 @@ from server.app.modules.articles import (
     delete_group,
     get_article,
     get_group,
+    list_article_feed,
     list_articles,
     list_groups,
     replace_group_items,
@@ -54,6 +55,7 @@ from server.app.modules.articles.models import Article, ArticleGroup, Asset
 from server.app.modules.articles.schemas import (
     ArticleCoverUpdate,
     ArticleCreate,
+    ArticleFeedResponse,
     ArticleGroupCreate,
     ArticleGroupItemsUpdate,
     ArticleGroupRead,
@@ -165,6 +167,29 @@ def read_articles(
         return []
     summaries = serialize_article_summaries(db, articles)
     return [summaries[a.id] for a in articles]
+
+
+@articles_router.get("/feed", response_model=ArticleFeedResponse)
+def read_article_feed(
+    q: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=100),
+    review_status: str = Query(default="pending"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ArticleFeedResponse:
+    # 静态段 /feed 必须在 /{article_id:int} 之前注册（本函数在 read_articles 与 get_article 之间），
+    # 否则 "feed" 会被当成 article_id。
+    if review_status not in VALID_REVIEW_STATUSES:
+        raise ClientError(f"Invalid review_status: {review_status}")
+    return list_article_feed(
+        db,
+        review_status=review_status,
+        query=q,
+        skip=skip,
+        limit=limit,
+        user_id=None if current_user.role == "admin" else current_user.id,
+    )
 
 
 @articles_router.post("", response_model=ArticleRead)
