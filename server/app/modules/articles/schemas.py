@@ -193,6 +193,31 @@ class ArticleGroupRead(BaseModel):
     updated_at: datetime
 
 
+# ── 内容 feed（服务端合并分页）──────────────────────────────────────────────
+
+
+class ArticleGroupReadWithMembers(ArticleGroupRead):
+    """feed 用：分组 + 内嵌组员摘要（按 sort_order 排），使展开/分发不依赖全量文章。"""
+
+    members: list[ArticleListRead] = Field(default_factory=list)
+
+
+class FeedCounts(BaseModel):
+    pending: int = 0
+    approved: int = 0
+
+
+class ArticleFeedItem(BaseModel):
+    kind: str  # "article" | "group"
+    article: ArticleListRead | None = None
+    group: ArticleGroupReadWithMembers | None = None
+
+
+class ArticleFeedResponse(BaseModel):
+    items: list[ArticleFeedItem]
+    counts: FeedCounts
+
+
 # ── 序列化函数（原 api/serializers.py）──────────────────────────────────────
 
 
