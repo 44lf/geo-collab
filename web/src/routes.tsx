@@ -54,8 +54,10 @@ function RequireAdmin({ children }: { children: ReactElement }) {
 }
 
 // 「内容管理」子页（未审核 / 已审核）由 URL 段驱动：/content/:status。
+// 同一组件也承接永久链接 /article/:articleId —— 复用同一元素让 React reconcile 而非重挂，
+// 保住编辑器草稿 / savedStateRef（详见设计 §3.2）。
 function ContentRoute() {
-  const { status } = useParams();
+  const { status, articleId } = useParams();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const reviewTab: ReviewStatus = status === "approved" ? "approved" : "pending";
@@ -64,6 +66,7 @@ function ContentRoute() {
       isActive
       reviewTab={reviewTab}
       isMobile={isMobile}
+      deepLinkArticleId={articleId ? Number(articleId) : undefined}
       onReviewTabChange={(t) => navigate(`/content/${t}`)}
     />
   );
@@ -104,6 +107,7 @@ export const router = createBrowserRouter([
       { path: "ai", element: <AiRoute /> },
       { path: "content", element: <ContentRoute /> },
       { path: "content/:status", element: <ContentRoute /> },
+      { path: "article/:articleId", element: <ContentRoute /> },
       { path: "prompts", element: <PromptsRoute /> },
       { path: "prompts/:scope", element: <PromptsRoute /> },
       { path: "image-library", element: <ImageLibraryWorkspace /> },

@@ -33,6 +33,7 @@ const BOTTOM_KEYS: NavKey[] = ["agents", "ai", "content", "tasks"];
 
 function pathToNavKey(pathname: string): NavKey {
   const seg = pathname.split("/").filter(Boolean)[0];
+  if (seg === "article") return "content"; // 永久链接 /article/:id 归入「内容管理」高亮
   return (KNOWN_NAV as string[]).includes(seg) ? (seg as NavKey) : "agents";
 }
 
