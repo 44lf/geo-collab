@@ -25,6 +25,7 @@ from server.app.modules.articles.service import (  # noqa: F401
     list_groups,
     replace_group_items,
     revoke_article_approval,
+    serialize_article_summaries,
     set_article_cover,
     sync_article_body_assets,
     update_article,

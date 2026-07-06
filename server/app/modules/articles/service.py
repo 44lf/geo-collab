@@ -36,8 +36,10 @@ from server.app.modules.articles.schemas import (
     ArticleGroupCreate,
     ArticleGroupItemsUpdate,
     ArticleGroupUpdate,
+    ArticleListRead,
     ArticleUpdate,
 )
+from server.app.modules.auto_review.models import AutoReviewDecision
 from server.app.modules.tasks.models import PublishRecord, PublishTask
 from server.app.shared.errors import ClientError, ConflictError
 
@@ -198,6 +200,58 @@ def list_articles(
 
     stmt = stmt.offset(skip).limit(limit)
     return list(db.execute(stmt).scalars().all())
+
+
+def serialize_article_summaries(db: Session, articles: list[Article]) -> dict[int, ArticleListRead]:
+    """批量把 Article 序列化成 ArticleListRead,按 id 建 map。
+
+    published_count = 该文成功且未删的 PublishRecord 数;
+    auto_review_score = 最新一条 AutoReviewDecision.score_total(仅 MCP 生文有)。
+
+    read_articles 列表端点与 feed 端点(散篇文章 + 分组组员)共用本函数,避免重复拼装逻辑。
+    """
+    if not articles:
+        return {}
+    article_ids = [a.id for a in articles]
+    count_rows = db.execute(
+        select(PublishRecord.article_id, func.count().label("cnt"))
+        .where(
+            PublishRecord.article_id.in_(article_ids),
+            PublishRecord.status == "succeeded",
+            PublishRecord.is_deleted == False,  # noqa: E712
+        )
+        .group_by(PublishRecord.article_id)
+    ).all()
+    count_map = {row.article_id: row.cnt for row in count_rows}
+    # id desc + setdefault → 每篇保留最新一条决策的分（只有 MCP loop/goal 经 submit_review_decision 写）
+    score_rows = db.execute(
+        select(AutoReviewDecision.article_id, AutoReviewDecision.score_total)
+        .where(AutoReviewDecision.article_id.in_(article_ids))
+        .order_by(AutoReviewDecision.id.desc())
+    ).all()
+    score_map: dict[int, int | None] = {}
+    for aid, score in score_rows:
+        score_map.setdefault(aid, score)
+    return {
+        a.id: ArticleListRead(
+            id=a.id,
+            title=a.title,
+            author=a.author,
+            cover_asset_id=a.cover_asset_id,
+            word_count=a.word_count,
+            status=a.status,
+            version=a.version,
+            review_status=a.review_status,
+            published_count=count_map.get(a.id, 0),
+            source_agent_name=a.source_agent_name,
+            source_template_name=a.source_template_name,
+            source_template_id=a.source_template_id,
+            auto_review_score=score_map.get(a.id),
+            created_at=a.created_at,
+            updated_at=a.updated_at,
+        )
+        for a in articles
+    }
 
 
 def create_article(db: Session, user_id: int, payload: ArticleCreate) -> Article:

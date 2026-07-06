@@ -22,7 +22,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -45,6 +45,7 @@ from server.app.modules.articles import (
     list_groups,
     replace_group_items,
     revoke_article_approval,
+    serialize_article_summaries,
     set_article_cover,
     update_article,
     update_group,
@@ -82,9 +83,7 @@ from server.app.modules.articles.uploader import (
     get_upload_manager,
 )
 from server.app.modules.audit.service import add_audit_entry
-from server.app.modules.auto_review.models import AutoReviewDecision
 from server.app.modules.system.models import User
-from server.app.modules.tasks.models import PublishRecord
 from server.app.shared.errors import ClientError, ConflictError, ValidationError
 
 articles_router = APIRouter()
@@ -164,47 +163,8 @@ def read_articles(
     )
     if not articles:
         return []
-    article_ids = [a.id for a in articles]
-    rows = db.execute(
-        select(PublishRecord.article_id, func.count().label("cnt"))
-        .where(
-            PublishRecord.article_id.in_(article_ids),
-            PublishRecord.status == "succeeded",
-            PublishRecord.is_deleted == False,  # noqa: E712
-        )
-        .group_by(PublishRecord.article_id)
-    ).all()
-    count_map = {row.article_id: row.cnt for row in rows}
-    # MCP 自评分：只有 loop/goal 经 submit_review_decision 写 auto_review_decisions，
-    # 故此分数天然只对 MCP 生成的文章出现（pipeline/方案不写 → 无分）。取每篇最新一条 score_total。
-    score_rows = db.execute(
-        select(AutoReviewDecision.article_id, AutoReviewDecision.score_total)
-        .where(AutoReviewDecision.article_id.in_(article_ids))
-        .order_by(AutoReviewDecision.id.desc())
-    ).all()
-    score_map: dict[int, int | None] = {}
-    for aid, score in score_rows:
-        score_map.setdefault(aid, score)  # id desc + setdefault → 每篇保留最新一条决策的分
-    return [
-        ArticleListRead(
-            id=a.id,
-            title=a.title,
-            author=a.author,
-            cover_asset_id=a.cover_asset_id,
-            word_count=a.word_count,
-            status=a.status,
-            version=a.version,
-            review_status=a.review_status,
-            published_count=count_map.get(a.id, 0),
-            source_agent_name=a.source_agent_name,
-            source_template_name=a.source_template_name,
-            source_template_id=a.source_template_id,
-            auto_review_score=score_map.get(a.id),
-            created_at=a.created_at,
-            updated_at=a.updated_at,
-        )
-        for a in articles
-    ]
+    summaries = serialize_article_summaries(db, articles)
+    return [summaries[a.id] for a in articles]
 
 
 @articles_router.post("", response_model=ArticleRead)
