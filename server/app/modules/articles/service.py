@@ -407,9 +407,9 @@ def list_article_feed(
     grp_by_id = {g.id: g for g in grp_objs}
     member_order: dict[int, list[int]] = {}
     all_member_ids: set[int] = set()
-    for g in grp_objs:
-        ordered = [it.article_id for it in sorted(g.items, key=lambda i: i.sort_order)]
-        member_order[g.id] = ordered
+    for grp_obj in grp_objs:
+        ordered = [it.article_id for it in sorted(grp_obj.items, key=lambda i: i.sort_order)]
+        member_order[grp_obj.id] = ordered
         all_member_ids.update(ordered)
     member_objs = (
         list(
