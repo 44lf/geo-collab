@@ -91,8 +91,10 @@
 
 - **散篇文章分支**:`Article.is_deleted == False` 且 `review_status == tab` 且
   **不属于任何未删分组**(对 `article_group_items` join `article_groups`(未删)做 `NOT EXISTS`);
-  q 命中:≥3 字复用现有 FTS `MATCH(...) AGAINST`(不可用时回退 LIKE,与 `list_articles` 一致),
-  <3 字走 LIKE。投影 `(kind='article', id, created_at)`。
+  q 命中:`title`/`author`/`plain_text` 的 **LIKE `%q%`** 子串匹配。投影 `(kind='article', id, created_at)`。
+  (**刻意用 LIKE 而非 FTS**:feed 可见顺序是 `created_at` 倒序、非相关性,前端本就丢弃 FTS 排名;
+  LIKE 子串对当前 UX 行为等价、无 ngram 索引依赖、易测。数据量级 1600 行 LIKE 扫描 <50ms。
+  FTS-in-feed 列为将来增强,见非目标。)
 - **分组分支**:`ArticleGroup.is_deleted == False` 且按 `groupHasStatus` 规则纳入当前 tab
   (approved = `EXISTS` 已审未删成员;pending = 无未删成员 **或** `EXISTS` 未审未删成员);
   q 命中组名 LIKE。投影 `(kind='group', id, created_at)`。
@@ -101,6 +103,9 @@
   分组出 `ArticleGroupReadWithMembers`(组员用同样的 summary 序列化)。
 - **计数**:对上面同一套过滤(含 q,文章与分组都受 q 约束——顺带修掉现状"分组计数不受 q"的不一致),
   分别数 pending / approved 的 `article + group` 合计,返回 `counts`。
+- **per-user 作用域**:非 admin 只看自己的文章 **和** 自己的分组(与现有 `read_articles` /
+  `read_groups` 一致——后者 `g.user_id == current_user.id` 过滤);admin 看全部。
+  feed 的文章分支、分组分支、计数**都要**带上这个 `user_id` 约束(admin 传 `None`)。
 
 ### ③ 前端改动(集中在 `ContentWorkspace.tsx` + `api/articles.ts`)
 
@@ -143,3 +148,4 @@
 - 不引入 cursor/keyset 分页(沿用现有 numbered page + offset;数据量级 offset 足够)。
 - 不动老 `/api/articles` 接口与 MCP 路径。
 - 不改搜索的相关性排序(现状可见顺序本就是 `created_at` 倒序,非相关性)。
+- **feed 搜索不接 FTS**:用 LIKE 子串(理由见 ②)。FTS-in-feed 若将来有性能/召回需求再做。
