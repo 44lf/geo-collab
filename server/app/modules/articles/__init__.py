@@ -21,6 +21,7 @@ from server.app.modules.articles.service import (  # noqa: F401
     ensure_asset_exists,
     get_article,
     get_group,
+    list_article_feed,
     list_articles,
     list_groups,
     replace_group_items,

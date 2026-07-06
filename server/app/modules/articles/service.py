@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import bindparam, func, select, text
+from sqlalchemy import and_, bindparam, func, literal, or_, select, text, union_all
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.orm import Session, lazyload, load_only, selectinload
 
@@ -33,11 +33,17 @@ from server.app.modules.articles.parser import (
 )
 from server.app.modules.articles.schemas import (
     ArticleCreate,
+    ArticleFeedItem,
+    ArticleFeedResponse,
     ArticleGroupCreate,
+    ArticleGroupItemRead,
     ArticleGroupItemsUpdate,
+    ArticleGroupReadWithMembers,
     ArticleGroupUpdate,
     ArticleListRead,
     ArticleUpdate,
+    FeedCounts,
+    ReviewSummary,
 )
 from server.app.modules.auto_review.models import AutoReviewDecision
 from server.app.modules.tasks.models import PublishRecord, PublishTask
@@ -252,6 +258,209 @@ def serialize_article_summaries(db: Session, articles: list[Article]) -> dict[in
         )
         for a in articles
     }
+
+
+# ── 内容 feed（服务端合并分页）──────────────────────────────────────────────
+#
+# 「内容管理」列表把散篇文章 + 分组按 created_at 混排、一起翻页。旧前端靠一次全量拉 1600+ 篇
+# 再客户端切页，随文章量线性变慢。list_article_feed 把合并 / 排序 / 切页下沉到 DB，一次只查一页。
+# 排序键 = created_at 倒序（对齐旧可见顺序，非 updated_at）+ 稳定次级键 (kind, entity_id)：
+#   created_at 是秒级 DATETIME，批量生文常同秒 → 纯 created_at 排序对 tie 不确定，OFFSET 分页下
+#   会让同秒文章跨页重复 / 漏项。加 (kind, entity_id) 凑成全序，翻页稳定。时间戳不同时次级键不参与，
+#   可见语义不变。
+
+
+def _feed_article_branch(review_status: str, user_id: int | None, like: str | None):
+    """散篇文章分支：未删、命中 tab、且不属于任何未删分组。投影 (kind, entity_id, sort_time)。"""
+    grouped_ids = (
+        select(ArticleGroupItem.article_id)
+        .join(ArticleGroup, ArticleGroup.id == ArticleGroupItem.group_id)
+        .where(ArticleGroup.is_deleted == False)  # noqa: E712
+    )
+    stmt = select(
+        literal("article").label("kind"),
+        Article.id.label("entity_id"),
+        Article.created_at.label("sort_time"),
+    ).where(
+        Article.is_deleted == False,  # noqa: E712
+        Article.review_status == review_status,
+        Article.id.notin_(grouped_ids),
+    )
+    if user_id is not None:
+        stmt = stmt.where(Article.user_id == user_id)
+    if like is not None:
+        stmt = stmt.where(
+            (Article.title.like(like))
+            | (Article.author.like(like))
+            | (Article.plain_text.like(like))
+        )
+    return stmt
+
+
+def _feed_group_match(review_status: str):
+    """分组是否纳入当前 tab 的 correlated 条件（关联外层 ArticleGroup.id）。
+
+    approved = 有已审未删成员；pending = 无未删成员（空组）或有非 approved 未删成员。
+    与前端旧 groupHasStatus 规则一致。
+    """
+    member = (
+        select(1)
+        .select_from(ArticleGroupItem)
+        .join(
+            Article,
+            and_(Article.id == ArticleGroupItem.article_id, Article.is_deleted == False),  # noqa: E712
+        )
+        .where(ArticleGroupItem.group_id == ArticleGroup.id)
+    )
+    if review_status == "approved":
+        return member.where(Article.review_status == "approved").exists()
+    has_any = member.exists()
+    has_pending = member.where(Article.review_status != "approved").exists()
+    return or_(~has_any, has_pending)
+
+
+def _feed_group_branch(review_status: str, user_id: int | None, like: str | None):
+    """分组分支：未删、按 tab 规则纳入。投影 (kind, entity_id, sort_time)。"""
+    stmt = select(
+        literal("group").label("kind"),
+        ArticleGroup.id.label("entity_id"),
+        ArticleGroup.created_at.label("sort_time"),
+    ).where(
+        ArticleGroup.is_deleted == False,  # noqa: E712
+        _feed_group_match(review_status),
+    )
+    if user_id is not None:
+        stmt = stmt.where(ArticleGroup.user_id == user_id)
+    if like is not None:
+        stmt = stmt.where(ArticleGroup.name.like(like))
+    return stmt
+
+
+def _feed_counts(db: Session, user_id: int | None, like: str | None) -> dict[str, int]:
+    """两 tab 各自 (散篇 + 分组) 合计，受同一 q 约束。"""
+    counts: dict[str, int] = {}
+    for status in ("pending", "approved"):
+        art_n = db.execute(
+            select(func.count()).select_from(_feed_article_branch(status, user_id, like).subquery())
+        ).scalar_one()
+        grp_n = db.execute(
+            select(func.count()).select_from(_feed_group_branch(status, user_id, like).subquery())
+        ).scalar_one()
+        counts[status] = int(art_n) + int(grp_n)
+    return counts
+
+
+def list_article_feed(
+    db: Session,
+    *,
+    review_status: str,
+    query: str | None = None,
+    skip: int = 0,
+    limit: int = 10,
+    user_id: int | None = None,
+) -> ArticleFeedResponse:
+    """合并分页：散篇文章 + 分组按 created_at 倒序混排，返回一页 + 两 tab 计数。
+
+    user_id=None 表示 admin（不按用户过滤）；非 None 只看该用户自己的文章和分组。
+    """
+    if review_status not in VALID_REVIEW_STATUSES:
+        raise ClientError(f"Invalid review_status: {review_status}")
+    like = f"%{query}%" if query else None
+
+    merged = union_all(
+        _feed_article_branch(review_status, user_id, like),
+        _feed_group_branch(review_status, user_id, like),
+    ).subquery()
+    page_rows = db.execute(
+        select(merged.c.kind, merged.c.entity_id)
+        .order_by(
+            merged.c.sort_time.desc(),
+            merged.c.kind.asc(),
+            merged.c.entity_id.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+    ).all()
+
+    article_ids = [r.entity_id for r in page_rows if r.kind == "article"]
+    group_ids = [r.entity_id for r in page_rows if r.kind == "group"]
+
+    art_objs = (
+        list(
+            db.execute(
+                select(Article)
+                .options(*_list_summary_load_options())
+                .where(Article.id.in_(article_ids))
+            )
+            .scalars()
+            .all()
+        )
+        if article_ids
+        else []
+    )
+
+    grp_objs = (
+        list(db.execute(select(ArticleGroup).where(ArticleGroup.id.in_(group_ids))).scalars().all())
+        if group_ids
+        else []
+    )
+    grp_by_id = {g.id: g for g in grp_objs}
+    member_order: dict[int, list[int]] = {}
+    all_member_ids: set[int] = set()
+    for g in grp_objs:
+        ordered = [it.article_id for it in sorted(g.items, key=lambda i: i.sort_order)]
+        member_order[g.id] = ordered
+        all_member_ids.update(ordered)
+    member_objs = (
+        list(
+            db.execute(
+                select(Article)
+                .options(*_list_summary_load_options())
+                .where(Article.id.in_(all_member_ids), Article.is_deleted == False)  # noqa: E712
+            )
+            .scalars()
+            .all()
+        )
+        if all_member_ids
+        else []
+    )
+
+    # 一次性序列化本页出现过的所有文章（散篇 + 组员），避免逐组 N 次拼装
+    summaries = serialize_article_summaries(db, art_objs + member_objs)
+
+    items: list[ArticleFeedItem] = []
+    for r in page_rows:
+        if r.kind == "article":
+            summary = summaries.get(r.entity_id)
+            if summary is not None:
+                items.append(ArticleFeedItem(kind="article", article=summary))
+        else:
+            g = grp_by_id.get(r.entity_id)
+            if g is None:
+                continue
+            members = [summaries[mid] for mid in member_order.get(g.id, []) if mid in summaries]
+            approved = sum(1 for m in members if m.review_status == "approved")
+            group_read = ArticleGroupReadWithMembers(
+                id=g.id,
+                name=g.name,
+                description=g.description,
+                version=g.version,
+                items=[
+                    ArticleGroupItemRead(article_id=it.article_id, sort_order=it.sort_order)
+                    for it in sorted(g.items, key=lambda i: i.sort_order)
+                ],
+                review_summary=ReviewSummary(total=len(members), approved=approved),
+                created_at=g.created_at,
+                updated_at=g.updated_at,
+                members=members,
+            )
+            items.append(ArticleFeedItem(kind="group", group=group_read))
+
+    counts = _feed_counts(db, user_id, like)
+    return ArticleFeedResponse(
+        items=items,
+        counts=FeedCounts(pending=counts["pending"], approved=counts["approved"]),
+    )
 
 
 def create_article(db: Session, user_id: int, payload: ArticleCreate) -> Article:
