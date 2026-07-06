@@ -3,7 +3,7 @@ import zlib
 
 import pytest
 
-from server.tests.utils import build_test_app
+from server.tests.utils import build_test_app, create_extra_user
 
 
 def _make_1x1_png(r: int, g: int, b: int) -> bytes:
@@ -183,5 +183,117 @@ def test_article_crud_list_delete_and_missing_asset(monkeypatch):
         delete_response = client.delete(f"/api/articles/{created['id']}")
         assert delete_response.status_code == 204
         assert client.get(f"/api/articles/{created['id']}").status_code == 404
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_non_owner_can_read_article_but_cannot_edit(monkeypatch):
+    """任意登录用户可只读任意单篇：非作者 GET → 200 且 can_edit=False。"""
+    test_app = build_test_app(monkeypatch)
+    owner = test_app.client  # 默认 admin，作为文章作者
+    try:
+        resp = owner.post(
+            "/api/articles",
+            json={"title": "分享文章", "content_json": {"type": "doc", "content": []}},
+        )
+        assert resp.status_code == 200, resp.text
+        article_id = resp.json()["id"]
+
+        _uid, reader = create_extra_user(test_app, "reader_op", role="operator")
+        got = reader.get(f"/api/articles/{article_id}")
+        assert got.status_code == 200, got.text
+        body = got.json()
+        assert body["id"] == article_id
+        assert body["title"] == "分享文章"
+        assert body["can_edit"] is False
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_owner_and_admin_read_can_edit_true(monkeypatch):
+    """作者本人读自己文章 can_edit=True；admin 读他人文章 can_edit=True。"""
+    test_app = build_test_app(monkeypatch)
+    admin = test_app.client
+    try:
+        _uid, op = create_extra_user(test_app, "author_op", role="operator")
+        resp = op.post(
+            "/api/articles",
+            json={"title": "operator 的文章", "content_json": {"type": "doc", "content": []}},
+        )
+        assert resp.status_code == 200, resp.text
+        article_id = resp.json()["id"]
+
+        # 作者本人读 → can_edit True
+        own = op.get(f"/api/articles/{article_id}")
+        assert own.status_code == 200
+        assert own.json()["can_edit"] is True
+
+        # admin 读他人文章 → 200 + can_edit True（admin 例外）
+        as_admin = admin.get(f"/api/articles/{article_id}")
+        assert as_admin.status_code == 200
+        assert as_admin.json()["can_edit"] is True
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_non_owner_write_paths_still_404(monkeypatch):
+    """写隔离不变：非作者 PUT / DELETE / cover / approve 仍 404。"""
+    test_app = build_test_app(monkeypatch)
+    owner = test_app.client
+    try:
+        resp = owner.post(
+            "/api/articles",
+            json={"title": "只读", "content_json": {"type": "doc", "content": []}},
+        )
+        article_id = resp.json()["id"]
+        _uid, other = create_extra_user(test_app, "intruder_op", role="operator")
+
+        assert (
+            other.put(f"/api/articles/{article_id}", json={"title": "改", "version": 1}).status_code
+            == 404
+        )
+        assert (
+            other.post(
+                f"/api/articles/{article_id}/cover", json={"cover_asset_id": None, "version": 1}
+            ).status_code
+            == 404
+        )
+        assert other.post(f"/api/articles/{article_id}/approve").status_code == 404
+        assert other.delete(f"/api/articles/{article_id}").status_code == 404
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_read_missing_article_404(monkeypatch):
+    """缺失文章仍 404（放开跨用户读不影响不存在的 id）。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        _uid, op = create_extra_user(test_app, "reader404_op", role="operator")
+        assert op.get("/api/articles/99999999").status_code == 404
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_list_stays_private_after_read_relax(monkeypatch):
+    """列表仍私有：非作者的 GET /api/articles 看不到他人文章。"""
+    test_app = build_test_app(monkeypatch)
+    owner = test_app.client
+    try:
+        resp = owner.post(
+            "/api/articles",
+            json={"title": "私有列表项", "content_json": {"type": "doc", "content": []}},
+        )
+        owner_article_id = resp.json()["id"]
+        _uid, op = create_extra_user(test_app, "listprivacy_op", role="operator")
+
+        listing = op.get("/api/articles")
+        assert listing.status_code == 200
+        ids = [row["id"] for row in listing.json()]
+        assert owner_article_id not in ids
     finally:
         test_app.cleanup()

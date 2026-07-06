@@ -138,6 +138,7 @@ class ArticleRead(BaseModel):
     source_agent_name: str | None = None
     source_template_name: str | None = None
     source_template_id: int | None = None
+    can_edit: bool = True  # 属主/admin 为 True；他人只读分享时 False（驱动前端只读降级）
     created_at: datetime
     updated_at: datetime
 
@@ -196,7 +197,9 @@ class ArticleGroupRead(BaseModel):
 # ── 序列化函数（原 api/serializers.py）──────────────────────────────────────
 
 
-def to_article_read(article: "Article", published_count: int = 0) -> ArticleRead:
+def to_article_read(
+    article: "Article", published_count: int = 0, can_edit: bool = True
+) -> ArticleRead:
     from server.app.modules.articles.parser import loads_content_json  # 避免循环 import
 
     body_assets = sorted(article.body_assets, key=lambda item: item.position)
@@ -230,6 +233,7 @@ def to_article_read(article: "Article", published_count: int = 0) -> ArticleRead
         source_agent_name=article.source_agent_name,
         source_template_name=article.source_template_name,
         source_template_id=article.source_template_id,
+        can_edit=can_edit,
     )
 
 
