@@ -237,9 +237,12 @@ def read_article(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ArticleRead:
-    article = _verify_article_ownership(get_article(db, article_id), current_user)
+    article = get_article(db, article_id)
+    if article is None:
+        raise HTTPException(status_code=404, detail="文章不存在")
     _clear_ai_lock_if_expired(db, article)
-    return to_article_read(article)
+    can_edit = (article.user_id == current_user.id) or (current_user.role == "admin")
+    return to_article_read(article, can_edit=can_edit)
 
 
 @articles_router.put("/{article_id}", response_model=ArticleRead)

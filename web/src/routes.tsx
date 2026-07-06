@@ -54,16 +54,25 @@ function RequireAdmin({ children }: { children: ReactElement }) {
 }
 
 // 「内容管理」子页（未审核 / 已审核）由 URL 段驱动：/content/:status。
+// 同一组件也承接永久链接 /article/:articleId —— 复用同一元素让 React reconcile 而非重挂，
+// 保住编辑器草稿 / savedStateRef（详见设计 §3.2）。
 function ContentRoute() {
-  const { status } = useParams();
+  const { status, articleId } = useParams();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const reviewTab: ReviewStatus = status === "approved" ? "approved" : "pending";
+  // 永久链接非法（非数字 / 0 / 负 / 非整数）→ 回落内容管理，避免静默空白。
+  // 合法但不存在的 id 交给 ContentWorkspace 内 getArticle 走 404 toast。
+  const parsedId = articleId !== undefined ? Number(articleId) : undefined;
+  if (articleId !== undefined && (parsedId === undefined || !Number.isInteger(parsedId) || parsedId <= 0)) {
+    return <Navigate to="/content" replace />;
+  }
   return (
     <ContentWorkspace
       isActive
       reviewTab={reviewTab}
       isMobile={isMobile}
+      deepLinkArticleId={parsedId}
       onReviewTabChange={(t) => navigate(`/content/${t}`)}
     />
   );
@@ -104,6 +113,7 @@ export const router = createBrowserRouter([
       { path: "ai", element: <AiRoute /> },
       { path: "content", element: <ContentRoute /> },
       { path: "content/:status", element: <ContentRoute /> },
+      { path: "article/:articleId", element: <ContentRoute /> },
       { path: "prompts", element: <PromptsRoute /> },
       { path: "prompts/:scope", element: <PromptsRoute /> },
       { path: "image-library", element: <ImageLibraryWorkspace /> },
