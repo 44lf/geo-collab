@@ -1340,7 +1340,7 @@ export function ContentWorkspace({
                               onChange={() => toggleSelectedArticle(article.id)}
                             />
                           </label>
-                          <button type="button" onClick={() => void loadArticle(article)}>
+                          <button type="button" onClick={() => void loadArticleGuarded(() => loadArticle(article))}>
                             <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                               <strong>{article.title}</strong>
                               <span
