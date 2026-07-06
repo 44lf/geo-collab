@@ -190,7 +190,7 @@ const CustomTextStyle = TextStyle.extend({
   },
 });
 
-function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
+function ImageResizeView({ node, updateAttributes, selected, editor }: NodeViewProps) {
   const attrs = node.attrs as {
     src: string;
     alt: string;
@@ -267,7 +267,7 @@ function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
           onLoad={() => setImgError(false)}
         />
       )}
-      {selected && <div className="imgResizeHandle" onMouseDown={startResize} />}
+      {selected && editor.isEditable && <div className="imgResizeHandle" onMouseDown={startResize} />}
     </NodeViewWrapper>
   );
 }
@@ -396,7 +396,8 @@ export function ContentWorkspace({
       transformPastedHTML(html) {
         return html.replace(/ style="[^"]*"/gi, "");
       },
-      handlePaste(_, event) {
+      handlePaste(view, event) {
+        if (!view.editable) return false;
         const items = Array.from(event.clipboardData?.items ?? []);
         const imageItem = items.find((item) => item.type.startsWith("image/"));
         if (!imageItem) return false;
@@ -413,6 +414,8 @@ export function ContentWorkspace({
   const latestEditor = useRef(editor);
   latestEditor.current = editor;
   const savedStateRef = useRef<{ title: string; author: string; cover_asset_id: number | string | null; bodyState: string } | null>(null);
+  // 只读判定：无选中(新建草稿)/属主/admin 皆可编辑；仅他人分享时 can_edit===false → 只读
+  const canEdit = selectedArticle?.can_edit !== false;
 
   // 当前编辑器是否有未保存改动（读 ref，恒取最新值；空依赖即稳定）。
   const isDirty = useCallback(() => {
@@ -473,6 +476,11 @@ export function ContentWorkspace({
     void loadArticleGuarded(() => loadArticleById(deepLinkArticleId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, deepLinkArticleId]);
+
+  // 只读降级基线：非作者打开分享文章时禁用编辑器 DOM 输入(programmatic 写入另由下方逐项屏蔽)。
+  useEffect(() => {
+    editor?.setEditable(canEdit);
+  }, [editor, canEdit]);
 
   const groupedArticleIdSet = useMemo(() => {
     const ids = new Set<number>();
@@ -1125,18 +1133,22 @@ export function ContentWorkspace({
             <RefreshCw size={16} className={refreshing ? "spin" : ""} />
             刷新
           </button>
-          <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
-            <Trash2 size={16} />
-            删除
-          </button>
-          <button className="primaryButton" disabled={loading || imageUploading > 0} type="button" onClick={() => void saveArticle()}>
-            <Save size={16} />
-            保存
-          </button>
-          <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (isDirty()) { setConfirmUnsavedNew(true); } else { resetDraft(); } }}>
-            <Plus size={16} />
-            新建
-          </button>
+          {canEdit && (
+            <>
+              <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
+                <Trash2 size={16} />
+                删除
+              </button>
+              <button className="primaryButton" disabled={loading || imageUploading > 0} type="button" onClick={() => void saveArticle()}>
+                <Save size={16} />
+                保存
+              </button>
+              <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (isDirty()) { setConfirmUnsavedNew(true); } else { resetDraft(); } }}>
+                <Plus size={16} />
+                新建
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -1382,18 +1394,23 @@ export function ContentWorkspace({
         </aside>
 
         <section className="editorPane">
+          {selectedArticle && !canEdit && (
+            <div style={{ margin: "0 0 12px", padding: "8px 12px", borderRadius: 8, background: "#fff7ed", color: "#9a3412", fontSize: 13, border: "1px solid #fed7aa" }}>
+              你正在查看他人分享的文章，仅可阅读，无法编辑或审核。
+            </div>
+          )}
           <div className="formRow split">
             <label>
               标题
-              <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+              <input value={draft.title} disabled={!canEdit} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
             </label>
             <label>
               作者
-              <input value={draft.author} onChange={(event) => setDraft({ ...draft, author: event.target.value })} />
+              <input value={draft.author} disabled={!canEdit} onChange={(event) => setDraft({ ...draft, author: event.target.value })} />
             </label>
             <label>
               状态
-              <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+              <select value={draft.status} disabled={!canEdit} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
                 <option value="draft">草稿</option>
                 <option value="ready">待发布</option>
                 <option value="archived">归档</option>
@@ -1406,15 +1423,17 @@ export function ContentWorkspace({
               <div className="coverPreview">
                 {(pendingCoverUrl ?? assetSrc(draft.cover_asset_id)) ? <img alt="封面" src={pendingCoverUrl ?? assetThumbSrc(draft.cover_asset_id) ?? assetSrc(draft.cover_asset_id)!} /> : <span>封面</span>}
               </div>
-              <label className="fileButton">
-                <Upload size={16} />
-                上传封面
-                <input accept="image/*" type="file" onChange={(event) => { void handleCoverUpload(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} />
-              </label>
+              {canEdit && (
+                <label className="fileButton">
+                  <Upload size={16} />
+                  上传封面
+                  <input accept="image/*" type="file" onChange={(event) => { void handleCoverUpload(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} />
+                </label>
+              )}
               {selectedArticle ? <span className="metaText">正文图片 {selectedArticle.body_assets.length} 张</span> : null}
             </section>
 
-            {selectedArticle ? (
+            {selectedArticle && canEdit ? (
               <div className={`reviewStrip ${currentReviewStatus === "approved" ? "approved" : "pending"}`}>
                 <div className="reviewStripLeft">
                   <ShieldCheck size={18} />
@@ -1456,16 +1475,18 @@ export function ContentWorkspace({
             ) : null}
           </div>
 
-          <EditorToolbar
-            editor={editor}
-            onImageUpload={handleBodyImageUpload}
-            imageSelected={!!editor?.isActive("image")}
-            onSaveImage={() => {
-              const src = editor?.getAttributes("image").src as string | undefined;
-              if (src) setSaveImageSrc(src);
-              else toast("请先选中正文中的图片", "error");
-            }}
-          />
+          {canEdit && (
+            <EditorToolbar
+              editor={editor}
+              onImageUpload={handleBodyImageUpload}
+              imageSelected={!!editor?.isActive("image")}
+              onSaveImage={() => {
+                const src = editor?.getAttributes("image").src as string | undefined;
+                if (src) setSaveImageSrc(src);
+                else toast("请先选中正文中的图片", "error");
+              }}
+            />
+          )}
           <div className="editorWrap paper-scope">
             <EditorContent editor={editor} />
           </div>
