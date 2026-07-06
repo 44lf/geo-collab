@@ -249,6 +249,24 @@ export type ArticleGroup = {
   updated_at: string;
 };
 
+/** feed 端点返回的分组：内嵌组员摘要，使展开/分发不依赖全量文章列表 */
+export type ArticleGroupWithMembers = ArticleGroup & {
+  members: ArticleSummary[];
+};
+
+/** 内容 feed 的一个混排项：article 或 group 二选一（另一个为 null） */
+export type ArticleFeedItem = {
+  kind: "article" | "group";
+  article: ArticleSummary | null;
+  group: ArticleGroupWithMembers | null;
+};
+
+/** GET /api/articles/feed 响应：已合并/排序/切页的一页 + 两 tab 计数 */
+export type ArticleFeedResponse = {
+  items: ArticleFeedItem[];
+  counts: { pending: number; approved: number };
+};
+
 export type Account = {
   id: number;
   platform_code: string;

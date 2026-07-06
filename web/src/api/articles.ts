@@ -2,6 +2,7 @@ import { api } from "./core";
 import type {
   Article,
   ArticleCreatePayload,
+  ArticleFeedResponse,
   ArticleGroup,
   ArticleGroupUpdateItemsPayload,
   ArticleSummary,
@@ -11,6 +12,22 @@ import type {
 export function listArticles(params?: URLSearchParams): Promise<ArticleSummary[]> {
   const query = params?.toString();
   return api<ArticleSummary[]>(query ? `/api/articles?${query}` : "/api/articles");
+}
+
+/** 内容列表服务端合并分页：一次只查一页（散篇文章 + 分组混排）+ 两 tab 计数。 */
+export function listArticleFeed(params: {
+  review_status: "pending" | "approved";
+  q?: string;
+  skip: number;
+  limit: number;
+}): Promise<ArticleFeedResponse> {
+  const sp = new URLSearchParams({
+    review_status: params.review_status,
+    skip: String(params.skip),
+    limit: String(params.limit),
+  });
+  if (params.q) sp.set("q", params.q);
+  return api<ArticleFeedResponse>(`/api/articles/feed?${sp.toString()}`);
 }
 
 export function getArticle(articleId: number): Promise<Article> {
