@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 仓库里还 vendored 一个独立的 Node 子服务 `services/dailyhot-api/`（第三方 [DailyHotApi](https://github.com/imsyy/DailyHotApi)，热榜聚合，端口 6688）——后端 `hot_lists` 模块只是它的反向代理。这是仓库内**唯一**的非 Python 子服务，本地默认不跑、CI 不测；详见下文「热榜」与 `hot_lists/` 模块。
 
-**设计文档 / 在途计划**：模块级 rationale 见各专题文档（`AI_GENERATION.md`、`DEPLOYMENT.md`）；feature 级计划 / 设计稿按日期命名落在 `docs/plans/YYYY-MM-DD-*.md` 与 `docs/specs/*-design.md`（superpowers 流程产出在 `docs/superpowers/`）。改某块前先 grep `docs/` 找有没有现成计划，避免与在途方案打架。`openspec/` 是新引入的变更提案工作流（`changes/` + `specs/`），目前主要走 archive。
+**设计文档 / 在途计划**：模块级 rationale 见各专题文档（`docs/AI_GENERATION.md`、`docs/DEPLOYMENT.md`）；feature 级计划 / 设计稿按日期命名落在 `docs/plans/YYYY-MM-DD-*.md` 与 `docs/specs/*-design.md`（superpowers 流程产出在 `docs/superpowers/`）。改某块前先 grep `docs/` 找有没有现成计划，避免与在途方案打架。`openspec/` 是新引入的变更提案工作流（`changes/` + `specs/`），目前主要走 archive。
 
 ## Dev Commands
 
@@ -287,7 +287,7 @@ freepublish），封面自动压 JPG≤64KB、正文图压 ≤1MB 转传换微�
 
 ## AI 生文模块
 
-设计 rationale、路线图、LangGraph 图见 `AI_GENERATION.md`。改这块代码的运营规则：
+设计 rationale、路线图、LangGraph 图见 `docs/AI_GENERATION.md`。改这块代码的运营规则：
 
 - **所有模型调用走 LiteLLM**。不要 import `anthropic` / `openai` SDK。
 - 两套模型配置（都走 LiteLLM）。**模型候选现以 DB 注册表 `ai_models/`（前端「AI 模型管理」）为主**：解析器优先用本 scope 的 enabled 行（前端传的 `selected` 非空按 model 匹配、空则取 `is_default` 行），无任何 DB 行才回落下面的 env 配置；密钥永不入库（行只存 `api_key_env`）。

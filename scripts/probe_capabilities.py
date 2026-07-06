@@ -19,9 +19,9 @@
 按解析出的 (model, base_url) 去重，每个标注来源。
 
 用法：
-  本地：   python probe_capabilities.py
-  服务器： docker compose exec app python probe_capabilities.py
-  单模型： python probe_capabilities.py --model moonshot/kimi-k2-0711-preview
+  本地：   python scripts/probe_capabilities.py
+  服务器： docker compose exec app python scripts/probe_capabilities.py
+  单模型： python scripts/probe_capabilities.py --model moonshot/kimi-k2-0711-preview
   多来源默认全测；结果推飞书（GEO_FEISHU_WEBHOOK_URL），未配则回落打印到控制台。
 """
 

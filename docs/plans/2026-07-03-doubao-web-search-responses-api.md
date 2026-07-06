@@ -1,6 +1,6 @@
 # 豆包生文联网改走 Responses API（定稿 · 已双路调研）
 
-> 背景：豆包联网在 chat/completions + `web_search_options` 下空转（litellm 对 volcengine 不支持该参数、被 drop_params 丢）。实测 Ark Responses API + `tools:[{type:web_search}]` 在现有 ep- 接入点直接通。原型见根目录 `probe_capabilities.py:_probe_doubao_responses`；团队记忆 `bug-doubao-websearch-silently-dropped`。
+> 背景：豆包联网在 chat/completions + `web_search_options` 下空转（litellm 对 volcengine 不支持该参数、被 drop_params 丢）。实测 Ark Responses API + `tools:[{type:web_search}]` 在现有 ep- 接入点直接通。原型见 `scripts/probe_capabilities.py:_probe_doubao_responses`；团队记忆 `bug-doubao-websearch-silently-dropped`。
 > 本稿已由两个 subagent 调研落定所有假设（内部契约/测试/配置 + 外部 Ark 契约/litellm 支持度）。
 
 ## 目标
@@ -26,7 +26,7 @@ pipeline / 方案运行里走豆包（volcengine/doubao）的生文，`web_searc
    - 组 kwargs：`model`（**保留 `volcengine/` 前缀**，litellm 路由要）、`input`、`instructions`、`tools=[{"type":"web_search"}]`、`max_output_tokens=base_kwargs["max_tokens"]`、透传 `api_key/api_base/timeout`；`deep_thinking` → `extra_body={"thinking":{"type":"enabled"}}`（Ark 原生思考，**不是** `reasoning:{effort}`）。
    - `resp = responses_call(**kwargs)` → `return _wrap_responses_as_chat(resp)`。
 
-3. **新增 `_wrap_responses_as_chat(resp) -> ChatLike`**：`resp.model_dump()` 转 dict 后按下表解析（复用 `probe_capabilities.py:_parse_responses` 的解析思路），产出暴露以下字段的轻量对象（SimpleNamespace/小 dataclass 即可）：
+3. **新增 `_wrap_responses_as_chat(resp) -> ChatLike`**：`resp.model_dump()` 转 dict 后按下表解析（复用 `scripts/probe_capabilities.py:_parse_responses` 的解析思路），产出暴露以下字段的轻量对象（SimpleNamespace/小 dataclass 即可）：
 
    | chat 同构字段 | Responses 源 |
    |---|---|
@@ -68,7 +68,7 @@ def _via_responses_enabled() -> bool:
 ## 非目标
 
 - 不改深度思考路径（已真生效）。不改其它 provider 联网。不做 Bot 接入点、不接 Brave（均已排除）。
-- 不动 `probe_capabilities.py`（原型已在）。生产落定后可回头把探针的 doubao 分支也切到 `litellm.responses` 对齐，非本次范围。
+- 不动 `scripts/probe_capabilities.py`（原型已在）。生产落定后可回头把探针的 doubao 分支也切到 `litellm.responses` 对齐，非本次范围。
 
 ## 并发 / 超时 / 延迟
 

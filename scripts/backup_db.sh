@@ -3,7 +3,7 @@
 #
 # 用法：
 #   bash scripts/backup_db.sh                  # 手动执行
-#   crontab 中调度：见仓库根 DEPLOYMENT.md §7.2
+#   crontab 中调度：见 docs/DEPLOYMENT.md §7.2
 #
 # 行为：
 #   1. 用 mysqldump 把 geo_collab 库一致性快照导出（不锁表）

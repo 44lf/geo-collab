@@ -203,7 +203,7 @@ import server.app.modules.tasks.drivers.myplatform  # noqa: F401
 - 生文跑在 **API server 后台线程**（无独立 worker）：`create_app()` 注入 `bg_session_factory=SessionLocal`，路由 spawn `Thread`。
 - Plan 阶段**顺序执行**，是唯一可读写 skill 共享文件（`article-plan.md`/`companion-pool.md`）的阶段；写作 agent 并发（`max_workers=4`），不碰共享文件。
 - 生成的文章经 `create_article()` 落 `articles` 表；`client_request_id` 做幂等；批次元数据在 `generation_sessions`。
-- 设计 rationale / LangGraph 图见 `AI_GENERATION.md`。
+- 设计 rationale / LangGraph 图见 `docs/AI_GENERATION.md`。
 
 ---
 
