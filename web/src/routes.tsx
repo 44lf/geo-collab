@@ -61,12 +61,18 @@ function ContentRoute() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const reviewTab: ReviewStatus = status === "approved" ? "approved" : "pending";
+  // 永久链接非法（非数字 / 0 / 负 / 非整数）→ 回落内容管理，避免静默空白。
+  // 合法但不存在的 id 交给 ContentWorkspace 内 getArticle 走 404 toast。
+  const parsedId = articleId !== undefined ? Number(articleId) : undefined;
+  if (articleId !== undefined && (parsedId === undefined || !Number.isInteger(parsedId) || parsedId <= 0)) {
+    return <Navigate to="/content" replace />;
+  }
   return (
     <ContentWorkspace
       isActive
       reviewTab={reviewTab}
       isMobile={isMobile}
-      deepLinkArticleId={articleId ? Number(articleId) : undefined}
+      deepLinkArticleId={parsedId}
       onReviewTabChange={(t) => navigate(`/content/${t}`)}
     />
   );
