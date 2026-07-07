@@ -25,9 +25,7 @@ def probe_duration(audio_path: str) -> float:
     ]
     proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode != 0:
-        raise ClientError(
-            f"ffprobe 失败: {proc.stderr.decode('utf-8', 'ignore')[:300]}"
-        )
+        raise ClientError(f"ffprobe 失败: {proc.stderr.decode('utf-8', 'ignore')[:300]}")
     data = json.loads(proc.stdout or b"{}")
     return float(data.get("format", {}).get("duration") or 0.0)
 
@@ -42,12 +40,7 @@ def wrap_subtitle(text: str, max_chars: int = 14) -> str:
 
 def _escape_drawtext(text: str) -> str:
     # drawtext text 需转义特殊字符
-    return (
-        text.replace("\\", "\\\\")
-        .replace(":", "\\:")
-        .replace("'", "'")
-        .replace("%", "\\%")
-    )
+    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "'").replace("%", "\\%")
 
 
 def build_shot_command(
@@ -123,6 +116,4 @@ def run(cmd: list[str]) -> None:
     proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode != 0:
         stderr = getattr(proc, "stderr", b"") or b""
-        raise ClientError(
-            f"ffmpeg 失败: {stderr.decode('utf-8', 'ignore')[:500]}"
-        )
+        raise ClientError(f"ffmpeg 失败: {stderr.decode('utf-8', 'ignore')[:500]}")
