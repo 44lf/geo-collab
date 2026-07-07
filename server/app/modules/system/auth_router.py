@@ -7,8 +7,6 @@
 审计：登录、登出、改密、建/改用户、重置密码等写操作落 add_audit_entry；me、users 列表等读操作不落。
 """
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -19,6 +17,7 @@ from server.app.core.security import (
     create_access_token,
     invalidate_user_cache,
     require_admin,
+    set_access_cookie,
     verify_token,
 )
 from server.app.core.time import utcnow
@@ -114,16 +113,7 @@ def login(
 
     user.last_login_at = utcnow()
     token = create_access_token(user.id, user.role)
-    max_age = int(os.environ.get("GEO_JWT_EXPIRE_HOURS", "8")) * 3600
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=True,
-        samesite="lax",
-        path="/",
-        max_age=max_age,
-        secure=get_settings().secure_cookie,
-    )
+    set_access_cookie(response, token)
     add_audit_entry(
         db,
         user=user,
