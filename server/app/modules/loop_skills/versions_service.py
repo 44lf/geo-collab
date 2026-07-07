@@ -7,7 +7,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from server.app.core.time import utcnow
@@ -18,7 +18,7 @@ from server.app.modules.loop_skills.service import (
     build_bundle,
     build_bundle_from_file_map,  # noqa: F401  (Task 4 用)
 )
-from server.app.shared.errors import ValidationError
+from server.app.shared.errors import ConflictError, ValidationError
 
 # 上传 zip 压缩后体积上限:几个 md 几十 KB 足够,2MB 防滥用
 LOOP_SKILL_MAX_ZIP_BYTES = 2 * 1024 * 1024
@@ -226,3 +226,73 @@ def upload_version(
     session.add(row)
     session.flush()  # 拿到 row.id;commit 交给 get_db / add_audit_entry
     return _to_meta(row)
+
+
+def enable_version(session: Session, version_id: int) -> None:
+    """启用某版本(=回退)。单例不变式靠 MySQL GET_LOCK 应用级锁保证。
+
+    ⚠️ 连接亲和(A,评审必修):GET_LOCK 是**连接级**锁,而 `Session.commit()` 会把连接
+    归还池、下一条语句可能换连接 → 若在 session 上 commit 再 RELEASE_LOCK,释放会落到
+    **别的连接**、原锁泄漏在池里(后续任何 enable 都 10s→409)。因此显式独占一条 `Connection`,
+    GET_LOCK → 存在性检查 → 两条 UPDATE → commit → RELEASE_LOCK **全在同一 conn**;
+    `Connection.commit()` 不归还物理连接(与 `Session.commit()` 的关键区别),故安全。
+    传入的 `session` 本函数不用于写,只供 router 事后 add_audit_entry。
+    """
+    with session.get_bind().connect() as conn:  # type: ignore[union-attr]
+        got = conn.execute(text("SELECT GET_LOCK(:k, 10)"), {"k": _ENABLE_LOCK}).scalar()
+        if got != 1:
+            raise ConflictError("启用操作繁忙,请稍后重试")
+        try:
+            row = conn.execute(
+                select(LoopSkillBundleVersion.id, LoopSkillBundleVersion.is_deleted).where(
+                    LoopSkillBundleVersion.id == version_id
+                )
+            ).first()
+            if row is None or row.is_deleted:
+                raise ValidationError(f"版本不存在或已删除: {version_id}")
+            # 从零启用态并发也安全:两者都在锁内串行,后者 UPDATE 前能看到前者已提交的启用行
+            conn.execute(
+                update(LoopSkillBundleVersion)
+                .where(LoopSkillBundleVersion.is_enabled.is_(True))
+                .values(is_enabled=False)
+            )
+            conn.execute(
+                update(LoopSkillBundleVersion)
+                .where(LoopSkillBundleVersion.id == version_id)
+                .values(is_enabled=True)
+            )
+            conn.commit()  # 同一 conn 上提交,锁仍持有;下一个 GET_LOCK 持有者看到最新状态
+        finally:
+            conn.execute(text("SELECT RELEASE_LOCK(:k)"), {"k": _ENABLE_LOCK})
+    # with 退出 → conn.close() 兜底释放该连接上的所有命名锁(双保险)
+
+
+def soft_delete_version(session: Session, version_id: int) -> None:
+    """逻辑删除。拒删当前启用版(与 enable 同锁,消 check-then-act 竞态)。
+
+    同 enable:GET_LOCK/updates/commit/RELEASE 全钉在独占的一条 Connection 上(见上)。
+    """
+    with session.get_bind().connect() as conn:  # type: ignore[union-attr]
+        got = conn.execute(text("SELECT GET_LOCK(:k, 10)"), {"k": _ENABLE_LOCK}).scalar()
+        if got != 1:
+            raise ConflictError("操作繁忙,请稍后重试")
+        try:
+            row = conn.execute(
+                select(
+                    LoopSkillBundleVersion.id,
+                    LoopSkillBundleVersion.is_deleted,
+                    LoopSkillBundleVersion.is_enabled,
+                ).where(LoopSkillBundleVersion.id == version_id)
+            ).first()
+            if row is None or row.is_deleted:
+                raise ValidationError(f"版本不存在或已删除: {version_id}")
+            if row.is_enabled:
+                raise ConflictError("不能删除当前启用版,请先启用别的版本再删")
+            conn.execute(
+                update(LoopSkillBundleVersion)
+                .where(LoopSkillBundleVersion.id == version_id)
+                .values(is_deleted=True)
+            )
+            conn.commit()
+        finally:
+            conn.execute(text("SELECT RELEASE_LOCK(:k)"), {"k": _ENABLE_LOCK})

@@ -263,3 +263,162 @@ def test_upload_version_resource_and_label_limits(monkeypatch):
             assert m.version_label == "2026-07-08 严格版"
     finally:
         test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_enable_is_singleton_and_switch(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.app.db.session import SessionLocal
+        from server.app.modules.loop_skills import versions_service as vs
+        from server.app.modules.loop_skills.models import LoopSkillBundleVersion
+
+        with SessionLocal() as db:
+            a = vs.upload_version(
+                db,
+                _make_zip(_valid_files()),
+                version_label="A",
+                notes=None,
+                uploaded_by_user_id=None,
+            )
+            b = vs.upload_version(
+                db,
+                _make_zip(_valid_files()),
+                version_label="B",
+                notes=None,
+                uploaded_by_user_id=None,
+            )
+            db.commit()
+            vs.enable_version(db, a.id)
+            vs.enable_version(db, b.id)  # 切到 B
+            enabled = (
+                db.execute(
+                    __import__("sqlalchemy")
+                    .select(LoopSkillBundleVersion.id)
+                    .where(LoopSkillBundleVersion.is_enabled.is_(True))
+                )
+                .scalars()
+                .all()
+            )
+            assert enabled == [b.id]  # 恰好一个,且是 B
+            assert vs.get_active_bundle(db).version == "B"
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_soft_delete_rejects_enabled(monkeypatch):
+    from server.app.shared.errors import ConflictError
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.app.db.session import SessionLocal
+        from server.app.modules.loop_skills import versions_service as vs
+
+        with SessionLocal() as db:
+            a = vs.upload_version(
+                db,
+                _make_zip(_valid_files()),
+                version_label="A",
+                notes=None,
+                uploaded_by_user_id=None,
+            )
+            db.commit()
+            vs.enable_version(db, a.id)
+            with pytest.raises(ConflictError):
+                vs.soft_delete_version(db, a.id)  # 当前启用版,拒删
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_enable_from_zero_concurrent_stays_singleton(monkeypatch):
+    """从零启用态并发 enable(A)/enable(B) —— GET_LOCK 保证最终恰好一个启用版。"""
+    import threading
+
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.app.db.session import SessionLocal
+        from server.app.modules.loop_skills import versions_service as vs
+        from server.app.modules.loop_skills.models import LoopSkillBundleVersion
+
+        with SessionLocal() as db:
+            a = vs.upload_version(
+                db,
+                _make_zip(_valid_files()),
+                version_label="A",
+                notes=None,
+                uploaded_by_user_id=None,
+            )
+            b = vs.upload_version(
+                db,
+                _make_zip(_valid_files()),
+                version_label="B",
+                notes=None,
+                uploaded_by_user_id=None,
+            )
+            db.commit()
+            ids = [a.id, b.id]
+
+        barrier = threading.Barrier(2)
+        errors: list[Exception] = []  # 捕获而非吞:DeepSeek 建议的 except:pass 会放大假绿
+
+        def _worker(vid: int) -> None:
+            s = SessionLocal()
+            try:
+                barrier.wait()
+                vs.enable_version(s, vid)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+            finally:
+                s.close()
+
+        threads = [threading.Thread(target=_worker, args=(i,)) for i in ids]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # 锁正确时二者应串行成功(各自临界区极短、10s 超时足够)——不应有 ConflictError
+        assert errors == [], f"并发 enable 不应抛错(锁应让二者串行成功): {errors}"
+
+        with SessionLocal() as db:
+            enabled = (
+                db.execute(
+                    __import__("sqlalchemy")
+                    .select(LoopSkillBundleVersion.id)
+                    .where(LoopSkillBundleVersion.is_enabled.is_(True))
+                )
+                .scalars()
+                .all()
+            )
+            assert len(enabled) == 1  # 恰好一个,不是两个
+
+        # A 的杀手锏:证明锁**真释放**(初稿的 session.commit 后 RELEASE 落错连接=假绿抓不到)。
+        # 用全新连接 GET_LOCK(name, 0) 立即取:若前面泄漏了锁,这里会返回 0。
+        #
+        # 偏差说明(相对任务 brief 原文):brief 原用 `from server.app.db.session import engine` +
+        # `engine.connect()` 做探针。但 build_test_app(见 server/tests/utils.py:205)只
+        # monkeypatch 了 `server.app.db.session.SessionLocal`,**没有**重绑模块级 `engine`
+        # ——那个 `engine` 可能指向与本测试 DB 不同的 server/库。若探针连去别的 server,
+        # GET_LOCK 在那边永远能立即拿到(因为 enable_version 从未在那边加过锁),探针会
+        # 假性返回 1、把"锁未释放"的真 bug 掩盖成误报的绿。改为从
+        # `SessionLocal().get_bind()` 取 bind——这与 enable_version 内部
+        # `session.get_bind()` 用的是同一个 bind(同一个被 monkeypatch 的 TestingSessionLocal
+        # 绑定的 engine),确保探针查的是"真被加过锁的那个连接池/server"。
+        from sqlalchemy import text as _text
+
+        probe_bind = SessionLocal().get_bind()  # 同 enable_version 的 bind(测试库/同一 server)
+        with probe_bind.connect() as probe:
+            got = probe.execute(
+                _text("SELECT GET_LOCK(:k, 0)"), {"k": "geo_loop_skill_enable"}
+            ).scalar()
+            assert got == 1, "锁泄漏:enable 完成后应能立即再取同名锁"
+            probe.execute(_text("SELECT RELEASE_LOCK(:k)"), {"k": "geo_loop_skill_enable"})
+    finally:
+        test_app.cleanup()
