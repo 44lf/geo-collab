@@ -177,9 +177,13 @@ storyboard 里点名 `asset_id`。Claude 按 filename/tags 推理选图（看不
    → mp4（竖屏 1080x1920 默认）。
 6. **落库**：mp4 + SRT 存 `Asset`，写 `VideoJob.status='done'` + 产物 id + Claude 传的 title/description/tags。
 
-**运行环境**：ffmpeg + TTS 依赖只在 **worker 容器**具备（与发布同限制，Windows 本地跑不了）。
-异步执行沿用 `bg_session_factory` 后台线程（和生文一样，**没有独立 worker**）；DB session
-非线程安全，后台线程内自建 session。
+**运行环境（服务器侧，非用户本地）**：异步渲染跑在 **GEO 服务器的 app(web) 容器**后台线程
+（`bg_session_factory`，和生文一样**没有独立 worker**），因此 ffmpeg / edge-tts / 中文字体装进
+**app 镜像（`Dockerfile.app`）**，不是 worker 镜像。**普通用户本地零依赖**——本地 Claude Code 只经
+MCP over HTTP 调远端 GEO，渲染全在服务器完成（与生文 loop `save_article` 同模式）。DB session
+非线程安全，后台线程内自建 session。**生产部署要点**：升级时重建 app 镜像才带上 ffmpeg/字体
+（`docker compose build app` 后 `up -d`）；Windows 本地无 ffmpeg 时端到端渲染跑不了（与发布同限制），
+但纯函数/mock 测试可跑。
 
 ### 6.3 TTS 引擎注册表（可插拔，镜像 drivers / ai_models）
 
