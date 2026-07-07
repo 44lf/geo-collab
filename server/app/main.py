@@ -57,6 +57,7 @@ from server.app.modules.articles.router import (
 )
 from server.app.modules.audit.router import router as audit_router
 from server.app.modules.auto_review.router import router as auto_review_router
+from server.app.modules.feishu.router import h5_auth_router, h5_public_router
 from server.app.modules.image_library.router import files_router as stock_files_router
 from server.app.modules.image_library.router import router as stock_images_router
 from server.app.modules.loop_skills.router import (
@@ -358,6 +359,13 @@ def create_app() -> FastAPI:
         dependencies=[Depends(get_current_user)],
     )
     app.include_router(stock_files_router, prefix="/api/stock-images", tags=["stock-images"])
+    app.include_router(h5_public_router, prefix="/api/feishu", tags=["feishu"])
+    app.include_router(
+        h5_auth_router,
+        prefix="/api/feishu",
+        tags=["feishu"],
+        dependencies=[Depends(get_current_user)],
+    )
     app.include_router(
         audit_router,
         prefix="/api/audit-logs",
