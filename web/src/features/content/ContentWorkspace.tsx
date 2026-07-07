@@ -4,11 +4,9 @@ import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from
 import type { NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
 import { TextStyle } from "@tiptap/extension-text-style";
 import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
-import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
 import { Plus, Save, Search, Trash2, Upload, ChevronRight, Check, Send, ShieldCheck, ListChecks, RefreshCw } from "lucide-react";
 import { useToast } from "../../components/Toast";
@@ -388,13 +386,14 @@ export function ContentWorkspace({
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
-      Link.configure({ openOnClick: false }),
+      // Tiptap v3 的 StarterKit 已内置 link / underline，故用 StarterKit 提供它们（link 关掉点击跳转），
+      // 不再单独注册 @tiptap/extension-link、@tiptap/extension-underline——重复注册会触发
+      // "Duplicate extension names" 冲突，导致含链接/下划线标记的文档 setContent 解析失败、正文渲染为空。
+      StarterKit.configure({ link: { openOnClick: false } }),
       CustomImage.configure({ allowBase64: false }),
       CustomTextStyle,
       Color,
       Highlight.configure({ multicolor: true }),
-      Underline,
       TextAlign.configure({ types: ["heading", "paragraph"] }),
     ],
     content: emptyDoc,
@@ -643,9 +642,13 @@ export function ContentWorkspace({
       stock_category_ids: detail.stock_category_ids ?? [],
     });
     const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
-    editor?.commands.setContent(displayDoc);
-    const bodyState = editor
-      ? editorBodyState(editor)
+    // 用最新 editor 实例（latestEditor.current）而非闭包 editor：深链走 await getArticle 期间，
+    // editor 可能被销毁重建（React StrictMode 的 mount→unmount→remount，或任何触发 useEditor 重建的
+    // re-render）。闭包捕获的旧实例此时已 isDestroyed，setContent 灌给它不会渲染到 DOM → 正文空白。
+    const ed = latestEditor.current;
+    ed?.commands.setContent(displayDoc);
+    const bodyState = ed
+      ? editorBodyState(ed)
       : stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save"));
     savedStateRef.current = {
       title: detail.title?.trim() ?? "",
