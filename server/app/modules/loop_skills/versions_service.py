@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from server.app.core.time import utcnow
 from server.app.modules.loop_skills.models import LoopSkillBundleVersion
 from server.app.modules.loop_skills.service import (
     SkillBundle,
@@ -125,3 +128,101 @@ def list_versions(session: Session) -> list[VersionMeta]:
         .all()
     )
     return [_to_meta(r) for r in rows]
+
+
+def _clean_text(value: str, *, field: str, max_len: int) -> str:
+    """strip + 长度上限 + 拒控制字符(换行/回车/制表 / DEL)。
+
+    version_label 会被下游放进 HTTP 响应头(Content-Disposition / X-Bundle-Version);
+    含 \\r\\n 会造成 header 注入,含中文会让 latin-1 编码崩(500)。这里先把控制字符挡掉、
+    限长;非 ASCII(中文)本身允许,由 router 侧 percent-encode / RFC5987 兜底(见 Task 6)。
+    """
+    v = value.strip()
+    if len(v) > max_len:
+        raise ValidationError(f"{field} 过长(上限 {max_len} 字符)")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in v):
+        raise ValidationError(f"{field} 含非法控制字符")
+    return v
+
+
+def upload_version(
+    session: Session,
+    zip_bytes: bytes,
+    *,
+    version_label: str | None,
+    notes: str | None,
+    uploaded_by_user_id: int | None,
+) -> VersionMeta:
+    if len(zip_bytes) > LOOP_SKILL_MAX_ZIP_BYTES:
+        raise ValidationError(f"zip 超过压缩体积上限 {LOOP_SKILL_MAX_ZIP_BYTES} 字节")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile as exc:
+        raise ValidationError("不是合法的 zip 文件") from exc
+
+    # C:条目数上限(白名单不限数量,先挡"海量小文件")
+    infos = [i for i in zf.infolist() if not i.is_dir()]
+    if len(infos) > LOOP_SKILL_MAX_ENTRIES:
+        raise ValidationError(f"zip 条目过多: {len(infos)}(上限 {LOOP_SKILL_MAX_ENTRIES})")
+
+    raw: dict[str, bytes] = {}
+    total = 0
+    for info in infos:
+        name = info.filename.replace("\\", "/")
+        # zip-slip / 绝对路径防护
+        if name.startswith("/") or ".." in name.split("/"):
+            raise ValidationError(f"非法路径(zip-slip): {info.filename}")
+        # 白名单前缀(startswith 接受 tuple)
+        if not (name in _ALLOWED_TOP or name.startswith(_ALLOWED_PREFIXES)):
+            raise ValidationError(f"不允许的文件路径: {name}(仅 README.md / commands/ / skills/)")
+        # C:重名路径静默覆盖会让 sha 与实际内容脱节(zip 允许同名条目)→ 直接拒
+        if name in raw:
+            raise ValidationError(f"zip 含重复路径: {name}")
+        # C:单条目解压上限
+        if info.file_size > LOOP_SKILL_MAX_ENTRY_BYTES:
+            raise ValidationError(f"解压后单文件过大: {name}")
+        data = zf.read(info)
+        # C:累计解压体积上限(防高压缩比 zip bomb)
+        total += len(data)
+        if total > LOOP_SKILL_MAX_TOTAL_UNCOMPRESSED:
+            raise ValidationError(f"解压后累计体积超上限 {LOOP_SKILL_MAX_TOTAL_UNCOMPRESSED} 字节")
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValidationError(f"非 UTF-8 文本文件: {name}") from exc
+        raw[name] = data
+
+    missing = [r for r in _REQUIRED if r not in raw]
+    if missing:
+        raise ValidationError(f"缺少必需文件: {', '.join(missing)}")
+
+    # B:label / notes 清洗(strip + 限长 + 拒控制字符);label strip 后空则回落时间戳
+    label = (
+        _clean_text(version_label, field="version_label", max_len=LOOP_SKILL_MAX_LABEL_LEN)
+        if version_label
+        else ""
+    )
+    if not label:
+        label = utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    clean_notes = (
+        _clean_text(notes, field="notes", max_len=LOOP_SKILL_MAX_NOTES_LEN) if notes else None
+    )
+    bundle = build_bundle_from_file_map(raw, version=label)
+
+    row = LoopSkillBundleVersion(
+        version_label=label,
+        bundle_sha256=bundle.bundle_sha256,
+        files=[
+            {"path": f.path, "content": f.content, "sha256": f.sha256, "size": f.size}
+            for f in bundle.files
+        ],
+        file_count=len(bundle.files),
+        total_size=sum(f.size for f in bundle.files),
+        is_enabled=False,
+        is_deleted=False,
+        uploaded_by_user_id=uploaded_by_user_id,
+        notes=clean_notes,
+    )
+    session.add(row)
+    session.flush()  # 拿到 row.id;commit 交给 get_db / add_audit_entry
+    return _to_meta(row)
