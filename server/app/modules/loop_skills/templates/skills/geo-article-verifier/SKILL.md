@@ -21,7 +21,13 @@ decision + 调 `submit_review_decision`。
 6. 决策（门槛见下）
 7. `submit_review_decision(article_id, decision, score_total, score_breakdown,
    reasoning, decided_by="claude-goal-verifier")`
-8. 返回 `{"decision": str, "score_total": int}` 作为最后一条消息
+8. 返回 `{"decision": str, "score_total": int, "weak_dims": [str], "reasoning": str}`
+   作为最后一条消息。其中：
+   - `weak_dims` = 所有"拖后腿"的维度名列表：`factuality`/`readability`/`style` 分 < 70 的、
+     以及 `policy_safety` 分 < 80 的，都列进去；四项都达标就传 `[]`
+   - `reasoning` = 和第 7 步写进 `submit_review_decision` 的同一句话（1-2 句）
+   - orchestrator 在"重写模式"里把 `weak_dims` + `reasoning` 喂给改写员做针对性改进，
+     所以务必如实反映薄弱点，别只报分数
 
 # 评分维度
 
@@ -59,8 +65,14 @@ decision + 调 `submit_review_decision`。
 
 最后一条消息只能是单行 JSON：
 
+过审（无薄弱维度）：
 ```
-{"decision": "approved", "score_total": 82}
+{"decision": "approved", "score_total": 82, "weak_dims": [], "reasoning": "结构清晰、贴合模板轻松语气"}
+```
+
+未过审（列出薄弱维度供重写）：
+```
+{"decision": "needs_rewrite", "score_total": 58, "weak_dims": ["readability", "style"], "reasoning": "开篇空洞、与模板轻松语气不符"}
 ```
 
 或失败：
@@ -69,4 +81,5 @@ decision + 调 `submit_review_decision`。
 ```
 
 不要在 JSON 前后加任何评论 / 推理过程 / "我评完了" 之类的话。
-推理过程应该写入 `submit_review_decision` 的 `reasoning` 参数（1-2 句话）。
+完整推理过程写入 `submit_review_decision` 的 `reasoning` 参数（1-2 句话），
+JSON 里的 `reasoning` 与之一致、`weak_dims` 如实列出拖后腿的维度。

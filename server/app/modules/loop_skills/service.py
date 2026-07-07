@@ -38,11 +38,19 @@ def build_bundle() -> SkillBundle:
 
     遇到非 utf-8 文件直接抛 ValueError —— 模板就该是文本，加二进制是 bug。
     """
-    files: list[SkillFile] = []
-    for path in sorted(_TEMPLATES_DIR.rglob("*")):
+    # 先收 (posix_rel, path) 再**按 posix 字符串排序**——不要 sorted([Path])。
+    # Path 对象比较在 Windows 大小写不敏感（"commands" 排在 "README" 前）、Linux 大小写敏感
+    # （"README" 在 "commands" 前），同一份模板在两个 OS 上文件序不同 → bundle_sha 不同，
+    # 叠加 CRLF/LF 就是 4 个 sha 的跨 OS 噩梦（历史 v7~v11 反复栽）。按 posix 串排序后
+    # 排序跨 OS 确定，只剩行尾一个维度（LF=CI / CRLF=Windows 本地），bundle_sha 收敛到 2 个。
+    entries: list[tuple[str, Path]] = []
+    for path in _TEMPLATES_DIR.rglob("*"):
         if not path.is_file():
             continue
-        rel = path.relative_to(_TEMPLATES_DIR).as_posix()
+        entries.append((path.relative_to(_TEMPLATES_DIR).as_posix(), path))
+
+    files: list[SkillFile] = []
+    for rel, path in sorted(entries, key=lambda e: e[0]):
         raw = path.read_bytes()
         try:
             content = raw.decode("utf-8")

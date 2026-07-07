@@ -6,7 +6,7 @@ fail + 提示开发者：把新 sha 加进 KNOWN_BUNDLE_SHAS 并 bump
 LOOP_SKILL_BUNDLE_VERSION，强制「改模板必同步 bump 版本」纪律。
 """
 
-LOOP_SKILL_BUNDLE_VERSION = "2026-07-02-v11"
+LOOP_SKILL_BUNDLE_VERSION = "2026-07-07-v12"
 
 KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
     {
@@ -99,5 +99,19 @@ KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
         "37b008734533f12c77b0209399559570b2d5ad3475295a49af1fcd3376564db3",  # Linux序+LF (推算 CI canonical，脚本复刻未跑真实 CI)
         "2c27fb2dd50043797c39232d285741e63b2daca38d81a1d7c90900ce45e0d743",  # Windows序+LF (推算，autocrlf=false Windows checkout)
         "cdc2d515eb9b84308ca278f6cf2a6c3d5cfb99b946943c6a296dd3c2c737f734",  # Linux序+CRLF (推算，理论组合，正常环境不应出现)
+        # v12 (2026-07-07, 重试尊重锁定 + 重试失败通知): orchestrator SKILL 加「锁定与重试模型」
+        # ——用户 `问题Id=` 精确锁问题词 / `生文提示词Id=` 锁模板时，评分不过按 worklist +
+        # 「重写同一问题最多 REWRITE_CAP=2 次」而非随机换题；verifier 返回加 weak_dims +
+        # reasoning 喂给 writer 的重写模式（rewrite_feedback）做针对性改进；退出播报加
+        # retry_exhausted 段单列「锁定问题重写到上限仍未过审」。同批 commands/goal.md 加锁定
+        # 用法示例，writer SKILL 加「重写模式」段。
+        # 关键：本版**顺带根治了 service.build_bundle 的跨 OS 排序**——改为按 posix 串排序
+        # （原先 sorted([Path]) 在 Win 大小写不敏感 / Linux 敏感 → 文件序不同），排序跨 OS
+        # 确定后 bundle_sha 只剩行尾一个维度，从此每版只需登记 2 个 sha（LF + CRLF），不再有
+        # Win序/Linux序 × LF/CRLF 的 4 组合噩梦（v7~v11 反复栽）。下面两值均由脚本复刻算法
+        # 实测（scripts/_compute_bundle_sha.py，用完即删）：CRLF 与本机 real build_bundle 对上，
+        # LF 为 Linux runner checkout（LF blob）的 CI canonical。
+        "eb9edee125eba132fa5ff3ab60cbcc52b51d72d4c6ff41d912f43485f775d14e",  # posix序+LF (CI canonical, blob)
+        "ff752ede9aee4eb14391f16c15ee9de4a88b00c347cd41584e9d6270abc06fcf",  # posix序+CRLF (autocrlf=true 本地工作区, 实测)
     }
 )

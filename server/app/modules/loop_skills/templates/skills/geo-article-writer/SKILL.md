@@ -13,10 +13,12 @@ description: Use when spawned as a writer subagent by /goal, or when manually
 
 # Required Checklist (per spawn)
 
+0. **看 input 有没有 `rewrite_feedback`**（`none` 以外即有）—— 有就是"重写模式"：
+   这是对同一问题的重写，上一版没过审。按下面「重写模式」段有的放矢地改进，别照抄上一版
 1. get question — `list_question_items(pool_id=<from input>)` 拿到 qid 对应条目；
    或直接用 input 里给的 question_text 兜底（如果 orchestrator 已经带过来）
 2. get template — `list_prompt_templates(scope="generation")` 找到 tpl_id 的 content
-3. 写 markdown body（约束见下）
+3. 写 markdown body（约束见下；重写模式下先读 `rewrite_feedback` 再动笔）
 4. `save_article(question_item_id, prompt_template_id, title, markdown_content,
    model_label, prompt_template_name=<step 2 拿到的 tpl.name>,
    question_text_preview=<step 1 拿到的 question_text 前 ~40 字>)` —
@@ -52,6 +54,25 @@ description: Use when spawned as a writer subagent by /goal, or when manually
 6. 返回 `{"article_id": int, "title": str, "illustration_warnings": [...]}` 作为
    **最后一条消息**，**只输出 JSON 一行**；`illustration_warnings` 字段始终存在
    （没有 warning 时为 `[]`），让 orchestrator 可以统一解析
+
+# 重写模式（input 带 `rewrite_feedback` 时）
+
+orchestrator 在评分不过、且用户**锁定了这个问题词**时，会带着上一版的评审反馈再 spawn 你一次，
+让你就**同一个问题**重写一版（问题词被锁死，不能换成别的问题）。此时 `rewrite_feedback` 形如：
+
+```
+{"last_article_id": 811, "last_decision": "needs_rewrite", "last_score": 58,
+ "weak_dims": ["readability", "style"], "reasoning": "开篇空洞、与模板轻松语气不符"}
+```
+
+规则：
+- **必须针对 `weak_dims` + `reasoning` 实质改进**：薄弱在 readability 就重排结构 / 删空洞引入；
+  薄弱在 style 就贴紧模板语气；薄弱在 factuality 就删掉不可验证的数字 / 引述；薄弱在
+  policy_safety 就清理合规风险点。**不要照抄上一版**、也不要只改标题糊弄。
+- 问题词 / 生文提示词都由 orchestrator 传入且已锁定——你**不换问题、不换模板**，只把这一篇写得更好。
+- 仍走正常 `save_article` 落**一篇新文章**（新 article_id），照常配图、照常返回 JSON。
+  你不需要删旧文章、不需要读 `last_article_id` 的正文（它已在库里，人工兜底）。
+- `rewrite_feedback == none` = 首稿，正常写即可，不用管本段。
 
 # title vs markdown_content 约束（重要）
 
