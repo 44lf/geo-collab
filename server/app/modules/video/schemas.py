@@ -39,9 +39,7 @@ def validate_asset_ids(db: Session, storyboard: Storyboard) -> None:
     wanted = {s.asset_id for s in storyboard.shots if s.asset_id is not None}
     if not wanted:
         return
-    found = {
-        row[0] for row in db.query(StockImage.id).filter(StockImage.id.in_(wanted)).all()
-    }
+    found = {row[0] for row in db.query(StockImage.id).filter(StockImage.id.in_(wanted)).all()}
     missing = wanted - found
     if missing:
         raise ValidationError(f"storyboard 引用了不存在的图片 asset_id: {sorted(missing)}")

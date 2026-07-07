@@ -6,13 +6,7 @@ from server.app.modules.video.srt import build_srt
 def test_build_srt_two_cues():
     out = build_srt([("第一段", 2.5), ("第二段", 3.0)])
     assert out == (
-        "1\n"
-        "00:00:00,000 --> 00:00:02,500\n"
-        "第一段\n"
-        "\n"
-        "2\n"
-        "00:00:02,500 --> 00:00:05,500\n"
-        "第二段\n"
+        "1\n00:00:00,000 --> 00:00:02,500\n第一段\n\n2\n00:00:02,500 --> 00:00:05,500\n第二段\n"
     )
 
 

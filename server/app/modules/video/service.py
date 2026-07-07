@@ -10,6 +10,8 @@ import os
 import tempfile
 import threading
 import uuid
+from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -28,7 +30,7 @@ from server.app.shared.errors import ClientError, ValidationError
 logger = logging.getLogger(__name__)
 
 # 由 create_app() 注入（与 scheme_router / pipelines.router 同款）
-bg_session_factory = None
+bg_session_factory: Callable[[], Any] | None = None
 
 _DIMENSIONS = {"9:16": (1080, 1920), "16:9": (1920, 1080)}
 
