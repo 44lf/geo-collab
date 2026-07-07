@@ -38,12 +38,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import server.app.modules.video.models  # noqa: F401  (register VideoJob table)
 from server.app.core.config import get_settings
 from server.app.core.limiter import limiter
 from server.app.core.logging import configure_logging
 from server.app.core.paths import ensure_data_dirs
 from server.app.core.security import get_current_user
-import server.app.modules.video.models  # noqa: F401  (register VideoJob table)
 from server.app.modules.accounts.router import router as accounts_router
 from server.app.modules.ai_generation.router import mcp_router as generation_mcp_router
 from server.app.modules.ai_generation.router import router as generation_router
