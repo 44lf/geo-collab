@@ -60,7 +60,39 @@ def get_test_database_url() -> str:
         and os.environ.get("GEO_ALLOW_NON_TEST_DATABASE_FOR_TESTS") != "1"
     ):
         raise RuntimeError("Refusing to run tests unless the MySQL database name contains 'test'")
-    return url
+    return _worker_database_url(url)
+
+
+# pytest-xdist 并行支持：整个测试架构是「共库 + TRUNCATE 复用」，并行 worker 直接共库会
+# 互相清数据。所以每个 xdist worker 用独立库（<base>_gw0 / <base>_gw1 ...），不存在则自动
+# CREATE（CI 里以 root 连接有建库权限；本地用 -n 并行时账号需有 CREATE DATABASE 权限）。
+# 串行跑（无 PYTEST_XDIST_WORKER）行为与从前完全一致。
+_worker_databases_ready: set[str] = set()
+
+
+def _worker_database_url(url: str) -> str:
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker:
+        return url
+    parsed = urlparse(url)
+    worker_db = f"{parsed.path.lstrip('/')}_{worker}"
+    if worker_db not in _worker_databases_ready:
+        import pymysql
+
+        conn = pymysql.connect(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or 3306,
+            user=parsed.username or "root",
+            password=parsed.password or "",
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"CREATE DATABASE IF NOT EXISTS `{worker_db}` CHARACTER SET utf8mb4")
+            conn.commit()
+        finally:
+            conn.close()
+        _worker_databases_ready.add(worker_db)
+    return parsed._replace(path=f"/{worker_db}").geturl()
 
 
 def _model_modules() -> None:
@@ -77,6 +109,7 @@ def _model_modules() -> None:
     import server.app.modules.skills.models  # noqa: F401
     import server.app.modules.system.models  # noqa: F401
     import server.app.modules.tasks.models  # noqa: F401
+    import server.app.modules.video.models  # noqa: F401
 
 
 def _make_engine() -> Engine:

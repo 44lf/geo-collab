@@ -247,3 +247,45 @@ def mcp_list_stock_categories(
         )
         for cat, image_count in rows
     ]
+
+
+# ── stock-images ──────────────────────────────────────────────────────────
+
+
+class StockImageBrief(BaseModel):
+    asset_id: int
+    filename: str
+    tags: list[str]
+    url: str
+    w: int | None
+    h: int | None
+
+
+@router.get("/stock-images", response_model=list[StockImageBrief])
+def mcp_list_stock_images(
+    category_id: int = Query(...),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[StockImageBrief]:
+    """[MCP] 列某栏目下的图，供 Claude 在 storyboard 里点名 asset_id。
+
+    只返回轻量字段（含 filename/tags 供无像素判断选图）。url 是公开代理地址。
+    """
+    rows = (
+        db.query(StockImage)
+        .filter(StockImage.category_id == category_id)
+        .order_by(StockImage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        StockImageBrief(
+            asset_id=img.id,
+            filename=img.filename,
+            tags=img.tags or [],
+            url=f"/api/stock-images/{img.id}/file",
+            w=img.width,
+            h=img.height,
+        )
+        for img in rows
+    ]
