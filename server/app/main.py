@@ -79,6 +79,8 @@ from server.app.modules.mcp_catalog.router import router as mcp_catalog_router
 from server.app.modules.performance.router import router as performance_router
 from server.app.modules.pipelines.router import router as pipelines_router
 from server.app.modules.prompt_templates.router import router as prompt_templates_router
+from server.app.modules.report.router import report_mcp_router
+from server.app.modules.report.router import router as report_router
 from server.app.modules.system.auth_router import router as auth_router
 from server.app.modules.system.models import User
 from server.app.modules.system.system_router import mcp_system_router
@@ -394,6 +396,18 @@ def create_app() -> FastAPI:
         prefix="/api/audit-logs",
         tags=["audit-logs"],
         dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        report_router,
+        prefix="/api/report-events",
+        tags=["report-events"],
+        dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        report_mcp_router,
+        prefix="/api/report-events",
+        tags=["report-events-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验
     )
     app.include_router(
         ai_models_router,

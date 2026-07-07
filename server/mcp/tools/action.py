@@ -216,6 +216,44 @@ async def notify_feishu(
 
 
 @mcp.tool()
+async def report_event(
+    source_module: str,
+    event_type: str,
+    message: str,
+    level: str = "info",
+    source_type: str | None = None,
+    source_id: int | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report a tracking event for later debugging/tracing of Loop runs.
+
+    Args:
+        source_module: Which loop/module this event comes from, e.g. "generation_loop",
+            "distribute_loop", "weekly_report_loop".
+        event_type: Short event name, e.g. "ai_call_retry", "question_selected", "publish_failed".
+        message: Human-readable description.
+        level: "info" | "warning" | "error".
+        source_type: Optional entity type this event relates to.
+        source_id: Optional entity id this event relates to.
+        payload: Optional structured extra detail (free-form JSON-serializable dict).
+    """
+    if level not in ("info", "warning", "error"):
+        return _fail(f"invalid level: {level}")
+    return await _apost(
+        "/api/report-events/mcp",
+        json={
+            "source_module": source_module,
+            "event_type": event_type,
+            "message": message,
+            "level": level,
+            "source_type": source_type,
+            "source_id": source_id,
+            "payload": payload,
+        },
+    )
+
+
+@mcp.tool()
 async def set_review_status(article_id: int, review_status: str) -> dict[str, Any]:
     """Update an article's review_status.
 
