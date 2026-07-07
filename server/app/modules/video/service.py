@@ -61,13 +61,13 @@ def create_video_job(db: Session, req: ComposeVideoRequest) -> VideoJob:
     return job
 
 
-def _load_image_bytes(db: Session, asset_id: int | None, article: Article) -> bytes:
-    """按 asset_id 取图；空则文章封面兜底；再空抛错（MVP 不做纯色卡，先要求有图）。"""
+def _load_image_bytes(db: Session, asset_id: int | None) -> bytes:
+    """按 asset_id 从图库取图字节；asset_id 为空则抛 ClientError（MVP 要求显式指定图片，暂无封面兜底）。"""
     img: StockImage | None = None
     if asset_id is not None:
         img = db.get(StockImage, asset_id)
     if img is None:
-        raise ClientError("镜头缺少可用图片（asset_id 为空且无封面兜底）")
+        raise ClientError("镜头缺少可用图片（asset_id 不可为空）")
     cat = db.get(StockCategory, img.category_id)
     if cat is None:
         raise ClientError("图片所属栏目不存在")
@@ -83,7 +83,6 @@ def run_video_job(job_id: str, session_factory) -> None:
         db.commit()
 
         storyboard = Storyboard.model_validate(job.storyboard)
-        article = db.get(Article, job.article_id)
         width, height = _DIMENSIONS[storyboard.aspect_ratio]
         engine = get_engine(job.engine)
         video_store.ensure_video_bucket()
@@ -103,7 +102,7 @@ def run_video_job(job_id: str, session_factory) -> None:
                 if duration <= 0:
                     duration = 3.0
                 # 2) 取图
-                img_bytes = _load_image_bytes(db, shot.asset_id, article)
+                img_bytes = _load_image_bytes(db, shot.asset_id)
                 img_path = os.path.join(tmp, f"img{i}.jpg")
                 with open(img_path, "wb") as fh:
                     fh.write(img_bytes)
