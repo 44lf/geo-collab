@@ -92,12 +92,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const code = await getFeishuAuthCode();
           if (!code) {
-            setUser(null);
+            if (!cancelled) setUser(null);
             return;
           }
           const loginResult = await h5Login(code);
           if (!loginResult.authenticated) {
-            setUser(null);
+            if (!cancelled) setUser(null);
             return;
           }
           const data = await api<MeResponse>("/api/auth/me");
