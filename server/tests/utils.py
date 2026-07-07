@@ -109,6 +109,7 @@ def _model_modules() -> None:
     import server.app.modules.skills.models  # noqa: F401
     import server.app.modules.system.models  # noqa: F401
     import server.app.modules.tasks.models  # noqa: F401
+    import server.app.modules.video.models  # noqa: F401
 
 
 def _make_engine() -> Engine:
