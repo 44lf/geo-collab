@@ -14,6 +14,8 @@
 #     全量 backend-test 只在 MR 流水线 + main 上跑——守住「进 main」这一道闸,
 #     坏改动最迟在开 MR 时被拦下,不会带病合入
 #     发版级流水线(tag 驱动构建+部署,参照 HrSystem 的 kaniko+Harbor 模式)后续另建
+#   - 后端测试 job 内用 pytest-xdist 并行(-n $GEO_CI_PYTEST_WORKERS + 按 worker 拆库,
+#     见 server/tests/utils.py):不占额外 runner 槽位;确认 runner 核数 ≥4 后把变量升到 4
 #
 # 若将来把 runner 的 concurrent 调到 ≥4(或加 runner),可参照
 # .github/workflows/ci.yml 把 backend-test 重新拆成 parallel:matrix 并行,
@@ -53,6 +55,7 @@ variables:
   FF_USE_FASTZIP: "true"          # 更快的缓存压缩
   GEO_JWT_SECRET: "ci-test-secret-not-for-prod"
   GEO_DATA_DIR: "$CI_PROJECT_DIR/geo-test-data"
+  GEO_CI_PYTEST_WORKERS: "2"      # pytest-xdist 并行度;保守起步,确认 runner 核数 ≥4 后升到 4
 
 default:
   interruptible: true             # 新 push 进来自动取消旧的在跑流水线,腾出 runner
@@ -139,7 +142,9 @@ backend-test:
         if [ "$i" -eq 60 ]; then echo "MySQL 等待超时"; exit 1; fi
         sleep 2
       done
-    - pytest server/tests/ -q --timeout=120
+    # -n:xdist 并行,每 worker 独立库(utils.py 自动建 geo_test_gw0/gw1...);
+    # --dist loadfile:同文件用例落同一 worker,保留文件内的执行顺序
+    - pytest server/tests/ -q --timeout=120 -n "$GEO_CI_PYTEST_WORKERS" --dist loadfile
 
 # ============================================================
 # 依赖安全扫描(后端 pip-audit)—— 非阻塞,仅告警
