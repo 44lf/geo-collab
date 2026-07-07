@@ -104,6 +104,7 @@ def _model_modules() -> None:
     import server.app.modules.audit.models  # noqa: F401
     import server.app.modules.auto_review.models  # noqa: F401
     import server.app.modules.image_library.models  # noqa: F401
+    import server.app.modules.loop_skills.models  # noqa: F401
     import server.app.modules.pipelines.models  # noqa: F401
     import server.app.modules.prompt_templates.models  # noqa: F401
     import server.app.modules.skills.models  # noqa: F401

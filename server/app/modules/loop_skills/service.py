@@ -33,52 +33,46 @@ class SkillBundle:
     files: list[SkillFile]
 
 
-def build_bundle() -> SkillBundle:
-    """扫描 templates/ 下所有文件，返回排好序的 bundle。
+def build_bundle_from_file_map(raw: dict[str, bytes], *, version: str) -> SkillBundle:
+    """给定 {posix_path: raw_bytes} 构造排序好的 bundle。上传路径与文件夹扫描共用同一 sha 算法。
 
-    遇到非 utf-8 文件直接抛 ValueError —— 模板就该是文本，加二进制是 bug。
+    非 utf-8 抛 ValueError —— 上传路径必须在调用前自行校验 utf-8 并抛 ValidationError,
+    此处只当内部不变式(种子模板必是文本)。
     """
-    # 先收 (posix_rel, path) 再**按 posix 字符串排序**——不要 sorted([Path])。
-    # Path 对象比较在 Windows 大小写不敏感（"commands" 排在 "README" 前）、Linux 大小写敏感
-    # （"README" 在 "commands" 前），同一份模板在两个 OS 上文件序不同 → bundle_sha 不同，
-    # 叠加 CRLF/LF 就是 4 个 sha 的跨 OS 噩梦（历史 v7~v11 反复栽）。按 posix 串排序后
-    # 排序跨 OS 确定，只剩行尾一个维度（LF=CI / CRLF=Windows 本地），bundle_sha 收敛到 2 个。
-    entries: list[tuple[str, Path]] = []
-    for path in _TEMPLATES_DIR.rglob("*"):
-        if not path.is_file():
-            continue
-        entries.append((path.relative_to(_TEMPLATES_DIR).as_posix(), path))
-
     files: list[SkillFile] = []
-    for rel, path in sorted(entries, key=lambda e: e[0]):
-        raw = path.read_bytes()
+    for rel in sorted(raw.keys()):  # 按 posix 字符串排序(跨 OS 确定)
+        data = raw[rel]
         try:
-            content = raw.decode("utf-8")
+            content = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError(f"loop_skills template not UTF-8: {rel}") from exc
         files.append(
             SkillFile(
                 path=rel,
-                size=len(raw),
-                sha256=hashlib.sha256(raw).hexdigest(),
+                size=len(data),
+                sha256=hashlib.sha256(data).hexdigest(),
                 content=content,
             )
         )
 
-    # bundle 级 sha256: 对 (path, file_sha) 排序后串接再 hash
     h = hashlib.sha256()
     for f in files:
         h.update(f.path.encode("utf-8"))
         h.update(b"\x00")
         h.update(f.sha256.encode("ascii"))
         h.update(b"\x00")
-    bundle_sha = h.hexdigest()
 
-    return SkillBundle(
-        version=LOOP_SKILL_BUNDLE_VERSION,
-        bundle_sha256=bundle_sha,
-        files=files,
-    )
+    return SkillBundle(version=version, bundle_sha256=h.hexdigest(), files=files)
+
+
+def build_bundle() -> SkillBundle:
+    """扫描 templates/ 下所有文件,返回 bundle(种子/兜底路径)。"""
+    raw: dict[str, bytes] = {}
+    for path in _TEMPLATES_DIR.rglob("*"):
+        if not path.is_file():
+            continue
+        raw[path.relative_to(_TEMPLATES_DIR).as_posix()] = path.read_bytes()
+    return build_bundle_from_file_map(raw, version=LOOP_SKILL_BUNDLE_VERSION)
 
 
 def build_zip(bundle: SkillBundle) -> bytes:

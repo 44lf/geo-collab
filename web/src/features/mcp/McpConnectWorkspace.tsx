@@ -17,14 +17,21 @@ import {
 import {
   getLoopSkillBundleInfo,
   getMcpStatus,
+  listBundleVersions,
+  uploadBundleVersion,
+  enableBundleVersion,
+  deleteBundleVersion,
+  bundleVersionDownloadUrl,
   LOOP_SKILL_BUNDLE_DOWNLOAD_URL,
   pingMcpHealth,
+  type BundleVersion,
   type LoopSkillBundleInfo,
   type McpHealthResult,
   type McpStatus,
   type McpToolInfo,
 } from "../../api/mcp";
 import { useToast } from "../../components/Toast";
+import { useAuth } from "../auth/AuthContext"; // 决策1:enable/delete 仅 admin,前端也门控隐藏
 
 const LOCALHOST_PATTERN = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 
@@ -222,6 +229,69 @@ export function McpConnectWorkspace() {
   }, [bundle, toast]);
 
   const mcpConnected = testResult?.ok === true;
+
+  // Section ⑤ — loop skill bundle 版本管理
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin"; // 门控 启用/删除 按钮(后端 require_admin 兜底)
+  const [versions, setVersions] = useState<BundleVersion[] | null>(null);
+  const [versionsBusy, setVersionsBusy] = useState(false);
+  const [versionsErr, setVersionsErr] = useState<string | null>(null);
+  const [uploadLabel, setUploadLabel] = useState("");
+  const [uploadNotes, setUploadNotes] = useState("");
+
+  const refreshVersions = async () => {
+    setVersionsErr(null);
+    try {
+      setVersions((await listBundleVersions()).versions);
+    } catch (e) {
+      setVersionsErr(e instanceof Error ? e.message : "加载失败");
+    }
+  };
+
+  useEffect(() => {
+    void refreshVersions();
+  }, []);
+
+  const onUploadZip = async (file: File) => {
+    setVersionsBusy(true);
+    setVersionsErr(null);
+    try {
+      await uploadBundleVersion(file, uploadLabel.trim(), uploadNotes.trim());
+      setUploadLabel("");
+      setUploadNotes("");
+      await refreshVersions();
+    } catch (e) {
+      setVersionsErr(e instanceof Error ? e.message : "上传失败");
+    } finally {
+      setVersionsBusy(false);
+    }
+  };
+
+  const onEnableVersion = async (id: number) => {
+    setVersionsBusy(true);
+    try {
+      await enableBundleVersion(id);
+      await refreshVersions();
+      await refreshBundle(); // 让上方版本信息卡也刷新到新启用版
+    } catch (e) {
+      setVersionsErr(e instanceof Error ? e.message : "启用失败");
+    } finally {
+      setVersionsBusy(false);
+    }
+  };
+
+  const onDeleteVersion = async (id: number) => {
+    if (!window.confirm("确认逻辑删除该版本?(当前启用版不可删)")) return;
+    setVersionsBusy(true);
+    try {
+      await deleteBundleVersion(id);
+      await refreshVersions();
+    } catch (e) {
+      setVersionsErr(e instanceof Error ? e.message : "删除失败");
+    } finally {
+      setVersionsBusy(false);
+    }
+  };
 
   return (
     <>
@@ -625,7 +695,7 @@ export function McpConnectWorkspace() {
           </h2>
           <p style={{ color: "var(--fg-2)", lineHeight: 1.7, marginBottom: 12 }}>
             想用 <code style={inlineCode}>/goal</code> 一句话让 Claude 帮你跑生文 Loop？
-            需要先在本机 <code style={inlineCode}>.claude/</code> 装 5 个 skill 模板。
+            需要先在本机 <code style={inlineCode}>.claude/</code> 装 skill 模板。
             两种方式任选其一。
           </p>
 
@@ -796,7 +866,7 @@ export function McpConnectWorkspace() {
               </button>
             </div>
             <div style={{ fontSize: 12, color: "var(--fg-2)", marginTop: 8, lineHeight: 1.6 }}>
-              Claude 会调 <code style={inlineCode}>install_loop_skills</code> 工具拿到 5 个文件 +
+              Claude 会调 <code style={inlineCode}>install_loop_skills</code> 工具拿到全部文件 +
               询问你装到全局 <code style={inlineCode}>~/.claude/</code> 还是项目根{" "}
               <code style={inlineCode}>.claude/</code>，然后用 Write 工具写到本地。
             </div>
@@ -832,6 +902,108 @@ export function McpConnectWorkspace() {
               {bundle?.install_hint ??
                 "解压到 ~/.claude/（全局）或 <repo>/.claude/（项目级）；保留 zip 里的目录结构。"}
             </div>
+          </div>
+
+          {/* 版本管理:上传 zip + 列表启用/回退/删除/下载 */}
+          <div style={{ marginTop: 16, padding: 12, borderRadius: 6, background: "var(--bg-2)" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+              版本管理 · 上传 / 启用 / 回退 / 删除
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+              <input
+                type="text"
+                placeholder="版本名(可选,留空自动用时间戳)"
+                value={uploadLabel}
+                onChange={(e) => setUploadLabel(e.target.value)}
+                style={{ flex: "1 1 200px", padding: "6px 10px", borderRadius: 4, border: "1px solid var(--border)" }}
+              />
+              <input
+                type="text"
+                placeholder="变更说明(可选)"
+                value={uploadNotes}
+                onChange={(e) => setUploadNotes(e.target.value)}
+                style={{ flex: "1 1 200px", padding: "6px 10px", borderRadius: 4, border: "1px solid var(--border)" }}
+              />
+              <label
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px",
+                  background: "var(--accent)", color: "var(--bg)", borderRadius: 4,
+                  cursor: versionsBusy ? "not-allowed" : "pointer", fontSize: 13,
+                }}
+              >
+                <Package size={14} /> 上传 zip
+                <input
+                  type="file"
+                  accept=".zip,application/zip"
+                  disabled={versionsBusy}
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void onUploadZip(f);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+
+            {versionsErr && (
+              <div style={{ color: "var(--fg-danger, #ef4444)", fontSize: 12, marginBottom: 8 }}>
+                {versionsErr}
+              </div>
+            )}
+
+            {versions && versions.length > 0 ? (
+              <table style={{ fontSize: 12, width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "var(--fg-2)" }}>
+                    <th style={{ paddingRight: 8 }}>版本名</th>
+                    <th style={{ paddingRight: 8 }}>sha</th>
+                    <th style={{ paddingRight: 8 }}>文件</th>
+                    <th style={{ paddingRight: 8 }}>体积</th>
+                    <th style={{ paddingRight: 8 }}>上传人</th>
+                    <th style={{ paddingRight: 8 }}>时间</th>
+                    <th style={{ paddingRight: 8 }}>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {versions.map((v) => (
+                    <tr key={v.id}>
+                      <td style={{ paddingRight: 8 }} title={v.notes ?? ""}>{v.version_label}</td>
+                      <td style={{ paddingRight: 8 }}>
+                        <code style={inlineCode}>{v.bundle_sha256.slice(0, 12)}</code>
+                      </td>
+                      <td style={{ paddingRight: 8 }}>{v.file_count}</td>
+                      <td style={{ paddingRight: 8 }}>{Math.max(1, Math.round(v.total_size / 1024))} KB</td>
+                      <td style={{ paddingRight: 8 }}>{v.uploaded_by_user_id ?? "—"}</td>
+                      <td style={{ paddingRight: 8 }}>{new Date(v.created_at).toLocaleString()}</td>
+                      <td style={{ paddingRight: 8 }}>
+                        {v.is_enabled ? <strong style={{ color: "var(--accent)" }}>启用中</strong> : "—"}
+                      </td>
+                      <td style={{ display: "flex", gap: 8 }}>
+                        {isAdmin && !v.is_enabled && (
+                          <button type="button" disabled={versionsBusy} onClick={() => void onEnableVersion(v.id)}>
+                            启用
+                          </button>
+                        )}
+                        <a href={bundleVersionDownloadUrl(v.id)} download>
+                          下载
+                        </a>
+                        {isAdmin && !v.is_enabled && (
+                          <button type="button" disabled={versionsBusy} onClick={() => void onDeleteVersion(v.id)}>
+                            删除
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--fg-2)" }}>
+                还没有上传版本 —— Claude Code 装到的是内置种子版。上传一版并启用即可切换。
+              </div>
+            )}
           </div>
 
           <div style={{ marginTop: 12, fontSize: 12, color: "var(--fg-2)" }}>
