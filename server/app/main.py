@@ -390,6 +390,11 @@ def create_app() -> FastAPI:
 
     _pipelines_routes.bg_session_factory = SessionLocal
 
+    # 为 video 合成后台线程提供 SessionLocal（spawn_video_job 读的是 service 里这个变量）
+    import server.app.modules.video.service as _video_service
+
+    _video_service.bg_session_factory = SessionLocal
+
     # 问题池定时镜像同步：仅在 GEO_QUESTION_POOL_AUTO_SYNC_ENABLED=true 时启动后台线程。
     # 默认关闭，测试 / 本地不会打真实飞书。启动失败只记日志，不致命。
     try:

@@ -19,9 +19,6 @@ from server.app.shared.errors import ClientError, ConflictError, ValidationError
 
 logger = logging.getLogger(__name__)
 
-# main.py 注入（同时转写进 service.bg_session_factory）
-bg_session_factory = None
-
 video_mcp_router = APIRouter(dependencies=[Depends(require_mcp_token)])
 video_files_router = APIRouter()  # 公开：产物供人工上传时下载
 
