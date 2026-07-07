@@ -85,3 +85,21 @@ def test_build_bundle_from_file_map_matches_algorithm():
         h.update(b"\x00")
     assert bundle.bundle_sha256 == h.hexdigest()
     assert bundle.version == "v-x"
+
+
+@pytest.mark.mysql
+def test_get_active_bundle_falls_back_to_seed(monkeypatch):
+    """无启用版 → get_active_bundle 回落种子 build_bundle()(5 文件)。"""
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.app.db.session import SessionLocal
+        from server.app.modules.loop_skills import versions_service as vs
+
+        with SessionLocal() as db:
+            active = vs.get_active_bundle(db)
+            assert len(active.files) == 5  # 种子
+            assert vs.list_versions(db) == []  # 库里还没有上传版
+    finally:
+        test_app.cleanup()
