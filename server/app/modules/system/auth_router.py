@@ -180,6 +180,7 @@ def me(request: Request) -> dict:
             "role": user.role,
             "must_change_password": user.must_change_password,
             "ai_format_preset_id": user.ai_format_preset_id,
+            "feishu_open_id": user.feishu_open_id,
         }
     finally:
         db.close()
