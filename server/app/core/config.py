@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     feishu_app_secret: str | None = None  # GEO_FEISHU_APP_SECRET
     # 飞书审核卡片 + 端内 H5 免登（B 档）
     feishu_public_base_url: str | None = Field(
-        None, validation_alias="GEO_PUBLIC_BASE_URL"
+        default=None, validation_alias="GEO_PUBLIC_BASE_URL"
     )  # GEO_PUBLIC_BASE_URL 评审链接根（无尾斜杠）
     feishu_review_card_enabled: bool = False  # GEO_FEISHU_REVIEW_CARD_ENABLED 发卡总开关
     feishu_review_chat_id: str | None = None  # GEO_FEISHU_REVIEW_CHAT_ID 目标群 chat_id
