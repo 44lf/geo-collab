@@ -13,6 +13,18 @@ description: Use when /goal command is invoked in geo-collab repo. Drives the
 做：sanity check → 解析目标 → 调度子 agent → 查 GEO 拿净产出 → 决定继续/退出
 → 飞书播报。
 
+# 可用工具（orchestrator 主对话直接调用）
+
+写作 / 评分是 subagent 的活（各自 skill 内部调 `save_article` /
+`submit_review_decision`）。orchestrator 主对话自己直接调用的
+`mcp__geo__*` 工具：
+
+- `list_question_pools()` / `list_question_items(pool_id, ...)` — 抓候选选题
+- `list_prompt_templates(scope="generation")` — 抓可用生文提示词
+- `list_today_loop_articles(decided_by, decision, since_hours, model_label)` — 查净产出（累计通过数），退出闸门唯一事实来源
+- `notify_feishu(title, message, level)` — 开始播报 + 退出前批量汇总（见「主循环」`notify_exit`）
+- `notify_review_card(article_id, title, question, score, decision)` — 每轮拿到评审结果后逐篇发一张飞书审核卡（仅 approved / needs_rewrite，跳过 rejected），见「主循环」
+
 # Required Checklist (per /goal invocation)
 
 1. **Sanity check** — 调 `list_question_pools()`；失败立即退出 + 提示
@@ -163,6 +175,14 @@ No other text.""",
         qid=qid, question=question_text, article_id=article_id, title=article_title,
         decision=parsed_v.decision, score_total=parsed_v.score_total,
     ))
+    # 逐篇发卡：approved / needs_rewrite 才发（rejected 不发，群里保持清爽）。这是
+    # "边写边发"的即时通知，让审核人不用等整轮 /goal 跑完就能点进去看文章；收尾的
+    # notify_exit 批量汇总（见上方）保留不动，两者并存不冲突。
+    if parsed_v.decision in ("approved", "needs_rewrite"):
+        notify_review_card(
+            article_id=article_id, title=article_title, question=question_text,
+            score=parsed_v.score_total, decision=parsed_v.decision,
+        )
     # 不管 decision 是什么循环都继续——netto 查询会反映真实通过数；run_log 已经记了这一条，
     # 退出播报时会把它列进「本次产出」（即便这条最终是 needs_rewrite/rejected 也照列，
     # 运营需要知道这轮到底写了什么、为什么没算数）

@@ -6,7 +6,7 @@ fail + 提示开发者：把新 sha 加进 KNOWN_BUNDLE_SHAS 并 bump
 LOOP_SKILL_BUNDLE_VERSION，强制「改模板必同步 bump 版本」纪律。
 """
 
-LOOP_SKILL_BUNDLE_VERSION = "2026-07-02-v11"
+LOOP_SKILL_BUNDLE_VERSION = "2026-07-07-v12"
 
 KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
     {
@@ -99,5 +99,14 @@ KNOWN_BUNDLE_SHAS: frozenset[str] = frozenset(
         "37b008734533f12c77b0209399559570b2d5ad3475295a49af1fcd3376564db3",  # Linux序+LF (推算 CI canonical，脚本复刻未跑真实 CI)
         "2c27fb2dd50043797c39232d285741e63b2daca38d81a1d7c90900ce45e0d743",  # Windows序+LF (推算，autocrlf=false Windows checkout)
         "cdc2d515eb9b84308ca278f6cf2a6c3d5cfb99b946943c6a296dd3c2c737f734",  # Linux序+CRLF (推算，理论组合，正常环境不应出现)
+        # v12 (2026-07-07, 飞书审核卡片 notify_review_card 发卡点): orchestrator SKILL 新增
+        # 「可用工具」小节（列出 orchestrator 主对话直接调用的 mcp__geo__* 工具，含新的
+        # notify_review_card）+ 主循环里 verifier 决策 run_log.append 之后加逐篇发卡
+        # （仅 approved / needs_rewrite，跳过 rejected）；收尾的 notify_exit 批量汇总保留
+        # 不动。两值按本文件既定脚本算出：LOCAL 直接跑真实 build_bundle（Windows 文件序 +
+        # 工作区行尾），LINUX_LF 是本地脚本复刻 CI 算法（posix 串排序 + LF 字节）离线推算，
+        # 未跑真实 CI 验证——首次 CI 跑过后如报的 current 值与此不符，以 CI 真值为准补注。
+        "8a954fa7fc1d9d6f627d2d5cad50ebee0c9655831974cde0d7849c1f09503582",  # 本机实测 build_bundle (Windows序 + 工作区行尾)
+        "1536898bd71fc619e0ed66d9368e935dfd642fe719f4092772b5146227cff5d4",  # Linux序+LF (CI canonical, 离线复刻 —— 首次 CI 跑过后如不符以 CI 报的 current 值为准)
     }
 )
