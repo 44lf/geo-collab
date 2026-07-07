@@ -7,6 +7,13 @@
 #   - 缓存 venv / pnpm store(按 lock 文件哈希做 key),装依赖从 ~45s 降到 ~5s
 #   - 纯文档改动不触发流水线(workflow:rules:changes)
 #   - 新 push 自动取消旧流水线(interruptible)、基础设施类瞬时失败自动重试(retry)
+#   - 测试用 MySQL 关掉全部耐久性保证(一次性容器,不需要抗崩溃,换写入速度)
+#   - security-audit 不再每条流水线都跑:只在 requirements* 变更时 + 夜间
+#     schedule 跑(它 allow_failure 本来就不拦合并,每次都跑纯属白占 runner)
+#   - 分级门禁:develop 等日常开发分支 push 只跑轻流水线(lint + 前端检查);
+#     全量 backend-test 只在 MR 流水线 + main 上跑——守住「进 main」这一道闸,
+#     坏改动最迟在开 MR 时被拦下,不会带病合入
+#     发版级流水线(tag 驱动构建+部署,参照 HrSystem 的 kaniko+Harbor 模式)后续另建
 #
 # 若将来把 runner 的 concurrent 调到 ≥4(或加 runner),可参照
 # .github/workflows/ci.yml 把 backend-test 重新拆成 parallel:matrix 并行,
@@ -26,6 +33,7 @@
 
 workflow:
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'              # 夜间定时:只有 security-audit 会跑(其余 job 的 rules 主动让位)
     - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'   # 有开着的 MR 时不重复跑分支流水线
       when: never
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -56,6 +64,12 @@ default:
       - api_failure
       - scheduler_failure
 
+# 常规 job 共用的 rules:夜间 schedule 流水线是 security-audit 专场,其余 job 让位
+.skip-on-schedule: &skip-on-schedule
+  - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    when: never
+  - when: on_success
+
 # ---- 复用:Python 环境 + venv 缓存(按 requirements 哈希做 key,装依赖近乎秒级)----
 .python:
   image: public.ecr.aws/docker/library/python:3.12-slim
@@ -80,6 +94,7 @@ default:
 backend-lint:
   extends: .python
   stage: lint
+  rules: *skip-on-schedule
   script:
     - ruff check server/
     - ruff format --check server/
@@ -91,9 +106,23 @@ backend-lint:
 backend-test:
   extends: .python
   stage: test
+  # 分级门禁:全量测试只守「进 main」这道闸。develop 等日常分支的 push 走轻流水线
+  # (只有 backend-lint + frontend),这里显式不跑;开 MR 后的每次 push 都会全量跑。
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   services:
     - name: public.ecr.aws/docker/library/mysql:8.0
       alias: mysql
+      # 一次性测试库:关掉 binlog / 逐事务刷盘 / 双写缓冲等全部耐久性保证,
+      # 换事务写入速度(测试套件重 DB、海量小事务提交,这里是主要磁盘开销)
+      command:
+        - --skip-log-bin
+        - --sync-binlog=0
+        - --innodb-flush-log-at-trx-commit=0
+        - --innodb-doublewrite=OFF
       variables:
         MYSQL_ROOT_PASSWORD: testpw
         MYSQL_DATABASE: geo_test
@@ -116,12 +145,18 @@ backend-test:
 # 依赖安全扫描(后端 pip-audit)—— 非阻塞,仅告警
 # 修复:pip-audit 没有 -i 参数(那会把 URL 当成位置参数 project_path 报错);
 #       镜像源改走 PIP_INDEX_URL 环境变量。与 GitHub CI 用同一个 requirements-audit.txt。
+# 触发时机:只在依赖清单变化的流水线上跑 + 夜间 schedule 例行全量扫描
+# (schedule 在 GitLab UI / API 建,指向 main;本文件合并进 main 后再启用)
 # ============================================================
 security-audit:
   image: public.ecr.aws/docker/library/python:3.12-slim
   tags: [docker]
   stage: test
   allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - changes:
+        - requirements*.txt
   cache:
     - key: pipaudit
       paths:
@@ -137,6 +172,7 @@ frontend:
   image: public.ecr.aws/docker/library/node:22-bookworm-slim
   tags: [docker]
   stage: frontend
+  rules: *skip-on-schedule
   cache:
     - key:
         prefix: pnpm
