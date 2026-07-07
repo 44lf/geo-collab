@@ -114,3 +114,17 @@ def list_bitable_records(app_token: str, table_id: str, *, page_size: int = 500)
             break
 
     return items
+
+
+def feishu_api(method: str, path: str, *, body: dict | None = None) -> dict:
+    """通用飞书 OpenAPI 调用：注入 Bearer tenant_access_token，token 失效自动刷新重试一次。
+
+    path 以 '/' 开头（如 '/im/v1/messages'），拼到 _FEISHU_BASE。返回解析后的 JSON dict。
+    """
+    token = get_tenant_access_token()
+    url = f"{_FEISHU_BASE}{path}"
+    resp = _http_json(method, url, headers={"Authorization": f"Bearer {token}"}, body=body)
+    if resp.get("code") in _TOKEN_INVALID_CODES:
+        token = get_tenant_access_token(force=True)
+        resp = _http_json(method, url, headers={"Authorization": f"Bearer {token}"}, body=body)
+    return resp
