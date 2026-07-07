@@ -17,8 +17,12 @@ def test_feishu_review_settings_from_env(monkeypatch):
 def test_feishu_review_settings_defaults(monkeypatch):
     from server.app.core import config
 
-    for k in ("GEO_PUBLIC_BASE_URL", "GEO_FEISHU_REVIEW_CARD_ENABLED",
-              "GEO_FEISHU_REVIEW_CHAT_ID", "GEO_FEISHU_H5_ENABLED"):
+    for k in (
+        "GEO_PUBLIC_BASE_URL",
+        "GEO_FEISHU_REVIEW_CARD_ENABLED",
+        "GEO_FEISHU_REVIEW_CHAT_ID",
+        "GEO_FEISHU_H5_ENABLED",
+    ):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("GEO_JWT_SECRET", "x")
     config.get_settings.cache_clear()

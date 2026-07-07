@@ -70,7 +70,9 @@ def test_resolve_open_id_uses_oauth_v2(monkeypatch):
         raise AssertionError(url)
 
     monkeypatch.setattr(service, "_http_json", fake_http_json, raising=False)
-    monkeypatch.setattr("server.app.modules.feishu.service._http_json", fake_http_json, raising=False)
+    monkeypatch.setattr(
+        "server.app.modules.feishu.service._http_json", fake_http_json, raising=False
+    )
     monkeypatch.setattr(
         "server.app.modules.feishu.service.get_settings",
         lambda: type("S", (), {"feishu_app_id": "a", "feishu_app_secret": "b"})(),
