@@ -422,3 +422,127 @@ def test_enable_from_zero_concurrent_stays_singleton(monkeypatch):
             probe.execute(_text("SELECT RELEASE_LOCK(:k)"), {"k": "geo_loop_skill_enable"})
     finally:
         test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_version_endpoints_end_to_end(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    c = test_app.client
+    try:
+        # 初始:info 回落种子(5 文件)、versions 空
+        assert c.get("/api/mcp/loop-skill-bundle/info").json()["version"]
+        assert c.get("/api/mcp/loop-skill-bundle/versions").json()["versions"] == []
+
+        # 上传一版
+        zip_bytes = _make_zip(_valid_files())
+        r = c.post(
+            "/api/mcp/loop-skill-bundle/versions",
+            files={"file": ("bundle.zip", zip_bytes, "application/zip")},
+            data={"version_label": "v-e2e"},
+        )
+        assert r.status_code == 200, r.text
+        vid = r.json()["id"]
+        assert r.json()["is_enabled"] is False
+
+        # 列表可见
+        listed = c.get("/api/mcp/loop-skill-bundle/versions").json()["versions"]
+        assert [v["id"] for v in listed] == [vid]
+
+        # 启用 → info 切到 v-e2e(3 文件)
+        assert c.post(f"/api/mcp/loop-skill-bundle/versions/{vid}/enable").status_code == 204
+        info = c.get("/api/mcp/loop-skill-bundle/info").json()
+        assert info["version"] == "v-e2e"
+        assert len(info["files"]) == 3
+
+        # 点名下载指定版:content-type + 文件名必须 ASCII 安全(B)
+        z = c.get(f"/api/mcp/loop-skill-bundle/versions/{vid}/download.zip")
+        assert z.status_code == 200
+        assert z.headers["content-type"] == "application/zip"
+        cd = z.headers["content-disposition"]
+        assert 'filename="geo-loop-skills-' in cd and ".zip" in cd
+        # 头值必须能 latin-1 编码(Starlette 已发出即证明,冗余断言防回归)
+        z.headers["content-disposition"].encode("latin-1")
+        z.headers["x-bundle-version"].encode("latin-1")
+
+        # 中文 version_label 上传 + 启用 + 下载:绝不能 500(B 的核心回归)
+        rz = c.post(
+            "/api/mcp/loop-skill-bundle/versions",
+            files={"file": ("b.zip", _make_zip(_valid_files()), "application/zip")},
+            data={"version_label": "2026-07-08 严格版"},
+        )
+        assert rz.status_code == 200, rz.text
+        cn_id = rz.json()["id"]
+        zcn = c.get(f"/api/mcp/loop-skill-bundle/versions/{cn_id}/download.zip")
+        assert zcn.status_code == 200  # 不是 500
+        zcn.headers["content-disposition"].encode("latin-1")  # RFC5987 已把中文挪进 filename*
+
+        # by-id 下载不存在 → 404(不是 400)
+        assert c.get("/api/mcp/loop-skill-bundle/versions/999999/download.zip").status_code == 404
+
+        # install-payload 点名找不到 → ok:false + available 列表(MCP token 路由)
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+        pr = c.get(
+            "/api/mcp/loop-skill-bundle/install-payload",
+            params={"version": "查无此版"},
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert pr.status_code == 200
+        body = pr.json()
+        assert body["ok"] is False
+        assert isinstance(body["data"]["available"], list) and body["data"]["available"]
+
+        # 删当前启用版 → 409(admin client + 启用版冲突)
+        assert c.delete(f"/api/mcp/loop-skill-bundle/versions/{vid}").status_code == 409
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_install_loop_skills_tool_version_param(monkeypatch):
+    """install_loop_skills(version=...) 透传 version,拿到点名的那版。"""
+    import asyncio
+
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.app.db.session import SessionLocal
+        from server.app.modules.loop_skills import versions_service as vs
+
+        with SessionLocal() as db:
+            vs.upload_version(
+                db,
+                _make_zip(_valid_files()),
+                version_label="v-tool",
+                notes=None,
+                uploaded_by_user_id=None,
+            )
+            db.commit()
+
+        # 用 monkeypatch 把工具内部 async _aget 换成 async fake(直接打测试 client,带 MCP token 语义)。
+        # 注意:install_loop_skills 内部 `await _aget(...)`,因此这里必须返回 coroutine,
+        # 否则 `await dict` 会抛 TypeError(计划 Step 1 原稿用的是同步 fake_aget,async monkeypatch 不稳)。
+        import server.mcp.tools.action as action
+
+        async def fake_aget(path, *, params=None):
+            # 直接调后端 install-payload(测试 client 已带 admin,MCP 路由需 token)
+            monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+            from server.app.core import config
+
+            config.get_settings.cache_clear()
+            r = test_app.client.get(path, params=params or {}, headers={"X-MCP-Token": "secret"})
+            return {"ok": True, "data": r.json(), "error": None}
+
+        monkeypatch.setattr(action, "_aget", fake_aget)
+
+        out = asyncio.run(action.install_loop_skills(version="v-tool"))
+        assert out["ok"] is True
+        assert out["data"]["version"] == "v-tool"
+        assert len(out["data"]["files"]) == 3
+    finally:
+        test_app.cleanup()
