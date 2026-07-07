@@ -56,3 +56,32 @@ def test_can_persist_bundle_version(monkeypatch):
             assert got.is_enabled is False
     finally:
         test_app.cleanup()
+
+
+def test_build_bundle_from_file_map_matches_algorithm():
+    """from_file_map 对同一批字节,算出的 sha 与手工按算法算的一致 + 文件按 posix 序。"""
+    import hashlib
+
+    from server.app.modules.loop_skills.service import build_bundle_from_file_map
+
+    raw = {
+        "commands/goal.md": b"g",
+        "README.md": b"r",
+        "skills/geo-goal-orchestrator/SKILL.md": b"o",
+    }
+    bundle = build_bundle_from_file_map(raw, version="v-x")
+    # 文件按 posix 串排序:README.md < commands/... < skills/...
+    assert [f.path for f in bundle.files] == [
+        "README.md",
+        "commands/goal.md",
+        "skills/geo-goal-orchestrator/SKILL.md",
+    ]
+    # 手工复算 bundle sha
+    h = hashlib.sha256()
+    for f in bundle.files:
+        h.update(f.path.encode("utf-8"))
+        h.update(b"\x00")
+        h.update(f.sha256.encode("ascii"))
+        h.update(b"\x00")
+    assert bundle.bundle_sha256 == h.hexdigest()
+    assert bundle.version == "v-x"
