@@ -10,6 +10,10 @@
 #   - 测试用 MySQL 关掉全部耐久性保证(一次性容器,不需要抗崩溃,换写入速度)
 #   - security-audit 不再每条流水线都跑:只在 requirements* 变更时 + 夜间
 #     schedule 跑(它 allow_failure 本来就不拦合并,每次都跑纯属白占 runner)
+#   - 分级门禁:develop 等日常开发分支 push 只跑轻流水线(lint + 前端检查);
+#     全量 backend-test 只在 MR 流水线 + main 上跑——守住「进 main」这一道闸,
+#     坏改动最迟在开 MR 时被拦下,不会带病合入
+#     发版级流水线(tag 驱动构建+部署,参照 HrSystem 的 kaniko+Harbor 模式)后续另建
 #
 # 若将来把 runner 的 concurrent 调到 ≥4(或加 runner),可参照
 # .github/workflows/ci.yml 把 backend-test 重新拆成 parallel:matrix 并行,
@@ -102,7 +106,13 @@ backend-lint:
 backend-test:
   extends: .python
   stage: test
-  rules: *skip-on-schedule
+  # 分级门禁:全量测试只守「进 main」这道闸。develop 等日常分支的 push 走轻流水线
+  # (只有 backend-lint + frontend),这里显式不跑;开 MR 后的每次 push 都会全量跑。
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   services:
     - name: public.ecr.aws/docker/library/mysql:8.0
       alias: mysql
