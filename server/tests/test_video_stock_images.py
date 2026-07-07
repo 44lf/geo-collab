@@ -29,9 +29,7 @@ def test_list_stock_images_returns_briefs(monkeypatch):
         # Seed a StockCategory and StockImage
         db = test_app.session_factory()
         try:
-            cat = StockCategory(
-                name="测试栏目", bucket_name="test-bucket-xyz", kind="companion"
-            )
+            cat = StockCategory(name="测试栏目", bucket_name="test-bucket-xyz", kind="companion")
             db.add(cat)
             db.commit()
             db.refresh(cat)

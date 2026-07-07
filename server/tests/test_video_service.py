@@ -66,9 +66,7 @@ def test_run_video_job_success(monkeypatch):
             "server.app.modules.video.service.get_engine",
             lambda code: type("E", (), {"code": "edge", "synthesize": lambda self, t: b"mp3"})(),
         )
-        monkeypatch.setattr(
-            "server.app.modules.video.service.fc.probe_duration", lambda p: 3.0
-        )
+        monkeypatch.setattr("server.app.modules.video.service.fc.probe_duration", lambda p: 3.0)
         monkeypatch.setattr("server.app.modules.video.service.fc.run", lambda cmd: None)
         # 取图走真实 MinIO —— mock 掉，避免对不存在的 bucket/对象发真网络请求（会挂）
         monkeypatch.setattr(
@@ -76,9 +74,7 @@ def test_run_video_job_success(monkeypatch):
             lambda bucket, key: b"IMG",
         )
         # ffmpeg run 是 mock 的，产物文件不会真生成 → 读产物字节也 mock
-        monkeypatch.setattr(
-            "server.app.modules.video.service._read_file", lambda p: b"FAKEMP4"
-        )
+        monkeypatch.setattr("server.app.modules.video.service._read_file", lambda p: b"FAKEMP4")
         stored: dict = {}
         monkeypatch.setattr(
             "server.app.modules.video.store.put_video",

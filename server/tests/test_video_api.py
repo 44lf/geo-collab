@@ -18,9 +18,7 @@ def test_compose_requires_mcp_token(monkeypatch):
 
         config.get_settings.cache_clear()
 
-        resp = test_app.client.post(
-            "/api/videos/compose", json={"article_id": 1, "storyboard": {}}
-        )
+        resp = test_app.client.post("/api/videos/compose", json={"article_id": 1, "storyboard": {}})
         assert resp.status_code == 401
     finally:
         test_app.cleanup()
