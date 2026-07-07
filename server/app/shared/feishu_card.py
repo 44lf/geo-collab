@@ -6,7 +6,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
+
+from server.app.core.config import get_settings
+from server.app.shared.feishu_bitable import feishu_api
 
 _logger = logging.getLogger(__name__)
 
@@ -58,3 +62,44 @@ def build_review_card(
             },
         ],
     }
+
+
+def send_review_card(
+    *,
+    chat_id: str,
+    article_id: int,
+    title: str,
+    question: str,
+    score: int | None,
+    decision: str | None,
+    review_url: str,
+) -> str | None:
+    """发一张待审交互卡到群。未开启 / 无 chat_id / 失败 → None（绝不让发卡拖垮 loop）。"""
+    settings = get_settings()
+    if not settings.feishu_review_card_enabled or not chat_id:
+        return None
+    card = build_review_card(
+        article_id=article_id,
+        title=title,
+        question=question,
+        score=score,
+        decision=decision,
+        review_url=review_url,
+    )
+    try:
+        resp = feishu_api(
+            "POST",
+            "/im/v1/messages?receive_id_type=chat_id",
+            body={
+                "receive_id": chat_id,
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
+            },
+        )
+        if resp.get("code") != 0:
+            _logger.warning("send_review_card failed: %s", resp)
+            return None
+        return (resp.get("data") or {}).get("message_id")
+    except Exception:
+        _logger.warning("send_review_card raised", exc_info=True)
+        return None

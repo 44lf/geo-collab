@@ -30,6 +30,69 @@ def test_build_review_card_escapes_lark_md():
         decision=None,
         review_url="https://x/article/1",
     )
-    dumped = str(card)
+    content = card["elements"][0]["text"]["content"]
     # 特殊 lark_md 字符被转义（不裸出未转义的 * _ `）
-    assert "a\\*b\\_c\\`d" in dumped or "a*b_c`d" not in dumped
+    # 注意：用原始 content 字段断言，而非 str(card) —— dict 的 __repr__ 会对内部字符串再 repr()
+    # 一次，把 content 里已转义的单反斜杠又打印成双反斜杠，导致 str(card) 上的断言看错字符数。
+    assert "a\\*b\\_c\\`d" in content
+    assert "a*b_c`d" not in content
+
+
+def test_send_review_card_posts_interactive(monkeypatch):
+    from server.app.core import config
+    from server.app.shared import feishu_card as fc
+
+    monkeypatch.setenv("GEO_FEISHU_REVIEW_CARD_ENABLED", "true")
+    monkeypatch.setenv("GEO_FEISHU_REVIEW_CHAT_ID", "oc_abc")
+    monkeypatch.setenv("GEO_JWT_SECRET", "x")
+    config.get_settings.cache_clear()
+
+    captured = {}
+
+    def fake_feishu_api(method, path, *, body=None):
+        captured["method"] = method
+        captured["path"] = path
+        captured["body"] = body
+        return {"code": 0, "data": {"message_id": "om_123"}}
+
+    monkeypatch.setattr(fc, "feishu_api", fake_feishu_api, raising=False)
+    # feishu_api 在 feishu_card 内从 feishu_bitable import，需按实际引用路径打桩
+    monkeypatch.setattr("server.app.shared.feishu_card.feishu_api", fake_feishu_api, raising=False)
+
+    mid = fc.send_review_card(
+        chat_id="oc_abc",
+        article_id=1,
+        title="t",
+        question="q",
+        score=80,
+        decision="approved",
+        review_url="https://x/article/1",
+    )
+    assert mid == "om_123"
+    assert captured["path"].startswith("/im/v1/messages")
+    assert "chat_id" in captured["path"]  # receive_id_type=chat_id
+    assert captured["body"]["msg_type"] == "interactive"
+    assert isinstance(captured["body"]["content"], str)  # content 必须是 JSON 字符串
+    config.get_settings.cache_clear()
+
+
+def test_send_review_card_disabled_returns_none(monkeypatch):
+    from server.app.core import config
+    from server.app.shared import feishu_card as fc
+
+    monkeypatch.setenv("GEO_FEISHU_REVIEW_CARD_ENABLED", "false")
+    monkeypatch.setenv("GEO_JWT_SECRET", "x")
+    config.get_settings.cache_clear()
+    assert (
+        fc.send_review_card(
+            chat_id="oc_abc",
+            article_id=1,
+            title="t",
+            question="q",
+            score=None,
+            decision=None,
+            review_url="https://x/article/1",
+        )
+        is None
+    )
+    config.get_settings.cache_clear()
