@@ -367,3 +367,31 @@ async def ai_illustrate_article(
         "game_positions": game_positions,
     }
     return await _apost(f"/api/articles/{article_id}/ai-illustrate", json=body)
+
+
+@mcp.tool()
+async def notify_review_card(
+    article_id: int,
+    title: str,
+    question: str = "",
+    score: int | None = None,
+    decision: str | None = None,
+) -> dict[str, Any]:
+    """Send one interactive review card to the Feishu group for a freshly written article.
+
+    Shows title / ID / self-score / question + a 「查看文章」 link to /article/{id}.
+    No-op (sent=false) if GEO_FEISHU_REVIEW_CARD_ENABLED is off or no chat_id configured.
+
+    Args:
+        article_id: Target article (must exist).
+        title: Article title shown on the card.
+        question: 选题 / source question shown on the card.
+        score: self-review score 0-100 (optional).
+        decision: "approved" / "needs_rewrite" / "rejected" (optional).
+    """
+    body: dict[str, Any] = {"title": title, "question": question}
+    if score is not None:
+        body["score"] = score
+    if decision is not None:
+        body["decision"] = decision
+    return await _apost(f"/api/articles/{article_id}/review-card", json=body)
