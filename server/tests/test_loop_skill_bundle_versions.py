@@ -425,86 +425,124 @@ def test_enable_from_zero_concurrent_stays_singleton(monkeypatch):
 
 
 @pytest.mark.mysql
-def test_version_endpoints_end_to_end(monkeypatch):
+def test_old_readonly_endpoints_alias_to_official_skill(monkeypatch):
+    """Task 7:旧 /loop-skill-bundle/{info,download.zip,versions,install-payload}
+    改读官方 skill(slug=goal)的当前版本,不再读 LoopSkillBundleVersion 表。
+
+    (原 test_version_endpoints_end_to_end 整个改写——旧的上传/启用/点名下载
+    机制随本任务下线，见下面 test_old_write_endpoints_are_removed。)
+    """
     from server.tests.utils import build_test_app
 
     test_app = build_test_app(monkeypatch)
     c = test_app.client
     try:
-        # 初始:info 回落种子(5 文件)、versions 空
-        assert c.get("/api/mcp/loop-skill-bundle/info").json()["version"]
+        # 官方 skill 尚未 seed(Task 8 才建种子)时:info/download.zip 找不到官方包 → 400,
+        # versions 列表友好地回空(不报错)。
+        assert c.get("/api/mcp/loop-skill-bundle/info").status_code == 400
         assert c.get("/api/mcp/loop-skill-bundle/versions").json()["versions"] == []
 
-        # 上传一版
-        zip_bytes = _make_zip(_valid_files())
-        r = c.post(
-            "/api/mcp/loop-skill-bundle/versions",
-            files={"file": ("bundle.zip", zip_bytes, "application/zip")},
-            data={"version_label": "v-e2e"},
-        )
-        assert r.status_code == 200, r.text
-        vid = r.json()["id"]
-        assert r.json()["is_enabled"] is False
+        # 直接用 skill_service 建官方 skill(slug=goal, is_official=True)——
+        # 模拟 Task 8 seed 完成后的状态。
+        from server.app.db.session import SessionLocal
+        from server.app.modules.loop_skills import skill_service as svc
 
-        # 列表可见
-        listed = c.get("/api/mcp/loop-skill-bundle/versions").json()["versions"]
-        assert [v["id"] for v in listed] == [vid]
+        with SessionLocal() as db:
+            sk, _version_row = svc.create_version(
+                db,
+                entries=[
+                    ("commands/goal.md", b"# goal\n"),
+                    (
+                        "skills/geo-goal-orchestrator/SKILL.md",
+                        b"---\nname: x\n---\norchestrator\n",
+                    ),
+                ],
+                name="/goal loop skills",
+                uploaded_by=None,
+            )
+            sk.slug = "goal"
+            sk.is_official = True
+            db.commit()
 
-        # 启用 → info 切到 v-e2e(3 文件)
-        assert c.post(f"/api/mcp/loop-skill-bundle/versions/{vid}/enable").status_code == 204
+        # info 现在返回官方 skill 当前版本(2 个文件)
         info = c.get("/api/mcp/loop-skill-bundle/info").json()
-        assert info["version"] == "v-e2e"
-        assert len(info["files"]) == 3
+        assert info["version"] == "v1"
+        assert {f["path"] for f in info["files"]} == {
+            "commands/goal.md",
+            "skills/geo-goal-orchestrator/SKILL.md",
+        }
 
-        # 点名下载指定版:content-type + 文件名必须 ASCII 安全(B)
-        z = c.get(f"/api/mcp/loop-skill-bundle/versions/{vid}/download.zip")
+        # versions 列表也读同一个官方 skill(唯一版本即当前版本)
+        listed = c.get("/api/mcp/loop-skill-bundle/versions").json()["versions"]
+        assert len(listed) == 1
+        assert listed[0]["version_label"] == "v1"
+        assert listed[0]["is_enabled"] is True
+
+        # download.zip:content-type + 文件名 ASCII 安全(沿用旧回归断言)
+        z = c.get("/api/mcp/loop-skill-bundle/download.zip")
         assert z.status_code == 200
         assert z.headers["content-type"] == "application/zip"
         cd = z.headers["content-disposition"]
         assert 'filename="geo-loop-skills-' in cd and ".zip" in cd
-        # 头值必须能 latin-1 编码(Starlette 已发出即证明,冗余断言防回归)
         z.headers["content-disposition"].encode("latin-1")
         z.headers["x-bundle-version"].encode("latin-1")
 
-        # 中文 version_label 上传 + 启用 + 下载:绝不能 500(B 的核心回归)
-        rz = c.post(
-            "/api/mcp/loop-skill-bundle/versions",
-            files={"file": ("b.zip", _make_zip(_valid_files()), "application/zip")},
-            data={"version_label": "2026-07-08 严格版"},
-        )
-        assert rz.status_code == 200, rz.text
-        cn_id = rz.json()["id"]
-        zcn = c.get(f"/api/mcp/loop-skill-bundle/versions/{cn_id}/download.zip")
-        assert zcn.status_code == 200  # 不是 500
-        zcn.headers["content-disposition"].encode("latin-1")  # RFC5987 已把中文挪进 filename*
-
-        # by-id 下载不存在 → 404(不是 400)
-        assert c.get("/api/mcp/loop-skill-bundle/versions/999999/download.zip").status_code == 404
-
-        # install-payload 点名找不到 → ok:false + available 列表(MCP token 路由)
+        # install-payload(MCP token 路由)同样读官方 skill,version 查询参数被忽略
         monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
         from server.app.core import config
 
         config.get_settings.cache_clear()
         pr = c.get(
             "/api/mcp/loop-skill-bundle/install-payload",
-            params={"version": "查无此版"},
+            params={"version": "查无此版-应被忽略"},
             headers={"X-MCP-Token": "secret"},
         )
         assert pr.status_code == 200
         body = pr.json()
-        assert body["ok"] is False
-        assert isinstance(body["data"]["available"], list) and body["data"]["available"]
-
-        # 删当前启用版 → 409(admin client + 启用版冲突)
-        assert c.delete(f"/api/mcp/loop-skill-bundle/versions/{vid}").status_code == 409
+        assert body["ok"] is True
+        assert any(f["path"] == "commands/goal.md" for f in body["data"]["files"])
     finally:
         test_app.cleanup()
 
 
 @pytest.mark.mysql
-def test_install_loop_skills_tool_version_param(monkeypatch):
-    """install_loop_skills(version=...) 透传 version,拿到点名的那版。"""
+def test_old_write_endpoints_are_removed(monkeypatch):
+    """旧写端点(上传/启用/删除/按 id 下载)已下线——router.py 里对应的处理函数已删除。
+
+    实际状态码取决于 main.py 的 SPA 兜底路由 `@app.get("/{full_path:path}")`
+    (挂在所有 API 路由之后,对任何路径都有 path 匹配,但只注册了 GET):
+    - `/loop-skill-bundle/versions` 路径本身还挂着 GET(list_bundle_versions 只读列表别名保留),
+      所以 POST 同一路径命中 405(方法不允许)。
+    - `/versions/1/enable`(POST)、`/versions/1`(DELETE)——没有任何具名路由匹配这两个路径,
+      但 SPA 兜底路由按 path 模式仍会匹配(它接受任意 path),只是方法只登记了 GET,
+      于是 Starlette 按「path 匹配、method 不匹配」判成 405,而不是 404。
+    - `/versions/1/download.zip`(GET)——方法匹配 SPA 兜底路由的 GET,处理函数才真正执行,
+      内部判断 full_path 以 `api/` 开头显式抛 404——这个才是货真价实的「路径不存在」404。
+    """
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    c = test_app.client
+    try:
+        assert (
+            c.post(
+                "/api/mcp/loop-skill-bundle/versions",
+                files={"file": ("bundle.zip", _make_zip(_valid_files()), "application/zip")},
+                data={"version_label": "v-e2e"},
+            ).status_code
+            == 405
+        )
+        assert c.post("/api/mcp/loop-skill-bundle/versions/1/enable").status_code == 405
+        assert c.delete("/api/mcp/loop-skill-bundle/versions/1").status_code == 405
+        assert c.get("/api/mcp/loop-skill-bundle/versions/1/download.zip").status_code == 404
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_install_loop_skills_tool_reads_official_skill(monkeypatch):
+    """install_loop_skills() 现在打 /api/mcp/skills/goal/install-payload,读官方
+    skill 当前版本;`version` 参数保留仅为签名兼容,已被忽略。"""
     import asyncio
 
     from server.tests.utils import build_test_app
@@ -512,16 +550,17 @@ def test_install_loop_skills_tool_version_param(monkeypatch):
     test_app = build_test_app(monkeypatch)
     try:
         from server.app.db.session import SessionLocal
-        from server.app.modules.loop_skills import versions_service as vs
+        from server.app.modules.loop_skills import skill_service as svc
 
         with SessionLocal() as db:
-            vs.upload_version(
+            sk, _version_row = svc.create_version(
                 db,
-                _make_zip(_valid_files()),
-                version_label="v-tool",
-                notes=None,
-                uploaded_by_user_id=None,
+                entries=[("skills/geo-goal-orchestrator/SKILL.md", b"orchestrator content")],
+                name="/goal loop skills",
+                uploaded_by=None,
             )
+            sk.slug = "goal"
+            sk.is_official = True
             db.commit()
 
         # 用 monkeypatch 把工具内部 async _aget 换成 async fake(直接打测试 client,带 MCP token 语义)。
@@ -540,9 +579,11 @@ def test_install_loop_skills_tool_version_param(monkeypatch):
 
         monkeypatch.setattr(action, "_aget", fake_aget)
 
-        out = asyncio.run(action.install_loop_skills(version="v-tool"))
+        # 传 version 也应被忽略,一律读官方 skill 当前版本
+        out = asyncio.run(action.install_loop_skills(version="some-old-label"))
         assert out["ok"] is True
-        assert out["data"]["version"] == "v-tool"
-        assert len(out["data"]["files"]) == 3
+        assert out["data"]["version"] == "v1"
+        assert len(out["data"]["files"]) == 1
+        assert out["data"]["files"][0]["path"] == "skills/geo-goal-orchestrator/SKILL.md"
     finally:
         test_app.cleanup()

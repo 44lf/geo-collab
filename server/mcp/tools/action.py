@@ -258,13 +258,20 @@ async def create_distribute_task(
 async def install_loop_skills(version: str | None = None) -> dict[str, Any]:
     """Fetch the /goal Loop skill bundle so Claude Code can install it locally.
 
+    Reads the **official skill** (slug="goal") current version from GEO's multi-skill
+    library (`/api/mcp/skills/goal/install-payload`). The official skill only has a
+    "current version" concept — there is no per-call version pinning anymore.
+
     Args:
-        version: Optional. Empty = current enabled version. A numeric id or a
-            version label pins that specific version (e.g. "2026-07-08 严格版").
+        version: Deprecated / ignored. Kept for backward compatibility with older
+            callers that used to pin a specific bundle version by id or label.
+            Always resolves to the official skill's current version now; to switch
+            versions, use the GEO web UI's skill library ("Skill 库") to change
+            which version is current, then re-call this tool.
 
     Returns a dict containing the template files (README, slash command, SKILL.md
-    files) of the selected version. The calling Claude Code session should then
-    use its Write tool to write each file to the user's `.claude/` directory.
+    files) of the official skill's current version. The calling Claude Code session
+    should then use its Write tool to write each file to the user's `.claude/` directory.
 
     Returns:
         {"ok": True, "data": {
@@ -274,8 +281,7 @@ async def install_loop_skills(version: str | None = None) -> dict[str, Any]:
             "files": [{"path": str, "content": str, "sha256": str, "size": int}, ...],
         }, "error": None}
     """
-    params = {"version": version} if version else None
-    raw = await _aget("/api/mcp/loop-skill-bundle/install-payload", params=params)
+    raw = await _aget("/api/mcp/skills/goal/install-payload")
     if not raw.get("ok"):
         return raw  # 透传 _fail 结构
     inner = raw.get("data") or {}

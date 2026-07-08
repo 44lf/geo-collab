@@ -1,32 +1,36 @@
 """loop_skills HTTP 路由.
 
 两组路由：
-- router (user JWT)：/info + /download.zip，给 Web Section ⑤ 用
-- mcp_router (MCP token)：/install-payload，给 install_loop_skills 工具用（Task 6 加）
+- router (user JWT)：/info + /download.zip + /versions（只读列表），给 Web Section ⑤ 用
+- mcp_router (MCP token)：/install-payload，给 install_loop_skills 工具用
 
-两条用户群不同 + 鉴权不同，必须拆 router；service 层 build_bundle 共用。
+Task 7 起，这三个只读端点（info / download.zip / install-payload）不再读旧的
+`LoopSkillBundleVersion` 版本表（`versions_service.py`），而是转读官方 skill
+（slug="goal"）的当前版本 —— 见 `skill_service.get_current_bundle()`。旧的上传
+/ 启用 / 删除写端点已下线（前端已切到 `/api/mcp/skills/*` 新路由，见
+`skill_router.py`）。这里只剩「旧路径 → 新数据源」的兼容别名，保证存量调用方
+（Web Section ⑤、`install_loop_skills` MCP 工具旧调用）不断。
 """
 
 from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from server.app.core.mcp_auth import require_mcp_token
-from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
-from server.app.modules.audit.service import add_audit_entry
-from server.app.modules.loop_skills import versions_service as vs
+from server.app.modules.loop_skills import skill_service as _svc
 from server.app.modules.loop_skills.schemas import BundleVersionList, BundleVersionMeta
 from server.app.modules.loop_skills.service import SkillBundle, build_zip
-from server.app.modules.system.models import User
 from server.app.shared.errors import ValidationError
 
 router = APIRouter()
+
+_OFFICIAL_SLUG = "goal"
 
 
 class LoopSkillFileMeta(BaseModel):
@@ -62,10 +66,20 @@ def _zip_response(b: SkillBundle) -> Response:
     )
 
 
+def _find_official_skill(db: Session) -> _svc.SkillListItem | None:
+    """按 slug 找官方 skill。`skill_service` 只公开 `list_skills` 做枚举，没有
+    按 slug 查单条的公开函数——用列表过滤，避免碰它的私有 `_active_skill_by_slug`。
+    """
+    return next((s for s in _svc.list_skills(db) if s.slug == _OFFICIAL_SLUG), None)
+
+
 @router.get("/loop-skill-bundle/info", response_model=LoopSkillBundleInfo)
 def get_loop_skill_bundle_info(db: Session = Depends(get_db)) -> LoopSkillBundleInfo:
-    """[user] /goal Loop skill 包元信息 —— 当前启用版(无则回落种子)。"""
-    b = vs.get_active_bundle(db)
+    """[user] /goal Loop skill 包元信息 —— 别名读官方 skill(slug=goal)当前版本。
+
+    官方包不存在 / 无当前版本 → `ValidationError` 冒泡给全局 handler → 400。
+    """
+    b = _svc.get_current_bundle(db, _OFFICIAL_SLUG)
     return LoopSkillBundleInfo(
         version=b.version,
         bundle_sha256=b.bundle_sha256,
@@ -82,15 +96,23 @@ def download_loop_skill_bundle_zip(
     version: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> Response:
-    """[user] 下载 zip。version 空=启用版;数字=id;否则 label。"""
-    b = vs.resolve_bundle_for_install(db, version)  # 找不到 → ValidationError → 全局 400
+    """[user] 下载官方 skill(goal)当前版本 zip。
+
+    `version` 查询参数为旧调用方兼容保留；官方 skill 只有"当前版本"概念，
+    这里直接忽略，不再支持按 id / label 点名历史版本（要点名历史版本请走
+    新的 `/api/mcp/skills/{skill_id}/download.zip`）。
+    """
+    b = _svc.get_current_bundle(db, _OFFICIAL_SLUG)
     return _zip_response(b)
 
 
 @router.get("/loop-skill-bundle/versions", response_model=BundleVersionList)
 def list_bundle_versions(db: Session = Depends(get_db)) -> BundleVersionList:
-    """[user] 列出所有未删除版本(元信息,不含正文)。"""
-    metas = vs.list_versions(db)
+    """[user] 列出官方 skill(goal)的版本历史(元信息,不含正文)。官方包不存在 → 空列表。"""
+    official = _find_official_skill(db)
+    if official is None:
+        return BundleVersionList(versions=[])
+    items = _svc.list_versions(db, official.id)
     return BundleVersionList(
         versions=[
             BundleVersionMeta(
@@ -98,99 +120,15 @@ def list_bundle_versions(db: Session = Depends(get_db)) -> BundleVersionList:
                 version_label=m.version_label,
                 bundle_sha256=m.bundle_sha256,
                 file_count=m.file_count,
-                total_size=m.total_size,
-                is_enabled=m.is_enabled,
-                uploaded_by_user_id=m.uploaded_by_user_id,
-                notes=m.notes,
-                created_at=m.created_at,
+                total_size=m.total_bytes,
+                is_enabled=m.is_current,
+                uploaded_by_user_id=m.uploaded_by,
+                notes=None,
+                created_at=m.uploaded_at,
             )
-            for m in metas
+            for m in items
         ]
     )
-
-
-@router.post("/loop-skill-bundle/versions", response_model=BundleVersionMeta)
-async def upload_bundle_version(
-    file: UploadFile = File(...),
-    version_label: str | None = Form(default=None),
-    notes: str | None = Form(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> BundleVersionMeta:
-    """[user] 上传 zip 建新版本(默认不启用)。"""
-    data = await file.read()
-    m = vs.upload_version(
-        db,
-        data,
-        version_label=version_label,
-        notes=notes,
-        uploaded_by_user_id=current_user.id,
-    )
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="loop_skill_bundle.upload",
-        target_type="loop_skill_bundle",
-        target_id=str(m.id),
-        payload={"version_label": m.version_label, "sha": m.bundle_sha256},
-    )
-    return BundleVersionMeta(
-        id=m.id,
-        version_label=m.version_label,
-        bundle_sha256=m.bundle_sha256,
-        file_count=m.file_count,
-        total_size=m.total_size,
-        is_enabled=m.is_enabled,
-        uploaded_by_user_id=m.uploaded_by_user_id,
-        notes=m.notes,
-        created_at=m.created_at,
-    )
-
-
-@router.post("/loop-skill-bundle/versions/{version_id}/enable", status_code=204)
-def enable_bundle_version(
-    version_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),  # 决策1:启用=改所有人本地 skill,收归 admin
-) -> Response:
-    """[admin] 启用某版本(=回退)。"""
-    vs.enable_version(db, version_id)
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="loop_skill_bundle.enable",
-        target_type="loop_skill_bundle",
-        target_id=str(version_id),
-    )
-    return Response(status_code=204)
-
-
-@router.delete("/loop-skill-bundle/versions/{version_id}", status_code=204)
-def delete_bundle_version(
-    version_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),  # 决策1:删除收归 admin
-) -> Response:
-    """[admin] 逻辑删除某版本(拒删当前启用版)。"""
-    vs.soft_delete_version(db, version_id)
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="loop_skill_bundle.delete",
-        target_type="loop_skill_bundle",
-        target_id=str(version_id),
-    )
-    return Response(status_code=204)
-
-
-@router.get("/loop-skill-bundle/versions/{version_id}/download.zip")
-def download_bundle_version(version_id: int, db: Session = Depends(get_db)) -> Response:
-    """[user] 下载指定版本 zip。不存在/已删 → 404(spec §L169)。"""
-    try:
-        b = vs.get_bundle_by_id(db, version_id)
-    except ValidationError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _zip_response(b)
 
 
 # MCP token 鉴权 (router-level dependency)
@@ -202,23 +140,19 @@ def get_loop_skill_install_payload(
     version: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
-    """[MCP] install_loop_skills 工具入口 —— version 空=启用版,否则点名。
+    """[MCP] install_loop_skills 工具旧路径别名 —— 转读官方 skill(slug=goal)当前版本。
 
-    找不到点名版本 → 返回 {ok:false, data:{available:[...]}}(HTTP 200,非 400):让 MCP 工具
-    拿到候选版本列表帮用户挑,兑现 spec §L168、支撑"点名任意版"的可用性。
+    `version` 查询参数为旧调用方兼容保留，目前忽略(官方 skill 无历史点名概念)。
+    找不到官方包 → 返回 {ok:false, data:{available:[...]}}(HTTP 200,非 400):让
+    MCP 工具拿到现有 skill 列表帮用户排查，而不是直接报错。
     """
     try:
-        b = vs.resolve_bundle_for_install(db, version)
+        b = _svc.get_current_bundle(db, _OFFICIAL_SLUG)
     except ValidationError as exc:
         return {
             "ok": False,
             "error": str(exc),
-            "data": {
-                "available": [
-                    {"id": m.id, "version_label": m.version_label, "is_enabled": m.is_enabled}
-                    for m in vs.list_versions(db)
-                ]
-            },
+            "data": {"available": [{"slug": s.slug, "name": s.name} for s in _svc.list_skills(db)]},
         }
     return {
         "ok": True,
