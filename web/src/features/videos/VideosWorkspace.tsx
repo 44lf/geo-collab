@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Film } from "lucide-react";
 import { listVideos } from "../../api/videos";
@@ -22,8 +22,10 @@ export function VideosWorkspace() {
   const [loaded, setLoaded] = useState(false);
   const navigate = useNavigate();
   const { toast: showToast } = useToast();
+  const seqRef = useRef(0);
 
   async function fetchPage(reset: boolean, curLen: number) {
+    const seq = ++seqRef.current;
     setLoading(true);
     try {
       const res = await listVideos({
@@ -31,13 +33,15 @@ export function VideosWorkspace() {
         skip: reset ? 0 : curLen,
         limit: PAGE,
       });
+      if (seq !== seqRef.current) return; // 更新已被更晚的请求取代，丢弃过期响应
       setTotal(res.total);
       setItems((prev) => (reset ? res.items : [...prev, ...res.items]));
       setLoaded(true);
     } catch (e) {
+      if (seq !== seqRef.current) return;
       showToast(e instanceof Error ? e.message : "加载视频失败", "error");
     } finally {
-      setLoading(false);
+      if (seq === seqRef.current) setLoading(false);
     }
   }
 
@@ -117,6 +121,7 @@ function VideoCard({
   onOpenArticle: (articleId: number) => void;
 }) {
   const title = video.title || video.article_title || `视频 ${video.job_id.slice(0, 8)}`;
+  const fileBase = title.replace(/[\\/:*?"<>|]/g, "_");
   return (
     <div style={{ border: "1px solid #eee", borderRadius: 12, overflow: "hidden", background: "#fff", display: "flex", flexDirection: "column" }}>
       {video.status === "done" && video.video_url ? (
@@ -155,8 +160,8 @@ function VideoCard({
         </button>
         {video.tags.length > 0 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {video.tags.map((t) => (
-              <span key={t} style={{ fontSize: 11, background: "#f0f0f0", borderRadius: 4, padding: "2px 6px", color: "#666" }}>
+            {video.tags.map((t, i) => (
+              <span key={`${t}-${i}`} style={{ fontSize: 11, background: "#f0f0f0", borderRadius: 4, padding: "2px 6px", color: "#666" }}>
                 {t}
               </span>
             ))}
@@ -166,12 +171,12 @@ function VideoCard({
         {video.status === "done" && (
           <div style={{ display: "flex", gap: 12 }}>
             {video.video_url && (
-              <a href={video.video_url} download style={{ fontSize: 12, color: "#2563eb" }}>
+              <a href={video.video_url} download={`${fileBase}.mp4`} style={{ fontSize: 12, color: "#2563eb" }}>
                 下载 mp4
               </a>
             )}
             {video.srt_url && (
-              <a href={video.srt_url} download style={{ fontSize: 12, color: "#2563eb" }}>
+              <a href={video.srt_url} download={`${fileBase}.srt`} style={{ fontSize: 12, color: "#2563eb" }}>
                 下载 srt
               </a>
             )}

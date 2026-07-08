@@ -186,7 +186,7 @@ def list_video_jobs(
         db.query(VideoJob, Article.title)
         .outerjoin(Article, VideoJob.article_id == Article.id)
         .filter(*conditions)
-        .order_by(VideoJob.created_at.desc())
+        .order_by(VideoJob.created_at.desc(), VideoJob.id.desc())
         .offset(skip)
         .limit(limit)
         .all()
