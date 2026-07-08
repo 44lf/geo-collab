@@ -51,6 +51,7 @@ def list_skills(db: Session = Depends(get_db)) -> SkillList:
 async def upload_skill(
     files: list[UploadFile] = File(...),
     name: str = Form(...),
+    category: str = Form("general"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> UploadResult:
@@ -62,6 +63,7 @@ async def upload_skill(
             name=name,
             uploaded_by=current_user.id,
             is_admin=(current_user.role == "admin"),
+            category=category,
         )
     except (ConflictError, ValidationError):
         # 冲突(并发撞版本号→409) / 不存在类(→400) 走全局兜底,不在此处改写

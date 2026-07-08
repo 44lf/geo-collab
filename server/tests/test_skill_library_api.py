@@ -137,6 +137,35 @@ def test_operator_cannot_delete_official_version_403(monkeypatch):
         app.cleanup()
 
 
+def test_upload_with_category(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        c = app.client
+        r = c.post(
+            "/api/mcp/skills/upload",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"one"}), "application/zip")},
+            data={"name": "cat-writer", "category": "distribute"},
+        )
+        assert r.status_code == 200, r.text
+        skills = c.get("/api/mcp/skills").json()["skills"]
+        row = next(s for s in skills if s["slug"] == r.json()["slug"])
+        assert row["category"] == "distribute"
+
+        # 不传 category → 默认 general
+        r2 = c.post(
+            "/api/mcp/skills/upload",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"x"}), "application/zip")},
+            data={"name": "cat-default-api"},
+        )
+        skills2 = c.get("/api/mcp/skills").json()["skills"]
+        row2 = next(s for s in skills2 if s["slug"] == r2.json()["slug"])
+        assert row2["category"] == "general"
+    finally:
+        app.cleanup()
+
+
 def test_operator_cannot_upload_official_name_403(monkeypatch):
     """非 admin 用官方包同名上传（追加版本）→ 403（I-1：官方包上传收 admin）。"""
     from server.app.modules.loop_skills import skill_service as svc
