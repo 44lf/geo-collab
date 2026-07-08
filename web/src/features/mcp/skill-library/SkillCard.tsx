@@ -34,6 +34,21 @@ function CustomBadge() {
   );
 }
 
+const CATEGORY_ZH: Record<string, string> = {
+  generation: "生文",
+  distribute: "发文",
+  video: "视频",
+  general: "通用",
+};
+
+function CategoryBadge({ category }: { category: string }) {
+  return (
+    <span style={badgeStyle("var(--cream-2)", "var(--fg-2)", "var(--hair)")}>
+      {CATEGORY_ZH[category] ?? category}
+    </span>
+  );
+}
+
 function badgeStyle(bg: string, color: string, border: string): CSSProperties {
   return {
     display: "inline-flex",
@@ -82,6 +97,7 @@ export function SkillCard({
         <FileText size={16} style={{ color: "var(--fg-3)", flexShrink: 0 }} />
         <span style={{ fontWeight: 650, color: "var(--fg)", fontSize: 14.5 }}>{skill.name}</span>
         {skill.is_official ? <OfficialBadge /> : <CustomBadge />}
+        <CategoryBadge category={skill.category} />
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button
             type="button"

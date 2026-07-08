@@ -16,6 +16,13 @@ import { listSkillVersions, uploadSkill } from "../../../api/skills";
 
 type Phase = "idle" | "receiving" | "validating" | "storing" | "done" | "error";
 
+const CATEGORY_OPTIONS: { value: string; label: string }[] = [
+  { value: "generation", label: "生文" },
+  { value: "distribute", label: "发文" },
+  { value: "video", label: "视频" },
+  { value: "general", label: "通用" },
+];
+
 type UploadResult = {
   slug: string;
   version_label: string;
@@ -111,6 +118,7 @@ export function UploadZone({ onUploaded }: { onUploaded: () => void }) {
   const [result, setResult] = useState<UploadResult | null>(null);
   const [percent, setPercent] = useState(0);
   const [dragOver, setDragOver] = useState(false);
+  const [category, setCategory] = useState<string>("general");
 
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -164,7 +172,7 @@ export function UploadZone({ onUploaded }: { onUploaded: () => void }) {
     );
 
     try {
-      const r = await uploadSkill(name, files);
+      const r = await uploadSkill(name, files, category);
       let detail: UploadResult = {
         slug: r.slug,
         version_label: r.version_label,
@@ -252,6 +260,26 @@ export function UploadZone({ onUploaded }: { onUploaded: () => void }) {
         <UploadingCard fileName={fileName} phase={phase} percent={percent} statusText={statusText} />
       ) : (
         <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 12.5, color: "var(--fg-2)" }}>业务类别</span>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={{
+                height: 30,
+                padding: "0 8px",
+                borderRadius: "var(--r-sm)",
+                border: "1px solid var(--hair)",
+                background: "var(--surface-2)",
+                color: "var(--fg)",
+                fontSize: 12.5,
+              }}
+            >
+              {CATEGORY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
           <div
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
