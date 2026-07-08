@@ -178,7 +178,7 @@ def list_video_jobs(
     返回 (rows, total)。rows 每项为 (VideoJob, article_title|None)；
     total 为满足筛选的总数（不受 skip/limit 影响）。
     """
-    conditions = [VideoJob.status.in_(("done", "failed"))]
+    conditions: list[Any] = [VideoJob.status.in_(("done", "failed"))]
     if status is not None:
         conditions.append(VideoJob.status == status)
     total = db.query(VideoJob.id).filter(*conditions).count()
