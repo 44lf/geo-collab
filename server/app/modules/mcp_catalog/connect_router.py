@@ -47,7 +47,7 @@ _CURATED_ZH: dict[str, str] = {
     "notify_feishu": "发送飞书 webhook 通知",
     "set_review_status": "修改文章审核状态（pending / approved）",
     "create_distribute_task": "建 article_round_robin 分发任务（轮询派号发文）",
-    "install_loop_skills": "拉取 /goal Loop skill 包供本地安装",
+    "install_loop_skills": "按 slug 拉取 Skill 库整包供本地安装（默认 goal）",
     "ai_illustrate_article": "AI 智能配图 + 自动封面（对齐 Web UI「AI 配图」）",
     "notify_review_card": "发送飞书待审交互卡（标题/自评分/选题 + 查看文章链接）",
     # meta（评估 / 回流）

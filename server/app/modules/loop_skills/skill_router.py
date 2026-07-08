@@ -191,6 +191,7 @@ def mcp_list_skills(category: str | None = None, db: Session = Depends(get_db)) 
             }
             for it in items
         ]
+        # 返回裸 payload —— catalog.py 的 _aget 会补 {ok,data,error} envelope；勿在此再包一层，否则 list_skills 工具双层 envelope（本 feature 已因此栽过一次 Critical）
         return {"skills": skills}
     except Exception as exc:
         raise mcp_exception_response(exc, context=f"mcp_list_skills category={category}") from exc
