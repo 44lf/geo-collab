@@ -177,8 +177,18 @@ echo ""
 docker compose -f "$COMPOSE_FILE" ps
 
 HTTP_PORT="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | cut -d= -f2- | tr -d '[:space:]' || true)"
-HTTP_PORT="${HTTP_PORT:-80}"
+HTTP_PORT="${HTTP_PORT:-8081}"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || echo '<server-ip>')"
+
+# ── 健康检查（先验证，再宣布部署完成）──────────────────────
+echo ""; echo "==> 健康检查（本机 http://127.0.0.1:$HTTP_PORT/）"
+ok=0
+for i in $(seq 1 20); do
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HTTP_PORT/" || true)"
+  if [[ "$code" =~ ^(200|301|302|401|403)$ ]]; then ok=1; echo "健康检查通过（HTTP $code）"; break; fi
+  sleep 3
+done
+[[ "$ok" == 1 ]] || { echo "❌ 健康检查失败（端口 $HTTP_PORT 无响应）"; exit 2; }
 
 echo ""
 echo "==> 部署完成!"
@@ -187,13 +197,3 @@ echo "    后端 API: http://${HOST_IP}:${HTTP_PORT}/api/"
 echo ""
 echo "    查看日志: docker compose -f $COMPOSE_FILE logs -f"
 echo "    停止服务: docker compose -f $COMPOSE_FILE down   (注意: 不要加 -v，会删数据)"
-
-echo ""; echo "==> 健康检查（本机 http://127.0.0.1:$HTTP_PORT/）"
-HTTP_PORT="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | cut -d= -f2- | tr -d '[:space:]' || true)"; HTTP_PORT="${HTTP_PORT:-8081}"
-ok=0
-for i in $(seq 1 20); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HTTP_PORT/" || true)"
-  if [[ "$code" =~ ^(200|301|302|401|403)$ ]]; then ok=1; echo "健康检查通过（HTTP $code）"; break; fi
-  sleep 3
-done
-[[ "$ok" == 1 ]] || { echo "❌ 健康检查失败（端口 $HTTP_PORT 无响应）"; exit 2; }
