@@ -15,8 +15,9 @@
 #     坏改动最迟在开 MR 时被拦下,不会带病合入
 #     发版级流水线(tag 驱动构建+部署,参照 HrSystem 的 kaniko+Harbor 模式)后续另建
 #   - 后端测试 job 内用 pytest-xdist 并行(-n $GEO_CI_PYTEST_WORKERS + 按 worker 拆库,
-#     见 server/tests/utils.py):不占额外 runner 槽位;-n 2 实测 410.86s(效率 1.83x,
-#     接近线性)后升到 4
+#     见 server/tests/utils.py):不占额外 runner 槽位;-n 2 实测 410.86s(效率 1.83x)。
+#     -n 4 虽再快 ~70s 但有间歇竞态(test_phase4 manual-confirm 的后台线程被 CPU 争抢
+#     放大,2 次全量 1 次挂)——已回退 -n 2,竞态测试加固后再升
 #
 # 若将来把 runner 的 concurrent 调到 ≥4(或加 runner),可参照
 # .github/workflows/ci.yml 把 backend-test 重新拆成 parallel:matrix 并行,
@@ -56,7 +57,7 @@ variables:
   FF_USE_FASTZIP: "true"          # 更快的缓存压缩
   GEO_JWT_SECRET: "ci-test-secret-not-for-prod"
   GEO_DATA_DIR: "$CI_PROJECT_DIR/geo-test-data"
-  GEO_CI_PYTEST_WORKERS: "4"      # pytest-xdist 并行度;-n 2 实测效率 1.83x 接近线性,升 4(降速/超时再回 2)
+  GEO_CI_PYTEST_WORKERS: "2"      # pytest-xdist 并行度;-n 4 有间歇竞态(见文件头注释),修好前保持 2
 
 default:
   interruptible: true             # 新 push 进来自动取消旧的在跑流水线,腾出 runner
