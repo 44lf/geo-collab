@@ -69,7 +69,8 @@ def test_list_includes_latest_auto_review_score(monkeypatch):
         r = test_app.client.get("/api/articles")
         assert r.status_code == 200
         rows = {row["id"]: row for row in r.json()}
-        assert rows[article_id]["auto_review_score"] == 85
+        # 无 pass_line / 过线 → 纯数字字符串
+        assert rows[article_id]["auto_review_score"] == "85"
     finally:
         test_app.cleanup()
 
@@ -84,6 +85,93 @@ def test_list_score_none_without_decision(monkeypatch):
         assert r.status_code == 200
         rows = {row["id"]: row for row in r.json()}
         assert article_id in rows
+        assert rows[article_id]["auto_review_score"] is None
+    finally:
+        test_app.cleanup()
+
+
+def test_list_score_below_pass_line_shows_fraction(monkeypatch):
+    """score_total < pass_line（没过线）→ "真实分 _ 合格线" 显示串。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        article_id = _make_article(test_app, "below line")
+
+        db = test_app.session_factory()
+        try:
+            submit_decision(
+                db,
+                article_id,
+                AutoReviewSubmitRequest(
+                    decision="needs_rewrite",
+                    score_total=65,
+                    pass_line=80,
+                    decided_by="claude-goal-verifier",
+                ),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        r = test_app.client.get("/api/articles")
+        assert r.status_code == 200
+        rows = {row["id"]: row for row in r.json()}
+        assert rows[article_id]["auto_review_score"] == "65 _ 80"
+    finally:
+        test_app.cleanup()
+
+
+def test_list_score_at_or_above_pass_line_plain_number(monkeypatch):
+    """score_total >= pass_line（过线）→ 纯数字，不带尾巴。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        article_id = _make_article(test_app, "above line")
+
+        db = test_app.session_factory()
+        try:
+            submit_decision(
+                db,
+                article_id,
+                AutoReviewSubmitRequest(
+                    decision="approved",
+                    score_total=85,
+                    pass_line=80,
+                    decided_by="claude-goal-verifier",
+                ),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        r = test_app.client.get("/api/articles")
+        assert r.status_code == 200
+        rows = {row["id"]: row for row in r.json()}
+        assert rows[article_id]["auto_review_score"] == "85"
+    finally:
+        test_app.cleanup()
+
+
+def test_list_score_negative_sentinel_hidden(monkeypatch):
+    """评分失败哨兵 score_total=-1 → None（前端不显示）。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        article_id = _make_article(test_app, "score failed")
+
+        db = test_app.session_factory()
+        try:
+            submit_decision(
+                db,
+                article_id,
+                AutoReviewSubmitRequest(
+                    decision="rejected", score_total=-1, decided_by="claude-code-loop"
+                ),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        r = test_app.client.get("/api/articles")
+        assert r.status_code == 200
+        rows = {row["id"]: row for row in r.json()}
         assert rows[article_id]["auto_review_score"] is None
     finally:
         test_app.cleanup()

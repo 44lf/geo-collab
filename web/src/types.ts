@@ -216,8 +216,11 @@ export type ArticleSummary = {
   /** 生成此文的提示词「模板」名；手动/历史文章为 null */
   source_template_name: string | null;
   source_template_id: number | null;
-  /** MCP loop/goal 生文的自评分（0-100）；手动/pipeline/方案文章为 null */
-  auto_review_score: number | null;
+  /**
+   * MCP loop/goal 生文的自评分显示串；手动/pipeline/方案文章为 null。
+   * 过线/老数据 = 纯数字 "84"；没过线 = "65 _ 80"（真实分 _ 合格线，前端拆成 65 / 80 标红）。
+   */
+  auto_review_score: string | null;
   created_at: string;
   updated_at: string;
 };

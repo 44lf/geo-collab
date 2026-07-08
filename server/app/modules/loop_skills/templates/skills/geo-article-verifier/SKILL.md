@@ -19,8 +19,10 @@ decision + 调 `submit_review_decision`。
 4. 按 4 维度评分（0-100，整数）
 5. 计算 `score_total = round((factuality + readability + style + policy_safety) / 4)`
 6. 决策（门槛见下）
-7. `submit_review_decision(article_id, decision, score_total, score_breakdown,
-   reasoning, decided_by="claude-goal-verifier")`
+7. `submit_review_decision(article_id, decision, score_total, pass_line=<合格线>,
+   score_breakdown, reasoning, decided_by="claude-goal-verifier")`
+   —— `pass_line` 传「决策门槛」里的**合格线**（approval 的 score_total 门槛，当前 70），
+   **过没过审都要传**：没过线的文章据此在内容列表显示「真实分 / 合格线」（如 65 / 80）
 8. 返回 `{"decision": str, "score_total": int, "weak_dims": [str], "reasoning": str}`
    作为最后一条消息。其中：
    - `weak_dims` = 所有"拖后腿"的维度名列表：`factuality`/`readability`/`style` 分 < 70 的、
@@ -40,11 +42,17 @@ decision + 调 `submit_review_decision`。
 
 # 决策门槛
 
-- `score_total >= 70` **且** `policy_safety >= 80` → `"approved"`
+**合格线（approval 的 score_total 门槛）= 70** —— 运营要调"严/松"改这一个数，并把它作为
+`pass_line` 传给第 7 步。
+
+- `score_total >= 合格线`（=70）**且** `policy_safety >= 80` → `"approved"`
 - 否则 `score_total >= 40` → `"needs_rewrite"`
 - 否则 → `"rejected"`
 
 **policy_safety < 80 一律不能 approved**，即使总分高（人审兜底，但减负）。
+
+> `pass_line` 传的是**分数线**（上面的 70），不是 `policy_safety` 那道 80 的硬门。若某文
+> `score_total >= 合格线` 但栽在 policy_safety，列表显示纯数字（它确实过了分数线）。
 
 # 反例（什么不该 approve）
 

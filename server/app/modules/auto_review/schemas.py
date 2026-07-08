@@ -29,6 +29,7 @@ class ScoreResponse(BaseModel):
 class AutoReviewSubmitRequest(BaseModel):
     decision: Decision
     score_total: int | None = None
+    pass_line: int | None = None  # 本次合格线；score_total < pass_line 时列表显示「真实分 / 合格线」
     score_breakdown: dict[str, int] | None = None
     reasoning: str | None = None
     decided_by: str = "claude-code-loop"
@@ -39,6 +40,7 @@ class AutoReviewDecisionRead(BaseModel):
     article_id: int
     decision: Decision
     score_total: int | None
+    pass_line: int | None = None
     score_breakdown: dict[str, int] | None
     reasoning: str | None
     decided_by: str

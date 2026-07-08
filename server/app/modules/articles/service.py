@@ -229,15 +229,30 @@ def serialize_article_summaries(db: Session, articles: list[Article]) -> dict[in
         .group_by(PublishRecord.article_id)
     ).all()
     count_map = {row.article_id: row.cnt for row in count_rows}
-    # id desc + setdefault → 每篇保留最新一条决策的分（只有 MCP loop/goal 经 submit_review_decision 写）
+    # id desc → 每篇保留最新一条决策（只有 MCP loop/goal 经 submit_review_decision 写这张表）
     score_rows = db.execute(
-        select(AutoReviewDecision.article_id, AutoReviewDecision.score_total)
+        select(
+            AutoReviewDecision.article_id,
+            AutoReviewDecision.score_total,
+            AutoReviewDecision.pass_line,
+        )
         .where(AutoReviewDecision.article_id.in_(article_ids))
         .order_by(AutoReviewDecision.id.desc())
     ).all()
-    score_map: dict[int, int | None] = {}
-    for aid, score in score_rows:
-        score_map.setdefault(aid, score)
+    # auto_review_score 是给前端显示用的字符串：
+    #   score_total 为 None / <0（评分失败哨兵）→ None（前端不显示）
+    #   pass_line 有值且 score_total < pass_line（没过线）→ "65 _ 80"（前端拆成 65 / 80、标红）
+    #   其它（过线 / 无合格线的老数据）→ 纯数字 "84"
+    score_map: dict[int, str | None] = {}
+    for aid, score, pass_line in score_rows:
+        if aid in score_map:
+            continue  # 只取最新一条（id desc 已排序，先出现的即最新）
+        if score is None or score < 0:
+            score_map[aid] = None
+        elif pass_line is not None and score < pass_line:
+            score_map[aid] = f"{score} _ {pass_line}"
+        else:
+            score_map[aid] = str(score)
     return {
         a.id: ArticleListRead(
             id=a.id,

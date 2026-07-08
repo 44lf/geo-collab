@@ -158,6 +158,7 @@ async def submit_review_decision(
     article_id: int,
     decision: str,
     score_total: int | None = None,
+    pass_line: int | None = None,
     score_breakdown: dict[str, int] | None = None,
     reasoning: str | None = None,
     decided_by: str = "claude-code-loop",
@@ -171,6 +172,10 @@ async def submit_review_decision(
         article_id: Target article.
         decision: One of "approved" / "needs_rewrite" / "rejected".
         score_total: 0-100 weighted score, optional.
+        pass_line: The approval score threshold used this run (the "合格线"). When
+            score_total < pass_line, the content list shows the score as "真实分 / 合格线"
+            (e.g. 65 / 80) so operators can see it fell short of a too-high bar. Optional;
+            omit for passing articles or when there is no meaningful threshold.
         score_breakdown: dict[dimension_key, score_0_100], optional.
         reasoning: 1-2 sentence explanation, optional.
         decided_by: Identifier for the deciding agent (default "claude-code-loop").
@@ -180,6 +185,8 @@ async def submit_review_decision(
     body: dict[str, Any] = {"decision": decision, "decided_by": decided_by}
     if score_total is not None:
         body["score_total"] = score_total
+    if pass_line is not None:
+        body["pass_line"] = pass_line
     if score_breakdown is not None:
         body["score_breakdown"] = score_breakdown
     if reasoning:

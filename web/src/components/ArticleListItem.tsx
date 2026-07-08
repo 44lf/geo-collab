@@ -18,6 +18,32 @@ export function ReviewBadge({ status }: { status: ReviewStatus }) {
   );
 }
 
+/**
+ * 渲染自评分。后端下发字符串：
+ *  - 含 " _ "（如 "65 _ 80"）= 没过线 → 显示「真实分 / 合格线」，整块红色（不管真实分多少）。
+ *  - 纯数字（如 "84"）= 过线/老数据 → 按 ≥70绿 / ≥40黄 / <40红 分档上色。
+ */
+export function renderAutoReviewScore(score: string) {
+  const failSep = score.indexOf(" _ ");
+  if (failSep >= 0) {
+    const real = score.slice(0, failSep);
+    const passLine = score.slice(failSep + 3);
+    return (
+      <span className="badge" style={{ color: "var(--red, #f85149)" }} title="未达本次合格线">
+        {real} / {passLine}
+      </span>
+    );
+  }
+  const n = Number(score);
+  const color =
+    n >= 70 ? "var(--green, #3fb950)" : n >= 40 ? "var(--amber, #d29922)" : "var(--red, #f85149)";
+  return (
+    <span className="badge" style={{ color }}>
+      {score}
+    </span>
+  );
+}
+
 export const ArticleListItem = React.memo(function ArticleListItem({
   article,
   draftId,
@@ -47,26 +73,14 @@ export const ArticleListItem = React.memo(function ArticleListItem({
             ID {article.id}
           </span>
         </span>
-        {article.auto_review_score != null && article.auto_review_score >= 0 ? (
+        {article.auto_review_score != null ? (
           <span
             className="articleSourceLine"
             style={{ display: "flex", alignItems: "center", gap: 4 }}
             title="MCP 生文自评分（0-100，取 auto_review_decisions 最新一条）"
           >
             评分：
-            <span
-              className="badge"
-              style={{
-                color:
-                  article.auto_review_score >= 70
-                    ? "var(--green, #3fb950)"
-                    : article.auto_review_score >= 40
-                      ? "var(--amber, #d29922)"
-                      : "var(--red, #f85149)",
-              }}
-            >
-              {article.auto_review_score}
-            </span>
+            {renderAutoReviewScore(article.auto_review_score)}
           </span>
         ) : null}
         <span className="articleSourceLine">智能体：{article.source_agent_name || "—"}</span>

@@ -145,6 +145,7 @@ def submit_decision(
         article_id=article_id,
         decision=req.decision,
         score_total=req.score_total,
+        pass_line=req.pass_line,
         score_breakdown=req.score_breakdown,
         reasoning=req.reasoning,
         decided_by=req.decided_by,
