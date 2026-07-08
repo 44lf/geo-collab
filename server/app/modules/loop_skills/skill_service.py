@@ -15,7 +15,7 @@ from server.app.modules.loop_skills.service import (
     SkillBundle,
     build_bundle_from_file_map,
 )
-from server.app.shared.errors import ValidationError
+from server.app.shared.errors import ClientError, ConflictError, ValidationError
 
 
 @dataclass(frozen=True)
@@ -167,3 +167,83 @@ def list_skills(session: Session) -> list[SkillListItem]:
             )
         )
     return items
+
+
+@dataclass(frozen=True)
+class VersionItem:
+    id: int
+    version_label: str
+    bundle_sha256: str
+    file_count: int
+    total_bytes: int
+    uploaded_by: int | None
+    uploaded_at: datetime
+    is_current: bool
+
+
+def list_versions(session: Session, skill_id: int) -> list[VersionItem]:
+    sk = session.get(Skill, skill_id)
+    if sk is None or sk.is_deleted:
+        raise ValidationError(f"skill 不存在: {skill_id}")
+    rows = (
+        session.execute(
+            select(SkillVersion)
+            .where(SkillVersion.skill_id == skill_id, SkillVersion.is_deleted.is_(False))
+            .order_by(SkillVersion.id.desc())
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        VersionItem(
+            id=r.id,
+            version_label=r.version_label,
+            bundle_sha256=r.bundle_sha256,
+            file_count=r.file_count,
+            total_bytes=r.total_bytes,
+            uploaded_by=r.uploaded_by,
+            uploaded_at=r.uploaded_at,
+            is_current=(r.id == sk.current_version_id),
+        )
+        for r in rows
+    ]
+
+
+def set_current(session: Session, skill_id: int, version_id: int) -> None:
+    sk = session.get(Skill, skill_id)
+    if sk is None or sk.is_deleted:
+        raise ValidationError(f"skill 不存在: {skill_id}")
+    v = session.get(SkillVersion, version_id)
+    if v is None or v.is_deleted or v.skill_id != skill_id:
+        raise ValidationError(f"版本不存在: {version_id}")
+    sk.current_version_id = version_id
+    session.flush()
+
+
+def delete_version(
+    session: Session, skill_id: int, version_id: int, *, user_id: int | None, is_admin: bool
+) -> None:
+    sk = session.get(Skill, skill_id)
+    if sk is None or sk.is_deleted:
+        raise ValidationError(f"skill 不存在: {skill_id}")
+    v = session.get(SkillVersion, version_id)
+    if v is None or v.is_deleted or v.skill_id != skill_id:
+        raise ValidationError(f"版本不存在: {version_id}")
+    if sk.current_version_id == version_id:
+        raise ConflictError("不能删除当前版本，请先切到别的版本再删")
+    # 权限：官方包版本仅 admin；否则 属主 或 admin
+    if sk.is_official and not is_admin:
+        raise ClientError("官方包版本仅管理员可删")
+    if not is_admin and v.uploaded_by != user_id:
+        raise ClientError("只能删除自己上传的版本")
+    v.is_deleted = True
+    session.flush()
+
+
+def delete_skill(session: Session, skill_id: int) -> None:
+    """软删整个 skill（router 侧已 require_admin）。"""
+    sk = session.get(Skill, skill_id)
+    if sk is None or sk.is_deleted:
+        raise ValidationError(f"skill 不存在: {skill_id}")
+    sk.is_deleted = True
+    session.flush()
