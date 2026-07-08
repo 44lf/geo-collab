@@ -108,7 +108,7 @@ CI（`.github/workflows/ci.yml`，push 到 main 和所有 PR 触发）：**后�
 - `audit/` — 审计日志：`AuditLog` 模型 + `service.list_audit_logs()` 游标分页；路由 `/api/audit-logs`，**仅 admin**，参数 `user_id` / `action_prefix` / `target_type` / `target_id` / `start_at` / `end_at` / `cursor` / `limit≤500`。
 - `auto_review/` — Loop 自动审核：`AutoReviewDecision` 表 + `POST /api/articles/score`（LLM 批量评分，用 ai_format_model）+ `POST /api/articles/{id}/auto-review`（写 decision）。**不直接动 `article.review_status`，最终人审兜底**。MCP token 鉴权（独立 service token、与 user JWT 隔离）。
 - `performance/` — 模板 / 账号产出 metrics 聚合：`GET /api/prompt-templates/{id}/performance` + `GET /api/accounts/{id}/performance` + `POST /api/publish-records/{id}/metrics`（回流写入，合并到 `Article.metrics` JSON 列）。POC 期 template 聚合是 stub（缺 article→template 反向引用），v2 改造。（迁移 `0052` 给 `articles` 加了去规范化的 `source_agent_name` / `source_template_name` 仅展示字段，不是聚合用的反向引用。）
-- `mcp_catalog/` — MCP **只读 catalog 端点**（`router.py`，挂 `/api/mcp/*`，被 catalog 类 tool 复用）+ **接入指引**（`connect_router.py`）：`/api/mcp/status`（user JWT，回 `configured` / `suggested_base_url` / `tools_count`）+ `/api/mcp/health`（MCP token）。前端「MCP 接入」tab 用。**MCP 工具总数的唯一真值在 `connect_router.py:MCP_TOOLS_COUNT`（当前 25）**，增减 tool 时改这里。
+- `mcp_catalog/` — MCP **只读 catalog 端点**（`router.py`，挂 `/api/mcp/*`，被 catalog 类 tool 复用）+ **接入指引**（`connect_router.py`）：`/api/mcp/status`（user JWT，回 `configured` / `suggested_base_url` / `tools_count`）+ `/api/mcp/health`（MCP token）。前端「MCP 接入」tab 用。**MCP 工具总数的唯一真值在 `connect_router.py:MCP_TOOLS_COUNT`（当前 26）**，增减 tool 时改这里。
 - `loop_skills/` — **`/goal` Loop skill 包**分发：`service.build_bundle` / `build_zip` 把 `templates/` 下的 SKILL.md 等打包 + sha256 校验（版本在 `version.py`）。两组路由都挂 `/api/mcp`：user JWT 的 `/loop-skill-bundle/info` + `/download.zip`（前端「MCP 接入」Section ⑤），MCP token 的 `/install-payload`（给 `install_loop_skills` 工具）。bundle sha 跨 OS 排序 / 行尾极易栽坑——改打包逻辑务必按 posix 串排序 + LF，并跑 CI 取真值。
 
 ### Shared (`server/app/shared/`)
@@ -124,7 +124,7 @@ React 19 + Vite + TypeScript（strict）+ Tiptap + Lucide。Feature 拆分在 `w
 
 ## MCP Server（Claude Code Loop 调用入口）
 
-POC 期：`server/mcp/` 跑独立 Python 进程（FastMCP stdio），把 GEO 现有 + 新增 API 包装成 ~25 个 atomic tools 给 Claude Code 调用（真值见 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）。Loop 配方在 `claude-loops/*.md`。
+POC 期：`server/mcp/` 跑独立 Python 进程（FastMCP stdio），把 GEO 现有 + 新增 API 包装成 ~26 个 atomic tools 给 Claude Code 调用（真值见 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）。Loop 配方在 `claude-loops/*.md`。
 
 ### 启动方式
 
@@ -159,9 +159,9 @@ stdio 入口（`python -m server.mcp`）**保留**作为本机 dev / air-gap 路
 - **MCP 端点的未捕获异常用 `core/mcp_errors.mcp_exception_response(exc, context=...)` 包成 HTTPException**，绕过 main.py 全局 500 handler 的字符串抹平。规则：异常 `__module__` 顶级 ∈ {litellm / httpx / openai / anthropic} → 502（上游错误，Loop 可重试 / 切模型）；其它 → 500。detail 形如 `"<ExceptionClass>: <msg, ≤500 字符>"`，完整 traceback 仍由 helper 内 `logger.exception` 落日志。新增 MCP 端点写 `except Exception as exc:` 时一律走它，不要直接抛裸 Exception。
 - 同进程 mount 的 FastMCP HTTP sub-app（`/mcp`）不走 sub-router、用 `McpTokenMiddleware` 实现等价鉴权，语义与 `require_mcp_token` 一致（共享 `verify_mcp_token` helper）。
 
-### Tool 三组（共 25 个，真值在 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）
+### Tool 三组（共 26 个，真值在 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）
 
-- **catalog**（只读 11 个）：`list_articles` / `list_question_pools` / `list_question_items` / `list_prompt_templates` / `list_pipelines` / `list_accounts` / `get_article` / `list_today_loop_articles` / `list_stock_categories` / `list_stock_images` / `get_video_status`
+- **catalog**（只读 12 个）：`list_articles` / `list_question_pools` / `list_question_items` / `list_prompt_templates` / `list_pipelines` / `list_accounts` / `get_article` / `list_today_loop_articles` / `list_stock_categories` / `list_skills` / `list_stock_images` / `get_video_status`
 - **action**（写 10 个）：`save_article` / `illustrate_article` / `ai_illustrate_article` / `submit_review_decision` / `set_review_status` / `create_distribute_task` / `notify_feishu` / `install_loop_skills` / `compose_video` / `notify_review_card`
 - **meta**（评估 / 回流 4 个）：`score_recent_articles` / `get_template_performance` / `get_account_performance` / `record_publish_metrics`
 

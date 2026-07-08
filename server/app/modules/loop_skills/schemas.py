@@ -33,6 +33,7 @@ class SkillMeta(BaseModel):
     total_bytes: int
     updated_at: datetime
     uploaded_by: int | None
+    category: str
 
 
 class SkillList(BaseModel):

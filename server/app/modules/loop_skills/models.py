@@ -70,6 +70,7 @@ class Skill(Base):
     name: Mapped[str] = mapped_column(String(128))
     slug: Mapped[str] = mapped_column(String(128))
     is_official: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), default="general", nullable=False)
     current_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

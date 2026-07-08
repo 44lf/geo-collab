@@ -10,6 +10,7 @@ export interface Skill {
   total_bytes: number;
   updated_at: string;
   uploaded_by: number | null;
+  category: string;
 }
 
 export interface SkillVersion {
@@ -30,9 +31,11 @@ export function listSkills(): Promise<{ skills: Skill[] }> {
 export function uploadSkill(
   name: string,
   files: File[],
+  category: string = "general",
 ): Promise<{ skill_id: number; slug: string; version_label: string }> {
   const form = new FormData();
   form.append("name", name);
+  form.append("category", category);
   for (const file of files) {
     const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
     form.append("files", file, relativePath || file.name);

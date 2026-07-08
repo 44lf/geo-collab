@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # 仅给 server/mcp/server.py 的启动断言当「下限」用（注册数必须 ≥ 此值）。
 # 页面展示的工具数走 status.tools_count = len(tools)（实时内省），不再读这个常量。
 # 增减 MCP tool 时同步这里，避免断言把正常启动误判成双实例 bug。
-MCP_TOOLS_COUNT = 25
+MCP_TOOLS_COUNT = 26
 
 # 手写中文「用处」覆盖表：命中则优先用（质量比机翻好），未命中的工具走机翻兜底。
 # 加了新工具不必动这里——机翻会自动补；想给某工具更准的中文再来加一行。
@@ -39,6 +39,7 @@ _CURATED_ZH: dict[str, str] = {
     "get_article": "按 id 取单篇文章全文（Tiptap / HTML / 纯文本）",
     "list_today_loop_articles": "统计窗口内 /goal Loop 已生成且已决策的文章（停止条件用）",
     "list_stock_categories": "列出图片库栏目（配图选 main_category_id 用）",
+    "list_skills": "列出 Skill 库里可安装的 skill 包（可按 category 过滤）",
     # action（写操作）
     "save_article": "把 Claude 写好的 markdown 文章入库（零配置生文）",
     "illustrate_article": "给文章正文按位置插入图库选图",
@@ -46,7 +47,7 @@ _CURATED_ZH: dict[str, str] = {
     "notify_feishu": "发送飞书 webhook 通知",
     "set_review_status": "修改文章审核状态（pending / approved）",
     "create_distribute_task": "建 article_round_robin 分发任务（轮询派号发文）",
-    "install_loop_skills": "拉取 /goal Loop skill 包供本地安装",
+    "install_loop_skills": "按 slug 拉取 Skill 库整包供本地安装（默认 goal）",
     "ai_illustrate_article": "AI 智能配图 + 自动封面（对齐 Web UI「AI 配图」）",
     "notify_review_card": "发送飞书待审交互卡（标题/自评分/选题 + 查看文章链接）",
     # meta（评估 / 回流）

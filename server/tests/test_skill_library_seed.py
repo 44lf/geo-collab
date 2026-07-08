@@ -68,3 +68,23 @@ def test_seed_empty_falls_back_to_templates(monkeypatch):
             db.close()
     finally:
         app.cleanup()
+
+
+def test_seed_sets_goal_category_generation(monkeypatch):
+    from server.app.db.session import SessionLocal
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.scripts.seed_skill_library import seed_skill_library
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = SessionLocal()
+        try:
+            seed_skill_library(db)
+            db.commit()
+            goal = next(it for it in svc.list_skills(db) if it.slug == "goal")
+            assert goal.category == "generation"
+        finally:
+            db.close()
+    finally:
+        app.cleanup()

@@ -118,3 +118,103 @@ def test_set_current_and_delete_matrix(monkeypatch):
             db.close()
     finally:
         app.cleanup()
+
+
+def test_create_version_category_default_and_custom(monkeypatch):
+    import io
+    import zipfile
+
+    from server.app.db.session import SessionLocal
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.tests.utils import build_test_app
+
+    def _zip(files):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for k, v in files.items():
+                zf.writestr(k, v)
+        return buf.getvalue()
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = SessionLocal()
+        try:
+            sk_def, _ = svc.create_version(
+                db,
+                entries=[("b.zip", _zip({"SKILL.md": b"x"}))],
+                name="cat-default",
+                uploaded_by=None,
+            )
+            assert sk_def.category == "general"
+
+            sk_gen, _ = svc.create_version(
+                db,
+                entries=[("b.zip", _zip({"SKILL.md": b"x"}))],
+                name="cat-gen",
+                uploaded_by=None,
+                category="generation",
+            )
+            assert sk_gen.category == "generation"
+            db.commit()
+
+            items = {it.name: it for it in svc.list_skills(db)}
+            assert items["cat-gen"].category == "generation"
+        finally:
+            db.close()
+    finally:
+        app.cleanup()
+
+
+def test_extract_unit_names():
+    from server.app.modules.loop_skills.service import SkillFile
+    from server.app.modules.loop_skills.skill_service import extract_unit_names
+
+    multi = [
+        SkillFile(path="README.md", size=1, sha256="a", content="x"),
+        SkillFile(path="commands/goal.md", size=1, sha256="b", content="x"),
+        SkillFile(path="skills/geo-goal-orchestrator/SKILL.md", size=1, sha256="c", content="x"),
+        SkillFile(path="skills/geo-article-writer/SKILL.md", size=1, sha256="d", content="x"),
+    ]
+    assert extract_unit_names(multi, fallback_slug="goal") == [
+        "geo-goal-orchestrator",
+        "geo-article-writer",
+    ]
+
+    single = [SkillFile(path="SKILL.md", size=1, sha256="e", content="x")]
+    assert extract_unit_names(single, fallback_slug="my-writer") == ["my-writer"]
+
+
+def test_create_version_rejects_bad_category(monkeypatch):
+    import io
+    import zipfile
+
+    import pytest
+
+    from server.app.db.session import SessionLocal
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.app.shared.errors import ValidationError
+    from server.tests.utils import build_test_app
+
+    def _zip(files):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for k, v in files.items():
+                zf.writestr(k, v)
+        return buf.getvalue()
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = SessionLocal()
+        try:
+            with pytest.raises(ValidationError):
+                svc.create_version(
+                    db,
+                    entries=[("b.zip", _zip({"SKILL.md": b"x"}))],
+                    name="cat-bad",
+                    uploaded_by=None,
+                    category="nonsense",
+                )
+        finally:
+            db.close()
+    finally:
+        app.cleanup()
