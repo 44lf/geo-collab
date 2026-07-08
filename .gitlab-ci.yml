@@ -4,15 +4,20 @@
 # 现实约束:目前只有 1 个 runner、并发 = 1(所有 job 串行排队),
 # 所以墙钟 ≈ 各 job 时长之和。优化思路是「减少总工作量」,而不是堆并行:
 #   - 后端测试不再拆 4 片(单 runner 上拆片只会重复装依赖 + 互相排队,纯浪费)
-#   - 缓存 venv / pnpm store(按 lock 文件哈希做 key),装依赖从 ~45s 降到 ~5s
+#   - 装依赖提速(两层,均只靠 .gitlab-ci.yml + ci/minio_cache.py,不依赖 runner 宿主机):
+#       ① uv 替换 pip:并行下载+装,冷装 ~190s→~50s;
+#       ② 手动 MinIO 缓存:本 runner 未配 [runners.cache] 的 S3 后端(config.toml 不归我们管),
+#          原生 cache 段永远 miss;故在 job 脚本里用 S3 协议把 uv 的 wheel 目录(.uv-cache)
+#          跨流水线持久化到 MinIO,命中后离线秒装。AK/SK 走 CI/CD 变量,缺则 fail-open 只跑 uv。
 #   - 纯文档改动不触发流水线(workflow:rules:changes)
 #   - 新 push 自动取消旧流水线(interruptible)、基础设施类瞬时失败自动重试(retry)
 #   - 测试用 MySQL 关掉全部耐久性保证(一次性容器,不需要抗崩溃,换写入速度)
 #   - security-audit 不再每条流水线都跑:只在 requirements* 变更时 + 夜间
 #     schedule 跑(它 allow_failure 本来就不拦合并,每次都跑纯属白占 runner)
-#   - 分级门禁:develop 等日常开发分支 push 只跑轻流水线(lint + 前端检查);
-#     全量 backend-test 只在 MR 流水线 + main 上跑——守住「进 main」这一道闸,
-#     坏改动最迟在开 MR 时被拦下,不会带病合入
+#   - 分级门禁(方案①):日常分支 push 与 MR 平时都只跑轻流水线(lint + 前端检查);
+#     全量 backend-test 改「main 自动兜底 + MR 手动可选」——MR 每次 push 不再反复全测
+#     (省下 ~500s/次的 pytest),想在合并前早点抓 bug 就手动点一下;进 main 后自动全测当
+#     最后一道闸,坏改动最迟在 main 上被拦下(配合分支保护/revert)。
 #     发版级流水线(tag 驱动构建+部署,参照 HrSystem 的 kaniko+Harbor 模式)后续另建
 #   - 后端测试 job 内用 pytest-xdist 并行(-n $GEO_CI_PYTEST_WORKERS + 按 worker 拆库,
 #     见 server/tests/utils.py):不占额外 runner 槽位;-n 2 实测 410.86s(效率 1.83x)。
@@ -58,6 +63,11 @@ variables:
   GEO_JWT_SECRET: "ci-test-secret-not-for-prod"
   GEO_DATA_DIR: "$CI_PROJECT_DIR/geo-test-data"
   GEO_CI_PYTEST_WORKERS: "2"      # pytest-xdist 并行度;-n 4 有间歇竞态(见文件头注释),修好前保持 2
+  # uv 装依赖 + 手动 MinIO 缓存(见文件头「装依赖提速」段与 ci/minio_cache.py)。
+  # endpoint/bucket 非机密,直接写死;AK/SK 走 GitLab CI/CD Variables(masked),缺任一则 fail-open。
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  MINIO_CACHE_ENDPOINT: "172.25.20.57:9000"
+  MINIO_CACHE_BUCKET: "gitlab-runner-cache"
 
 default:
   interruptible: true             # 新 push 进来自动取消旧的在跑流水线,腾出 runner
@@ -75,23 +85,38 @@ default:
     when: never
   - when: on_success
 
-# ---- 复用:Python 环境 + venv 缓存(按 requirements 哈希做 key,装依赖近乎秒级)----
+# ---- 复用:Python 环境 + uv 装依赖 + 手动 MinIO 缓存(见文件头「装依赖提速」段)----
+# 缓存目标是 uv 的 wheel 下载目录 .uv-cache(不是 venv,避免 venv 路径迁移的坑);
+# 命中后 uv 离线安装近乎秒级。全程 fail-open:MinIO 不可达 / 未配 AK-SK 就只跑 uv。
+# 保留原生 cache 段作本地兜底(将来 runner 若配了 S3 后端自动叠加受益)。
 .python:
   image: public.ecr.aws/docker/library/python:3.12-slim
   tags: [docker]
   cache:
     - key:
-        prefix: venv
+        prefix: uv
         files:
           - requirements.txt
           - requirements-dev.txt
       paths:
-        - .venv/
-        - .pip-cache/
+        - .uv-cache/
   before_script:
-    - test -d .venv || python -m venv .venv
+    - SYS_PY=$(command -v python)
+    - pip install --quiet uv minio
+    - KEY=$(cat requirements.txt requirements-dev.txt | sha256sum | cut -c1-16)
+    - OBJ="pyuv-v1-$KEY.tar"
+    - HIT=0
+    - '"$SYS_PY" ci/minio_cache.py get "$OBJ" /tmp/uvcache.tar && tar xf /tmp/uvcache.tar -C "$CI_PROJECT_DIR" && HIT=1 || HIT=0'
+    - echo "MinIO uv-cache hit=$HIT key=$KEY"
+    - uv venv .venv
     - . .venv/bin/activate
-    - pip install --quiet -r requirements.txt -r requirements-dev.txt
+    - uv pip install -r requirements.txt -r requirements-dev.txt
+    - |
+      # miss 才回传:打包 .uv-cache 传 MinIO(幂等建桶),供后续流水线离线复用
+      if [ "$HIT" = 0 ]; then
+        tar cf /tmp/uvcache.tar -C "$CI_PROJECT_DIR" .uv-cache \
+          && "$SYS_PY" ci/minio_cache.py put "$OBJ" /tmp/uvcache.tar || true
+      fi
 
 # ============================================================
 # 后端 Lint(放在最前:失败则后面的测试/前端整段跳过,快速反馈 + 省 runner)
@@ -111,13 +136,20 @@ backend-lint:
 backend-test:
   extends: .python
   stage: test
-  # 分级门禁:全量测试只守「进 main」这道闸。develop 等日常分支的 push 走轻流水线
-  # (只有 backend-lint + frontend),这里显式不跑;开 MR 后的每次 push 都会全量跑。
+  # 分级门禁(方案①):main 自动兜底 + MR 手动可选,日常分支裸 push 不跑。
+  #   · main push:自动全测,失败=流水线红(最后一道闸,配合分支保护/revert)。
+  #   · MR:手动可选(when: manual + allow_failure)——平时不跑、不阻塞合并;
+  #     合并前想早点抓 bug 就点一下 job 的「play」跑一次(main 会兜底,故这里不阻塞)。
+  #   · 其它分支裸 push:无匹配规则 → 不跑(只 lint + 前端)。
+  # 注意:MR 流水线里 $CI_COMMIT_BRANCH 为空,故「main 规则」只命中 main 直推;
+  #       两条规则互斥,顺序无歧义。
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
       when: never
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+      allow_failure: true
   services:
     - name: public.ecr.aws/docker/library/mysql:8.0
       alias: mysql
