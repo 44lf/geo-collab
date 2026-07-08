@@ -734,6 +734,9 @@ git commit -m "feat(ci): wire tag-driven deploy (workflow rules + stages + inclu
   docker tag  quay.io/skopeo/stable:latest $HARBOR_REGISTRY/geo/skopeo-stable:latest
   docker push $HARBOR_REGISTRY/geo/skopeo-stable:latest
   ```
+  seed skopeo 镜像时最好基于 `quay.io/skopeo/stable` 自建一层、预装 `openssh-clients` 和 `curl`，
+  push 成 `$HARBOR_REGISTRY/geo/skopeo-stable:latest`，这样 `deploy` job 的 before_script 安装
+  就只是兜底（正常路径命中预装、无需再装）。
   记录到 `deploy/README.md`。
 
 - [ ] **Step 3: 提交 README 记录**
