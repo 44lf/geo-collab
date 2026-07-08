@@ -24,7 +24,9 @@ OFFICIAL_SLUG = "goal"
 
 
 def seed_skill_library(session: Session) -> None:
-    exists = session.execute(select(Skill.id).where(Skill.slug == OFFICIAL_SLUG)).first()
+    exists = session.execute(
+        select(Skill.id).where(Skill.slug == OFFICIAL_SLUG, Skill.is_deleted.is_(False))
+    ).first()
     if exists:
         print(f"skill '{OFFICIAL_SLUG}' already seeded, skip")
         return

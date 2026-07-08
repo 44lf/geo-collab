@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from sqlalchemy.orm import Session
 
 from server.app.core.mcp_auth import require_mcp_token
+from server.app.core.mcp_errors import mcp_exception_response
 from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
 from server.app.modules.audit.service import add_audit_entry
@@ -54,7 +55,20 @@ async def upload_skill(
     current_user: User = Depends(get_current_user),
 ) -> UploadResult:
     entries = [(f.filename or "file", await f.read()) for f in files]
-    skill, version = svc.create_version(db, entries=entries, name=name, uploaded_by=current_user.id)
+    try:
+        skill, version = svc.create_version(
+            db,
+            entries=entries,
+            name=name,
+            uploaded_by=current_user.id,
+            is_admin=(current_user.role == "admin"),
+        )
+    except (ConflictError, ValidationError):
+        # 冲突(并发撞版本号→409) / 不存在类(→400) 走全局兜底,不在此处改写
+        raise
+    except ClientError as exc:
+        # 剩下的才是权限类 ClientError(官方包非 admin 追加版本)→ 403
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     add_audit_entry(
         db,
         user=current_user,
@@ -80,7 +94,14 @@ def set_current(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    svc.set_current(db, skill_id, body.version_id)
+    try:
+        svc.set_current(db, skill_id, body.version_id, is_admin=(current_user.role == "admin"))
+    except (ConflictError, ValidationError):
+        # 不存在类(→400) 走全局兜底,不在此处改写
+        raise
+    except ClientError as exc:
+        # 剩下的才是权限类 ClientError(官方包非 admin 回滚)→ 403
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     add_audit_entry(
         db,
         user=current_user,
@@ -152,12 +173,16 @@ skills_mcp_router = APIRouter(dependencies=[Depends(require_mcp_token)])
 def install_payload(slug: str, db: Session = Depends(get_db)) -> dict:
     try:
         b = svc.get_current_bundle(db, slug)
-    except Exception as exc:  # noqa: BLE001
+    except (ValidationError, ClientError) as exc:
+        # 只有"skill 不存在/无当前版本"这类才回 ok:false + available 列表；
+        # 基础设施错误(DB/MinIO 等)让它自然抛，交给下面的 mcp_exception_response。
         return {
             "ok": False,
             "error": str(exc),
             "data": {"available": [{"slug": s.slug, "name": s.name} for s in svc.list_skills(db)]},
         }
+    except Exception as exc:
+        raise mcp_exception_response(exc, context=f"install_payload slug={slug}") from exc
     return {
         "ok": True,
         "data": {

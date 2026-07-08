@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from server.app.modules.loop_skills import storage, upload
@@ -65,8 +66,16 @@ def _next_label(session: Session, skill_id: int) -> str:
     return f"v{mx + 1}"
 
 
+_MAX_LABEL_RETRY_ATTEMPTS = 5
+
+
 def create_version(
-    session: Session, *, entries: list[tuple[str, bytes]], name: str, uploaded_by: int | None
+    session: Session,
+    *,
+    entries: list[tuple[str, bytes]],
+    name: str,
+    uploaded_by: int | None,
+    is_admin: bool = False,
 ) -> tuple[Skill, SkillVersion]:
     name = (name or "").strip()
     if not name:
@@ -75,33 +84,52 @@ def create_version(
     upload.validate_file_map(raw)
     bundle = build_bundle_from_file_map(raw, version="pending")
 
-    skill = _active_skill_by_name(session, name)
-    if skill is None:
-        skill = Skill(
-            name=name, slug=slugify(name, session), is_official=False, created_by=uploaded_by
-        )
-        session.add(skill)
-        session.flush()
+    last_exc: IntegrityError | None = None
+    for _attempt in range(_MAX_LABEL_RETRY_ATTEMPTS):
+        skill = _active_skill_by_name(session, name)
+        if skill is not None and skill.is_official and not is_admin:
+            # 首次新建(skill is None)不拦；只拦"追加到已存在的官方 skill"。
+            raise ClientError("官方包仅管理员可上传新版本")
 
-    version = SkillVersion(
-        skill_id=skill.id,
-        version_label=_next_label(session, skill.id),
-        bundle_sha256=bundle.bundle_sha256,
-        file_count=len(bundle.files),
-        total_bytes=sum(f.size for f in bundle.files),
-        storage_backend="db",
-        files=[
-            {"path": f.path, "content": f.content, "sha256": f.sha256, "size": f.size}
-            for f in bundle.files
-        ],
-        storage_key=None,
-        uploaded_by=uploaded_by,
-    )
-    session.add(version)
-    session.flush()
-    skill.current_version_id = version.id
-    session.flush()
-    return skill, version
+        try:
+            if skill is None:
+                skill = Skill(
+                    name=name,
+                    slug=slugify(name, session),
+                    is_official=False,
+                    created_by=uploaded_by,
+                )
+                session.add(skill)
+                session.flush()
+
+            version = SkillVersion(
+                skill_id=skill.id,
+                version_label=_next_label(session, skill.id),
+                bundle_sha256=bundle.bundle_sha256,
+                file_count=len(bundle.files),
+                total_bytes=sum(f.size for f in bundle.files),
+                storage_backend="db",
+                files=[
+                    {"path": f.path, "content": f.content, "sha256": f.sha256, "size": f.size}
+                    for f in bundle.files
+                ],
+                storage_key=None,
+                uploaded_by=uploaded_by,
+            )
+            session.add(version)
+            session.flush()
+        except IntegrityError as exc:
+            # 并发/双击撞 uq_skill_versions_label（或新建 skill 撞 uq_skills_name_active）：
+            # rollback 会使本轮 add 的 skill/version 失效，下一轮重新查/建。
+            session.rollback()
+            last_exc = exc
+            continue
+
+        skill.current_version_id = version.id
+        session.flush()
+        return skill, version
+
+    raise ConflictError("版本号并发冲突，请重试上传") from last_exc
 
 
 def _version_to_bundle(skill: Skill, row: SkillVersion) -> SkillBundle:
@@ -209,13 +237,17 @@ def list_versions(session: Session, skill_id: int) -> list[VersionItem]:
     ]
 
 
-def set_current(session: Session, skill_id: int, version_id: int) -> None:
+def set_current(
+    session: Session, skill_id: int, version_id: int, *, is_admin: bool = False
+) -> None:
     sk = session.get(Skill, skill_id)
     if sk is None or sk.is_deleted:
         raise ValidationError(f"skill 不存在: {skill_id}")
     v = session.get(SkillVersion, version_id)
     if v is None or v.is_deleted or v.skill_id != skill_id:
         raise ValidationError(f"版本不存在: {version_id}")
+    if sk.is_official and not is_admin:
+        raise ClientError("官方包仅管理员可回滚")
     sk.current_version_id = version_id
     session.flush()
 
