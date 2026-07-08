@@ -31,7 +31,13 @@ def seed_skill_library(session: Session) -> None:
         print(f"skill '{OFFICIAL_SLUG}' already seeded, skip")
         return
 
-    skill = Skill(name=OFFICIAL_NAME, slug=OFFICIAL_SLUG, is_official=True, created_by=None)
+    skill = Skill(
+        name=OFFICIAL_NAME,
+        slug=OFFICIAL_SLUG,
+        is_official=True,
+        created_by=None,
+        category="generation",
+    )
     session.add(skill)
     session.flush()
 

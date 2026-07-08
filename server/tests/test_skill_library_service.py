@@ -118,3 +118,84 @@ def test_set_current_and_delete_matrix(monkeypatch):
             db.close()
     finally:
         app.cleanup()
+
+
+def test_create_version_category_default_and_custom(monkeypatch):
+    import io
+    import zipfile
+
+    from server.app.db.session import SessionLocal
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.tests.utils import build_test_app
+
+    def _zip(files):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for k, v in files.items():
+                zf.writestr(k, v)
+        return buf.getvalue()
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = SessionLocal()
+        try:
+            sk_def, _ = svc.create_version(
+                db,
+                entries=[("b.zip", _zip({"SKILL.md": b"x"}))],
+                name="cat-default",
+                uploaded_by=None,
+            )
+            assert sk_def.category == "general"
+
+            sk_gen, _ = svc.create_version(
+                db,
+                entries=[("b.zip", _zip({"SKILL.md": b"x"}))],
+                name="cat-gen",
+                uploaded_by=None,
+                category="generation",
+            )
+            assert sk_gen.category == "generation"
+            db.commit()
+
+            items = {it.name: it for it in svc.list_skills(db)}
+            assert items["cat-gen"].category == "generation"
+        finally:
+            db.close()
+    finally:
+        app.cleanup()
+
+
+def test_create_version_rejects_bad_category(monkeypatch):
+    import io
+    import zipfile
+
+    import pytest
+
+    from server.app.db.session import SessionLocal
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.app.shared.errors import ValidationError
+    from server.tests.utils import build_test_app
+
+    def _zip(files):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for k, v in files.items():
+                zf.writestr(k, v)
+        return buf.getvalue()
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = SessionLocal()
+        try:
+            with pytest.raises(ValidationError):
+                svc.create_version(
+                    db,
+                    entries=[("b.zip", _zip({"SKILL.md": b"x"}))],
+                    name="cat-bad",
+                    uploaded_by=None,
+                    category="nonsense",
+                )
+        finally:
+            db.close()
+    finally:
+        app.cleanup()

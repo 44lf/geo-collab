@@ -18,6 +18,8 @@ from server.app.modules.loop_skills.service import (
 )
 from server.app.shared.errors import ClientError, ConflictError, ValidationError
 
+VALID_SKILL_CATEGORIES = {"generation", "distribute", "video", "general"}
+
 
 @dataclass(frozen=True)
 class SkillListItem:
@@ -30,6 +32,7 @@ class SkillListItem:
     total_bytes: int
     updated_at: datetime
     uploaded_by: int | None
+    category: str
 
 
 def slugify(name: str, session: Session) -> str:
@@ -76,10 +79,13 @@ def create_version(
     name: str,
     uploaded_by: int | None,
     is_admin: bool = False,
+    category: str = "general",
 ) -> tuple[Skill, SkillVersion]:
     name = (name or "").strip()
     if not name:
         raise ValidationError("skill 名不能为空")
+    if category not in VALID_SKILL_CATEGORIES:
+        raise ValidationError(f"非法 category: {category}（可选 {sorted(VALID_SKILL_CATEGORIES)}）")
     raw = upload.parse_upload(entries)
     upload.validate_file_map(raw)
     bundle = build_bundle_from_file_map(raw, version="pending")
@@ -98,6 +104,7 @@ def create_version(
                     slug=slugify(name, session),
                     is_official=False,
                     created_by=uploaded_by,
+                    category=category,
                 )
                 session.add(skill)
                 session.flush()
@@ -192,6 +199,7 @@ def list_skills(session: Session) -> list[SkillListItem]:
                 total_bytes=cur.total_bytes if cur else 0,
                 updated_at=sk.updated_at,
                 uploaded_by=cur.uploaded_by if cur else None,
+                category=sk.category,
             )
         )
     return items
