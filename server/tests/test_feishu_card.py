@@ -1,4 +1,27 @@
-from server.app.shared.feishu_card import build_review_card
+from server.app.shared.feishu_card import build_review_card, build_review_link
+
+
+def test_build_review_link_applink_when_app_id():
+    # 有 app_id → 飞书网页应用 AppLink（web_app/open），飞书端内以「网页应用」身份打开，
+    # 注入 window.h5sdk → H5 免登链路才生效。域名不进链接（取自后台主页 URL），只带 path。
+    link = build_review_link(
+        article_id=1646,
+        base_url="https://geo.example.com",
+        app_id="cli_abc123",
+    )
+    assert link == (
+        "https://applink.feishu.cn/client/web_app/open?appId=cli_abc123&path=/article/1646"
+    )
+
+
+def test_build_review_link_fallback_when_no_app_id():
+    # 无 app_id → 回落裸永久链接（普通浏览器手动登录），保持未配飞书应用时可用。
+    link = build_review_link(
+        article_id=1646,
+        base_url="https://geo.example.com/",
+        app_id=None,
+    )
+    assert link == "https://geo.example.com/article/1646"
 
 
 def test_build_review_card_structure():

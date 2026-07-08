@@ -76,6 +76,43 @@ def test_review_card_builds_review_url_and_sends(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_review_card_uses_applink_when_app_id_set(monkeypatch):
+    # 配了飞书自建应用 app_id → 按钮链接应是网页应用 AppLink（web_app/open），
+    # 飞书端内以网页应用身份打开、注入 h5sdk，H5 免登才生效。
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        monkeypatch.setenv("GEO_FEISHU_REVIEW_CARD_ENABLED", "true")
+        monkeypatch.setenv("GEO_FEISHU_REVIEW_CHAT_ID", "oc_abc")
+        monkeypatch.setenv("GEO_PUBLIC_BASE_URL", "https://geo.example.com")
+        monkeypatch.setenv("GEO_FEISHU_APP_ID", "cli_abc123")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        captured = {}
+
+        def fake_send(**kwargs):
+            captured.update(kwargs)
+            return "om_1"
+
+        monkeypatch.setattr("server.app.modules.articles.router.send_review_card", fake_send)
+
+        aid = _make_article(test_app)
+        r = test_app.client.post(
+            f"/api/articles/{aid}/review-card",
+            json={"title": "t", "question": "q", "score": 88, "decision": "approved"},
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        assert captured["review_url"] == (
+            f"https://applink.feishu.cn/client/web_app/open?appId=cli_abc123&path=/article/{aid}"
+        )
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
 def test_review_card_404_when_article_missing(monkeypatch):
     test_app = build_test_app(monkeypatch)
     try:
