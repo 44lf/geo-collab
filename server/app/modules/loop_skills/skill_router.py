@@ -171,6 +171,31 @@ def download_skill(skill_id: int, db: Session = Depends(get_db)) -> Response:
 skills_mcp_router = APIRouter(dependencies=[Depends(require_mcp_token)])
 
 
+@skills_mcp_router.get("/skills/catalog")
+def mcp_list_skills(category: str | None = None, db: Session = Depends(get_db)) -> dict:
+    try:
+        items = svc.list_skills(db)
+        if category:
+            items = [it for it in items if it.category == category]
+        skills = [
+            {
+                "id": it.id,
+                "slug": it.slug,
+                "name": it.name,
+                "category": it.category,
+                "is_official": it.is_official,
+                "current_version_label": it.current_version_label,
+                "file_count": it.file_count,
+                "total_bytes": it.total_bytes,
+                "units": svc.unit_names_for_skill(db, it.id, it.slug),
+            }
+            for it in items
+        ]
+        return {"ok": True, "data": {"skills": skills}, "error": None}
+    except Exception as exc:
+        raise mcp_exception_response(exc, context=f"mcp_list_skills category={category}") from exc
+
+
 @skills_mcp_router.get("/skills/{slug}/install-payload")
 def install_payload(slug: str, db: Session = Depends(get_db)) -> dict:
     try:

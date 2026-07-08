@@ -166,6 +166,55 @@ def test_upload_with_category(monkeypatch):
         app.cleanup()
 
 
+def test_mcp_list_skills_catalog(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    HDR = {"X-MCP-Token": "secret"}
+    app = build_test_app(monkeypatch)
+    try:
+        c = app.client
+        # 无 MCP token → 401
+        assert c.get("/api/mcp/skills/catalog").status_code == 401
+
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        c.post(
+            "/api/mcp/skills/upload",
+            files={
+                "files": (
+                    "b.zip",
+                    _zip({"skills/w1/SKILL.md": b"x", "skills/w2/SKILL.md": b"y"}),
+                    "application/zip",
+                )
+            },
+            data={"name": "gen-pkg", "category": "generation"},
+        )
+        c.post(
+            "/api/mcp/skills/upload",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"x"}), "application/zip")},
+            data={"name": "dist-pkg", "category": "distribute"},
+        )
+
+        # 带 token → 200，返回全部
+        r = c.get("/api/mcp/skills/catalog", headers=HDR)
+        assert r.status_code == 200, r.text
+        by_slug = {s["slug"]: s for s in r.json()["data"]["skills"]}
+        assert "gen-pkg" in by_slug and "dist-pkg" in by_slug
+        # units 提取
+        assert sorted(by_slug["gen-pkg"]["units"]) == ["w1", "w2"]
+        assert by_slug["dist-pkg"]["units"] == ["dist-pkg"]  # 单文件包回落 slug
+
+        # category 筛
+        r2 = c.get("/api/mcp/skills/catalog?category=distribute", headers=HDR)
+        slugs = {s["slug"] for s in r2.json()["data"]["skills"]}
+        assert "dist-pkg" in slugs and "gen-pkg" not in slugs
+    finally:
+        app.cleanup()
+
+
 def test_operator_cannot_upload_official_name_403(monkeypatch):
     """非 admin 用官方包同名上传（追加版本）→ 403（I-1：官方包上传收 admin）。"""
     from server.app.modules.loop_skills import skill_service as svc

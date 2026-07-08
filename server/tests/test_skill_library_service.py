@@ -165,6 +165,25 @@ def test_create_version_category_default_and_custom(monkeypatch):
         app.cleanup()
 
 
+def test_extract_unit_names():
+    from server.app.modules.loop_skills.service import SkillFile
+    from server.app.modules.loop_skills.skill_service import extract_unit_names
+
+    multi = [
+        SkillFile(path="README.md", size=1, sha256="a", content="x"),
+        SkillFile(path="commands/goal.md", size=1, sha256="b", content="x"),
+        SkillFile(path="skills/geo-goal-orchestrator/SKILL.md", size=1, sha256="c", content="x"),
+        SkillFile(path="skills/geo-article-writer/SKILL.md", size=1, sha256="d", content="x"),
+    ]
+    assert extract_unit_names(multi, fallback_slug="goal") == [
+        "geo-goal-orchestrator",
+        "geo-article-writer",
+    ]
+
+    single = [SkillFile(path="SKILL.md", size=1, sha256="e", content="x")]
+    assert extract_unit_names(single, fallback_slug="my-writer") == ["my-writer"]
+
+
 def test_create_version_rejects_bad_category(monkeypatch):
     import io
     import zipfile

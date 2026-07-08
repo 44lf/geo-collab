@@ -287,3 +287,33 @@ def delete_skill(session: Session, skill_id: int) -> None:
         raise ValidationError(f"skill 不存在: {skill_id}")
     sk.is_deleted = True
     session.flush()
+
+
+_UNIT_RE = re.compile(r"^skills/([^/]+)/SKILL\.md$")
+
+
+def extract_unit_names(files, *, fallback_slug: str) -> list[str]:
+    """从包内文件提取 skill 单元名（只读展示）。
+
+    skills/<name>/SKILL.md → <name>（保序）；无子目录单元但有顶层 SKILL.md
+    （单文件包）→ 回落 [fallback_slug]。
+    """
+    units: list[str] = []
+    for f in files:
+        m = _UNIT_RE.match(f.path)
+        if m:
+            units.append(m.group(1))
+    if not units and any(f.path == "SKILL.md" for f in files):
+        units = [fallback_slug]
+    return units
+
+
+def unit_names_for_skill(session: Session, skill_id: int, slug: str) -> list[str]:
+    sk = session.get(Skill, skill_id)
+    if sk is None or sk.current_version_id is None:
+        return []
+    row = session.get(SkillVersion, sk.current_version_id)
+    if row is None:
+        return []
+    files = storage.load_version_files(row)
+    return extract_unit_names(files, fallback_slug=slug)
