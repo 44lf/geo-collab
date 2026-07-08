@@ -1,7 +1,7 @@
-import { Bot, FileText, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
+import { Bot, FileText, Film, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "agents" | "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
+export type NavKey = "agents" | "ai" | "content" | "prompts" | "image-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -608,6 +608,7 @@ export const navItems: {
     ],
   },
   { key: "image-library", label: "图片库", icon: Images },
+  { key: "videos", label: "视频库", icon: Film },
   { key: "media", label: "媒体矩阵", icon: RadioTower },
   { key: "tasks", label: "分发引擎", icon: Send },
   { key: "system", label: "系统状态", icon: MonitorCog },
@@ -702,4 +703,23 @@ export type RunLogPage = {
   total: number;
   page: number;
   page_size: number;
+};
+
+export type VideoJobSummary = {
+  job_id: string;
+  article_id: number;
+  article_title: string | null;
+  title: string | null;
+  status: "done" | "failed";
+  video_url: string | null;
+  srt_url: string | null;
+  tags: string[];
+  engine: string | null;
+  error: string | null;
+  created_at: string;
+};
+
+export type VideoListResponse = {
+  items: VideoJobSummary[];
+  total: number;
 };
