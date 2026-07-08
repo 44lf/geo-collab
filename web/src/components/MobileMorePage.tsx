@@ -1,5 +1,5 @@
 import {
-  ChevronRight, Images, LogOut, MessagesSquare, MonitorCog,
+  ChevronRight, Film, Images, LogOut, MessagesSquare, MonitorCog,
   Plug, RadioTower, ScrollText, User, Users,
 } from "lucide-react";
 import type { NavKey } from "../types";
@@ -26,6 +26,7 @@ export function MobileMorePage({
       title: "素材",
       rows: [
         { key: "image-library", label: "图片库", icon: Images },
+        { key: "videos", label: "视频库", icon: Film },
         { key: "media", label: "媒体矩阵", icon: RadioTower },
       ],
     },
