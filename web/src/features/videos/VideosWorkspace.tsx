@@ -51,62 +51,63 @@ export function VideosWorkspace() {
   }, [filter]);
 
   const hasMore = items.length < total;
+  const initialLoading = loading && items.length === 0;
 
   return (
-    <div style={{ padding: 24 }}>
-      <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-        <Film size={22} />
-        <h2 style={{ margin: 0, fontSize: 20 }}>视频库</h2>
-        <span style={{ color: "#888", fontSize: 13 }}>共 {total} 个</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setFilter(f.key)}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-                background: filter === f.key ? "#2563eb" : "#fff",
-                color: filter === f.key ? "#fff" : "#333",
-                cursor: "pointer",
-              }}
-            >
-              {f.label}
-            </button>
-          ))}
+    <div className="videoLibrary">
+      <div className="topbar">
+        <div>
+          <p className="eyebrow">素材</p>
+          <h1>视频库</h1>
         </div>
-      </header>
+      </div>
 
-      {loaded && items.length === 0 && !loading && (
-        <p className="emptyText" style={{ padding: 24 }}>
-          还没有生成的视频
-        </p>
-      )}
+      <div className="reviewTabs">
+        {FILTERS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            className={`reviewTabBtn${filter === f.key ? " active" : ""}`}
+            onClick={() => setFilter(f.key)}
+          >
+            {f.label}
+          </button>
+        ))}
+        <span className="videoLibraryCount">共 {total} 个</span>
+      </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-          gap: 16,
-        }}
-      >
+      <div className="videoLibraryGrid">
+        {initialLoading &&
+          Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="videoLibraryCardSkeleton" />
+          ))}
+
+        {!initialLoading && loaded && items.length === 0 && (
+          <div className="videoLibraryEmptyState">
+            <Film size={40} strokeWidth={1.2} />
+            <p className="videoLibraryEmptyTitle">还没有生成的视频</p>
+            <p>用视频生成 loop 产出配套视频后，会在这里展示</p>
+          </div>
+        )}
+
         {items.map((v) => (
           <VideoCard key={v.job_id} video={v} onOpenArticle={(id) => navigate(`/article/${id}`)} />
         ))}
-      </div>
 
-      <div style={{ textAlign: "center", marginTop: 20 }}>
-        {loading && <span style={{ color: "#888" }}>加载中…</span>}
-        {!loading && hasMore && (
-          <button
-            type="button"
-            onClick={() => void fetchPage(false, items.length)}
-            style={{ padding: "8px 20px", borderRadius: 8, border: "1px solid #ddd", background: "#fff", cursor: "pointer" }}
-          >
-            加载更多
-          </button>
+        {(hasMore || (loading && items.length > 0)) && (
+          <div className="videoLibraryFooter">
+            {loading ? (
+              <span className="videoLibraryLoadingText">加载中…</span>
+            ) : (
+              <button
+                type="button"
+                className="secondaryButton"
+                onClick={() => void fetchPage(false, items.length)}
+              >
+                加载更多
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -122,61 +123,53 @@ function VideoCard({
 }) {
   const title = video.title || video.article_title || `视频 ${video.job_id.slice(0, 8)}`;
   const fileBase = title.replace(/[\\/:*?"<>|]/g, "_");
+  const playable = video.status === "done" && !!video.video_url;
+
   return (
-    <div style={{ border: "1px solid #eee", borderRadius: 12, overflow: "hidden", background: "#fff", display: "flex", flexDirection: "column" }}>
-      {video.status === "done" && video.video_url ? (
-        <video
-          src={video.video_url}
-          controls
-          preload="metadata"
-          style={{ width: "100%", aspectRatio: "9 / 16", objectFit: "cover", background: "#000" }}
-        />
-      ) : (
-        <div
-          style={{
-            width: "100%",
-            aspectRatio: "9 / 16",
-            background: "#f6f6f6",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#c0392b",
-            fontSize: 13,
-            padding: 12,
-            textAlign: "center",
-          }}
-        >
-          {video.status === "failed" ? `渲染失败：${video.error ?? "未知错误"}` : "产物缺失"}
-        </div>
-      )}
-      <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.3 }}>{title}</div>
+    <div className="videoLibraryCard">
+      <div className="videoLibraryCardMedia">
+        {playable ? (
+          <video src={video.video_url ?? undefined} controls preload="metadata" />
+        ) : (
+          <div className={`videoLibraryCardPlaceholder${video.status === "failed" ? " isFailed" : ""}`}>
+            {video.status === "failed" ? `渲染失败：${video.error ?? "未知错误"}` : "产物缺失"}
+          </div>
+        )}
+        <span className={`videoLibraryBadge videoLibraryBadge--${video.status === "done" ? "done" : "failed"}`}>
+          {video.status === "done" ? "已完成" : "失败"}
+        </span>
+      </div>
+
+      <div className="videoLibraryCardInfo">
+        <p className="videoLibraryCardTitle" title={title}>
+          {title}
+        </p>
         <button
           type="button"
+          className="videoLibraryCardArticle"
           onClick={() => onOpenArticle(video.article_id)}
-          style={{ alignSelf: "flex-start", padding: 0, border: "none", background: "none", color: "#2563eb", cursor: "pointer", fontSize: 12 }}
         >
           {video.article_title ? `源文章：${video.article_title}` : `源文章 #${video.article_id}`}
         </button>
         {video.tags.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          <div className="videoLibraryCardTags">
             {video.tags.map((t, i) => (
-              <span key={`${t}-${i}`} style={{ fontSize: 11, background: "#f0f0f0", borderRadius: 4, padding: "2px 6px", color: "#666" }}>
+              <span key={`${t}-${i}`} className="videoLibraryTag">
                 {t}
               </span>
             ))}
           </div>
         )}
-        <div style={{ fontSize: 11, color: "#999" }}>{new Date(video.created_at).toLocaleString("zh-CN")}</div>
-        {video.status === "done" && (
-          <div style={{ display: "flex", gap: 12 }}>
+        <div className="videoLibraryCardMeta">{new Date(video.created_at).toLocaleString("zh-CN")}</div>
+        {video.status === "done" && (video.video_url || video.srt_url) && (
+          <div className="videoLibraryCardDownloads">
             {video.video_url && (
-              <a href={video.video_url} download={`${fileBase}.mp4`} style={{ fontSize: 12, color: "#2563eb" }}>
+              <a href={video.video_url} download={`${fileBase}.mp4`}>
                 下载 mp4
               </a>
             )}
             {video.srt_url && (
-              <a href={video.srt_url} download={`${fileBase}.srt`} style={{ fontSize: 12, color: "#2563eb" }}>
+              <a href={video.srt_url} download={`${fileBase}.srt`}>
                 下载 srt
               </a>
             )}
