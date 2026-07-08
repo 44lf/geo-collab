@@ -164,3 +164,31 @@ def spawn_video_job(job_id: str) -> None:
         raise ClientError("bg_session_factory 未注入（create_app 未执行？）")
     factory = bg_session_factory
     threading.Thread(target=run_video_job, args=(job_id, factory), daemon=True).start()
+
+
+def list_video_jobs(
+    db: Session,
+    *,
+    status: str | None,
+    skip: int,
+    limit: int,
+) -> tuple[list[tuple[VideoJob, str | None]], int]:
+    """列出 done/failed 视频任务（LEFT JOIN 文章标题），created_at DESC，分页。
+
+    返回 (rows, total)。rows 每项为 (VideoJob, article_title|None)；
+    total 为满足筛选的总数（不受 skip/limit 影响）。
+    """
+    conditions: list[Any] = [VideoJob.status.in_(("done", "failed"))]
+    if status is not None:
+        conditions.append(VideoJob.status == status)
+    total = db.query(VideoJob.id).filter(*conditions).count()
+    rows = (
+        db.query(VideoJob, Article.title)
+        .outerjoin(Article, VideoJob.article_id == Article.id)
+        .filter(*conditions)
+        .order_by(VideoJob.created_at.desc(), VideoJob.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return [(row[0], row[1]) for row in rows], total

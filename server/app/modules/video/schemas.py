@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -43,3 +44,22 @@ def validate_asset_ids(db: Session, storyboard: Storyboard) -> None:
     missing = wanted - found
     if missing:
         raise ValidationError(f"storyboard 引用了不存在的图片 asset_id: {sorted(missing)}")
+
+
+class VideoJobSummary(BaseModel):
+    job_id: str
+    article_id: int
+    article_title: str | None
+    title: str | None
+    status: str
+    video_url: str | None
+    srt_url: str | None
+    tags: list[str]
+    engine: str | None
+    error: str | None
+    created_at: datetime
+
+
+class VideoListResponse(BaseModel):
+    items: list[VideoJobSummary]
+    total: int

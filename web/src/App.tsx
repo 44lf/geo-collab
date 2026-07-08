@@ -16,14 +16,14 @@ import "./styles.css";
 
 // 所有合法的顶级导航 key（= URL 首段）。
 const KNOWN_NAV: NavKey[] = [
-  "agents", "ai", "content", "prompts", "image-library", "media", "tasks",
+  "agents", "ai", "content", "prompts", "image-library", "videos", "media", "tasks",
   "system", "mcp-connect", "admin", "audit-logs", "ai-models",
 ];
 
 // 每个 tab 的标题，用于 ErrorBoundary。
 const TAB_TITLES: Record<NavKey, string> = {
   agents: "智能体管理", ai: "AI 生文", content: "内容管理", prompts: "提示词管理",
-  "image-library": "图片库", media: "媒体矩阵", tasks: "分发引擎", system: "系统状态",
+  "image-library": "图片库", videos: "视频库", media: "媒体矩阵", tasks: "分发引擎", system: "系统状态",
   "mcp-connect": "MCP 接入", admin: "用户管理", "audit-logs": "审计日志",
   "ai-models": "AI 模型管理",
 };
