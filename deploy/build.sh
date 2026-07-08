@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build.sh — 构建 Geo Collab 镜像并打包部署产物
 # 用法: bash deploy/build.sh [目标] [版本号]
-#   目标:   all(默认) | server | web
+#   目标:   all(默认) | base | server | web
 #     server = 后端镜像 geo-collab-server（app + worker 共用，含迁移）
 #     web    = 前端镜像 geo-collab-web（nginx 静态 + 反代）
 #     all    = server + web + dailyhot 基础设施镜像 + 部署包

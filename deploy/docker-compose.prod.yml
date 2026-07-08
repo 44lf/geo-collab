@@ -2,6 +2,7 @@
 # 本地 registry 拉取后 retag；版本由 SERVER_VERSION / WEB_VERSION 注入。
 # 数据 bind 挂载 ./data/，与老栈物理隔离。切勿 down -v、切勿删 ./data。
 # 发布 worker 单实例，不要 --scale worker=N。
+# registry 服务必须常驻——CI 部署依赖它接收 skopeo 推送、deploy.sh 从它拉取；若曾 `docker compose down`（会停 registry），下次部署前需先 `docker compose up -d registry`。
 services:
   registry:
     image: registry:2
