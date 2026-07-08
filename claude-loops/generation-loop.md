@@ -25,6 +25,7 @@
 - `save_article(question_item_id, prompt_template_id, title, markdown_content, model_label?)` — **你写好 markdown 后调这个落库**，返回 article_id；review_status 默认 pending（进未审核库）
 - `ai_illustrate_article(article_id, main_category_id, include_companion?, aggressive_images?, set_cover?, web_fallback?)` — AI 智能配图 + 自动封面。走 `run_ai_format`：AI 读正文，按文中点到的游戏，从「主推栏目 + 所有陪衬栏目」匹配插图（**主推和陪衬游戏都会配**），并顺手设封面。**取代**老的 `illustrate_article(category_ids=[1])`——后者只从单一栏目盲塞 3 张图、永远配不到陪衬游戏。传 `web_fallback=True` 时，图库里没有对应栏目的游戏会自动建栏目 + 百度联网补图（见「注意事项」最后一条）
 - `submit_review_decision(article_id, decision, score_total?, score_breakdown?, reasoning?)` — 把你的自评决策写入审核记录（人审仍是终审）
+- `notify_review_card(article_id, title, question, score, decision)` — 每篇自评完（仅 approved / needs_rewrite，跳过 rejected）发一张飞书交互审核卡（标题/自评分/选题 + 「查看文章」链接），比收尾的 `notify_feishu` 批量汇总更即时
 - `get_article(article_id)` — 取详情（debug 用，正常流程不需要）
 - `notify_feishu(title, message, level)` — 飞书通知
 
@@ -163,6 +164,14 @@ while success_count < 5 and attempts < 15:
     ))
     # 不管 decision 是 approved/needs_rewrite/rejected 都记一条——退出播报的「本次产出」
     # 要如实列出这轮到底写了什么、评了多少分，即便最终没算进 success_count
+
+    # 逐篇发卡：仅 approved / needs_rewrite 发（rejected 跳过，群里保持清爽）。这是
+    # "边写边发"的即时通知，不影响收尾的 notify_exit 批量汇总（保留不动，两者并存）。
+    if decision in ("approved", "needs_rewrite"):
+        notify_review_card(
+            article_id=aid, title=title, question=question_text,
+            score=score_total, decision=decision,
+        )
 
 # 循环正常退出（success_count>=5 达标，或 attempts>=15 轮数耗尽）时统一在这里播报；
 # 候选用完 / MCP 连续失败 3 次已在上面 break/return 路径里各自播报过，不会走到这里。
