@@ -201,7 +201,7 @@ def test_mcp_list_skills_catalog(monkeypatch):
         # 带 token → 200，返回全部
         r = c.get("/api/mcp/skills/catalog", headers=HDR)
         assert r.status_code == 200, r.text
-        by_slug = {s["slug"]: s for s in r.json()["data"]["skills"]}
+        by_slug = {s["slug"]: s for s in r.json()["skills"]}
         assert "gen-pkg" in by_slug and "dist-pkg" in by_slug
         # units 提取
         assert sorted(by_slug["gen-pkg"]["units"]) == ["w1", "w2"]
@@ -209,7 +209,7 @@ def test_mcp_list_skills_catalog(monkeypatch):
 
         # category 筛
         r2 = c.get("/api/mcp/skills/catalog?category=distribute", headers=HDR)
-        slugs = {s["slug"] for s in r2.json()["data"]["skills"]}
+        slugs = {s["slug"] for s in r2.json()["skills"]}
         assert "dist-pkg" in slugs and "gen-pkg" not in slugs
     finally:
         app.cleanup()

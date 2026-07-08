@@ -191,7 +191,7 @@ def mcp_list_skills(category: str | None = None, db: Session = Depends(get_db)) 
             }
             for it in items
         ]
-        return {"ok": True, "data": {"skills": skills}, "error": None}
+        return {"skills": skills}
     except Exception as exc:
         raise mcp_exception_response(exc, context=f"mcp_list_skills category={category}") from exc
 
