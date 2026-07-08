@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # 仅给 server/mcp/server.py 的启动断言当「下限」用（注册数必须 ≥ 此值）。
 # 页面展示的工具数走 status.tools_count = len(tools)（实时内省），不再读这个常量。
 # 增减 MCP tool 时同步这里，避免断言把正常启动误判成双实例 bug。
-MCP_TOOLS_COUNT = 25
+MCP_TOOLS_COUNT = 26
 
 # 手写中文「用处」覆盖表：命中则优先用（质量比机翻好），未命中的工具走机翻兜底。
 # 加了新工具不必动这里——机翻会自动补；想给某工具更准的中文再来加一行。
@@ -39,6 +39,7 @@ _CURATED_ZH: dict[str, str] = {
     "get_article": "按 id 取单篇文章全文（Tiptap / HTML / 纯文本）",
     "list_today_loop_articles": "统计窗口内 /goal Loop 已生成且已决策的文章（停止条件用）",
     "list_stock_categories": "列出图片库栏目（配图选 main_category_id 用）",
+    "list_skills": "列出 Skill 库里可安装的 skill 包（可按 category 过滤）",
     # action（写操作）
     "save_article": "把 Claude 写好的 markdown 文章入库（零配置生文）",
     "illustrate_article": "给文章正文按位置插入图库选图",

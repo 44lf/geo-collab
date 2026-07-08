@@ -255,35 +255,30 @@ async def create_distribute_task(
 
 
 @mcp.tool()
-async def install_loop_skills(version: str | None = None) -> dict[str, Any]:
-    """Fetch the /goal Loop skill bundle so Claude Code can install it locally.
+async def install_loop_skills(
+    slug: str | None = None, version: str | None = None
+) -> dict[str, Any]:
+    """Fetch a skill package's current version so Claude Code can install it locally.
 
-    Reads the **official skill** (slug="goal") current version from GEO's multi-skill
-    library (`/api/mcp/skills/goal/install-payload`). The official skill only has a
-    "current version" concept — there is no per-call version pinning anymore.
+    Reads a skill from GEO's multi-skill library
+    (`/api/mcp/skills/{slug}/install-payload`) and returns its files.
 
     Args:
-        version: Deprecated / ignored. Kept for backward compatibility with older
-            callers that used to pin a specific bundle version by id or label.
-            Always resolves to the official skill's current version now; to switch
-            versions, use the GEO web UI's skill library ("Skill 库") to change
-            which version is current, then re-call this tool.
-
-    Returns a dict containing the template files (README, slash command, SKILL.md
-    files) of the official skill's current version. The calling Claude Code session
-    should then use its Write tool to write each file to the user's `.claude/` directory.
+        slug: Which skill package to install. None → the official "goal" pack
+            (backward compatible with existing loop recipes). Use list_skills()
+            to discover available slugs.
+        version: Deprecated / ignored. Kept for backward compatibility. Always
+            resolves to the target skill's current version; to switch versions,
+            change the current version in GEO's web "Skill 库", then re-call.
 
     Returns:
-        {"ok": True, "data": {
-            "version": str,
-            "bundle_sha256": str,
-            "install_hint": str,
-            "files": [{"path": str, "content": str, "sha256": str, "size": int}, ...],
-        }, "error": None}
+        {"ok": True, "data": {"version": str, "bundle_sha256": str,
+         "install_hint": str, "files": [{path, content, sha256, size}]}, "error": None}
     """
-    raw = await _aget("/api/mcp/skills/goal/install-payload")
+    target = slug or "goal"
+    raw = await _aget(f"/api/mcp/skills/{target}/install-payload")
     if not raw.get("ok"):
-        return raw  # 透传 _fail 结构
+        return raw
     inner = raw.get("data") or {}
     if isinstance(inner, dict) and "ok" in inner and "data" in inner:
         return inner

@@ -221,3 +221,26 @@ async def list_stock_categories(
     if kind:
         params["kind"] = kind
     return await _aget("/api/mcp/stock-categories", params=params or None)
+
+
+@mcp.tool()
+async def list_skills(category: str | None = None) -> dict[str, Any]:
+    """List installable skill packages in GEO's Skill library.
+
+    Each entry is one installable package (a Skill record). Use its `slug`
+    with install_loop_skills(slug=...) to install it. `units` lists the
+    SKILL.md sub-skills the package expands into under .claude/skills/.
+
+    Args:
+        category: Optional business-category filter — one of
+            "generation" / "distribute" / "video" / "general".
+
+    Returns:
+        {"ok": True, "data": {"skills": [{id, slug, name, category,
+         is_official, current_version_label, file_count, total_bytes,
+         units:[str]}]}, "error": None}
+    """
+    params: dict[str, Any] = {}
+    if category:
+        params["category"] = category
+    return await _aget("/api/mcp/skills/catalog", params=params or None)
