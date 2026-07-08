@@ -67,6 +67,10 @@ from server.app.modules.loop_skills.router import (
 from server.app.modules.loop_skills.router import (
     router as loop_skills_user_router,
 )
+from server.app.modules.loop_skills.skill_router import (
+    skills_mcp_router,
+    skills_user_router,
+)
 from server.app.modules.mcp_catalog.connect_router import (
     mcp_connect_health_router,
     mcp_connect_user_router,
@@ -240,6 +244,15 @@ def create_app() -> FastAPI:
         prefix="/api/mcp",
         tags=["loop-skills-mcp"],
     )
+    # 多 skill 库（Task 6）—— user JWT 鉴权
+    app.include_router(
+        skills_user_router,
+        prefix="/api/mcp",
+        tags=["skills"],
+        dependencies=[Depends(get_current_user)],
+    )
+    # MCP token 鉴权 (router 自带 dependency)
+    app.include_router(skills_mcp_router, prefix="/api/mcp", tags=["skills-mcp"])
     # MCP token 鉴权（router 自带 dependency）
     app.include_router(
         mcp_connect_health_router,

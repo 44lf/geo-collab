@@ -21,3 +21,44 @@ class BundleVersionMeta(BaseModel):
 
 class BundleVersionList(BaseModel):
     versions: list[BundleVersionMeta]
+
+
+class SkillMeta(BaseModel):
+    id: int
+    name: str
+    slug: str
+    is_official: bool
+    current_version_label: str | None
+    file_count: int
+    total_bytes: int
+    updated_at: datetime
+    uploaded_by: int | None
+
+
+class SkillList(BaseModel):
+    skills: list[SkillMeta]
+
+
+class SkillVersionMeta(BaseModel):
+    id: int
+    version_label: str
+    bundle_sha256: str
+    file_count: int
+    total_bytes: int
+    uploaded_by: int | None
+    uploaded_at: datetime
+    is_current: bool
+
+
+class SkillVersionList(BaseModel):
+    versions: list[SkillVersionMeta]
+
+
+class UploadResult(BaseModel):
+    skill_id: int
+    slug: str
+    version_label: str
+
+
+class SetCurrentBody(BaseModel):
+    version_id: int
