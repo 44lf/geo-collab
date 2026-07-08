@@ -27,6 +27,28 @@ def _esc(text: str, limit: int = 120) -> str:
     return s
 
 
+def build_review_link(*, article_id: int, base_url: str | None, app_id: str | None) -> str:
+    """审核卡「查看文章」按钮的目标链接。
+
+    - **有 app_id → 飞书网页应用 AppLink（`web_app/open`）**：点击后飞书以「已注册网页
+      应用」身份**端内**打开，才会注入 `window.h5sdk`——前端 `inFeishu()` / H5 免登链路
+      依赖它。链接里**不含域名**：飞书按 `appId` 找到该网页应用，域名取自开发者后台该
+      应用配置的「主页 URL」，`path` 追加其后。因此**后台主页 URL 必须 = GEO 部署根**
+      （即 `GEO_PUBLIC_BASE_URL`），否则 path 拼出的页面对不上。
+    - **无 app_id → 回落裸永久链接**（普通浏览器打开、走手动登录），保持未配飞书自建
+      应用时仍可用、且不破坏既有回落行为。
+
+    为何必须 `web_app/open` 而非 `web_url/open`：后者用内置 web-view 打开任意 URL，飞书官方
+    明确其**不具备网页应用的免登等应用级能力**，h5sdk 免登拿不到。见
+    `docs/superpowers/specs/2026-07-07-feishu-review-card-h5-design.md` 与飞书
+    open-an-h5-app AppLink 文档。
+    """
+    if app_id:
+        return f"https://applink.feishu.cn/client/web_app/open?appId={app_id}&path=/article/{article_id}"
+    base = (base_url or "").rstrip("/")
+    return f"{base}/article/{article_id}"
+
+
 def build_review_card(
     *,
     article_id: int,

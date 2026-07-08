@@ -965,7 +965,7 @@ from server.app.modules.articles.ai_illustrate_svc import (  # noqa: E402
     illustrate_one,
 )
 from server.app.modules.image_library.hook import insert_images_for_article  # noqa: E402
-from server.app.shared.feishu_card import send_review_card  # noqa: E402
+from server.app.shared.feishu_card import build_review_link, send_review_card  # noqa: E402
 
 # MCP 路径下没有 user JWT，跟 save_from_mcp 同款用环境变量常量
 _MCP_OPERATOR_USER_ID = int(os.environ.get("GEO_MCP_OPERATOR_USER_ID", "1"))
@@ -1299,8 +1299,13 @@ def post_review_card(
     if article is None:
         raise HTTPException(status_code=404, detail="article not found")
     settings = get_settings()
-    base = (settings.feishu_public_base_url or "").rstrip("/")
-    review_url = f"{base}/article/{article_id}"
+    # 有 feishu_app_id → 拼飞书网页应用 AppLink（端内以网页应用身份打开、注入 h5sdk，
+    # H5 免登才生效）；无则回落裸永久链接。详见 feishu_card.build_review_link。
+    review_url = build_review_link(
+        article_id=article_id,
+        base_url=settings.feishu_public_base_url,
+        app_id=settings.feishu_app_id,
+    )
     try:
         mid = send_review_card(
             chat_id=settings.feishu_review_chat_id or "",
