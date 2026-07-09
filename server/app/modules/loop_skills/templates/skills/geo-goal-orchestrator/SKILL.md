@@ -11,7 +11,7 @@ description: Use when /goal command is invoked in geo-collab repo. Drives the
 你是 `/goal` 命令的 orchestrator。在**主对话**里执行；写作 + 评分通过
 `Agent` 工具下发到 fresh-context subagent。你**不写文章、不评分**——你只
 做：sanity check → 解析目标 → 调度子 agent → 查 GEO 拿净产出 → 决定继续/退出
-→ 飞书播报。
+→ 对留下的稿子调配图工具 → 飞书播报。
 
 # 可用工具（orchestrator 主对话直接调用）
 
@@ -22,8 +22,9 @@ description: Use when /goal command is invoked in geo-collab repo. Drives the
 - `list_question_pools()` / `list_question_items(pool_id, ...)` — 抓候选选题
 - `list_prompt_templates(scope="generation")` — 抓可用生文提示词
 - `list_today_loop_articles(decided_by, decision, since_hours, model_label)` — 查净产出（累计通过数），退出闸门唯一事实来源
+- `ai_illustrate_article(article_id, main_category_id, web_fallback, game_positions)` — 只在「确定要留下这份稿子」时调用（见「主循环」里的 `should_illustrate_now` 判断），参数由 writer 返回的判断结果直接套用，不需要写作判断力
 - `notify_feishu(title, message, level)` — 开始播报 + 退出前批量汇总（见「主循环」`notify_exit`）
-- `notify_review_card(article_id, title, question, score, decision)` — 每轮拿到评审结果后逐篇发一张飞书审核卡（仅 approved / needs_rewrite，跳过 rejected），见「主循环」
+- `report_event(source_module, event_type, message, level, source_type, source_id, payload)` — 贯穿全流程的打点，见「Required Checklist」和「主循环」里各处调用
 
 # Required Checklist (per /goal invocation)
 
@@ -31,16 +32,23 @@ description: Use when /goal command is invoked in geo-collab repo. Drives the
    "请按 docs/mcp-setup-notes.md 配 ~/.claude.json 的 mcpServers.geo"（本步失败是本机配置
    问题，不发飞书——没必要给团队播报个人环境没配好）
 2. **解析目标** — 从用户自由文本抽取
-   `{N, pool_id, topic_hint, qids, matrix_code, tpl_id, model_label}`（见「Goal Parsing 规则」）
+   `{N, pool_id, topic_hint, qids, matrix_code, tpl_id, model_label}`（见「Goal Parsing 规则」）。
+   解析完成后固定打点一条
+   `report_event(source_module="goal_orchestrator", event_type="goal_parsed", level="info", message=f"开始解析目标：{target.raw_text}", payload={"raw_text": target.raw_text, "N": target.N, "pool_id": target.pool_id, "matrix_code": target.matrix_code, "tpl_id": target.tpl_id, "model_label": target.model_label})`。
 3. **抓 candidates + templates** — `list_question_items` + `list_prompt_templates`。
    **注意**：若用户 `问题Id=` 点名了具体问题，`list_question_items` 的 `limit`
-   要够大（或按点名 id 反查），否则 `find_item` 查不到被点名的问题会被丢掉
-4. **开始飞书播报** —— sanity check 通过、目标解析完成后固定发一条
-   `notify_feishu(title="生文流程开始", message=f"目标：{raw_text}\n问题池：{pool_name} · 矩阵：{matrix_code or '默认'}", level="info")`。
-   这一步不可省略——没有它，运行是否真的开始过、目标是什么，飞书里完全查不到。
+   要够大（或按点名 id 反查），否则 `find_item` 查不到被点名的问题会被丢掉。
+   选取完成后固定打点一条
+   `report_event(source_module="goal_orchestrator", event_type="candidates_selected", level="info", message=f"已解析：{target.raw_text}, 问题池：{pool_name}", payload={"raw_text": target.raw_text, "N": target.N, "pool_id": target.pool_id, "matrix_code": target.matrix_code, "tpl_id": target.tpl_id, "model_label": target.model_label})`。
+4. **开始飞书播报 + 打点** —— sanity check 通过、目标解析完成、正式进入主循环前固定发一条飞书
+   `notify_feishu(title="生文流程开始", message=f"目标：{raw_text}\n问题池：{pool_name} · 矩阵：{matrix_code or '默认'}", level="info")`
+   加一条打点
+   `report_event(source_module="goal_orchestrator", event_type="generation_started", level="info", message="开始进行生文", payload={"raw_text": raw_text, "N": N, "pool_id": pool_id, "matrix_code": matrix_code, "tpl_id": tpl_id, "model_label": model_label})`。
+   飞书这一步不可省略——没有它，运行是否真的开始过、目标是什么，飞书里完全查不到。
 5. **进入主循环**（见下）
-6. **退出前飞书播报** —— `notify_feishu(title, message, level)`，level ∈
-   `{"done", "warning", "error"}`，消息字段格式固定，见「主循环」里的 `notify_exit` helper
+6. **退出前飞书播报 + 打点** —— `notify_feishu(title, message, level)` 加一条
+   `report_event(source_module="goal_orchestrator", event_type="goal_exited", level=level, message=title, payload={"raw_text": raw_text, "N": N_eff, "netto_count": netto.count, "attempts": attempts, "reason": reason})`，
+   level ∈ `{"done", "warning", "error"}`，消息字段格式固定，见「主循环」里的 `notify_exit` helper
 
 # Goal Parsing 规则
 
@@ -135,6 +143,14 @@ def notify_exit(title, level, reason=None):
     if reason:
         lines.append(f"原因：{reason}")
     notify_feishu(title, "\n".join(lines), level)
+    report_event(
+        source_module="goal_orchestrator", event_type="goal_exited", level=level,
+        message=title,
+        payload={
+            "raw_text": target.raw_text, "N": N_eff, "netto_count": netto.count,
+            "attempts": attempts, "reason": reason,
+        },
+    )
 
 # 开始播报（Required Checklist 第 4 步）：sanity check + 目标解析完成、正式进入主循环前固定发这一条。
 notify_feishu(
@@ -176,7 +192,8 @@ while True:
     r = 0                      # 第几稿：0=首稿，1..=第 r 次重写
     while r <= rewrite_budget:
         # 生文提示词：锁了恒用 target.tpl_id；没锁则轮转（重写时也换下一个，多一层变化）
-        tpl_id = target.tpl_id if tpl_locked else templates[attempts % len(templates)].id
+        tpl = find_template(templates, target.tpl_id) if tpl_locked else templates[attempts % len(templates)]
+        tpl_id = tpl.id
         attempts += 1
         stage = "改写" if r == 0 else f"第 {r} 次重写"
         echo(f"[第 {attempts}/{attempt_cap} 轮] 问题 #{qid} {stage}中 …")
@@ -188,10 +205,17 @@ while True:
             description=f"改写文章（问题 #{qid}）",
             prompt=f"""Read .claude/skills/geo-article-writer{matrix_suffix}/SKILL.md and follow it strictly.
 
-Input: qid={qid}, tpl_id={tpl_id}, model_label={target.model_label}, rewrite_feedback={prior_feedback or "none"}
+Input:
+  qid={qid}
+  question_text={item.question_text}
+  tpl_id={tpl_id}
+  template_name={tpl.name}
+  template_content=\"\"\"{tpl.content}\"\"\"
+  model_label={target.model_label}
+  rewrite_feedback={prior_feedback or "none"}
 
 Output: ONLY a single-line JSON object as the final message, like:
-  {{"article_id": 824, "title": "...", "illustration_warnings": []}}
+  {{"article_id": 824, "title": "...", "main_category_id": 12, "game_positions": [{{"game": "原神"}}] or null}}
 or on failure:
   {{"error": "..."}}
 No other text.""",
@@ -200,11 +224,31 @@ No other text.""",
         if "error" in parsed:
             echo(f"[第 {attempts}/{attempt_cap} 轮] 问题 #{qid} 改写失败：{parsed.error}")
             failed_rounds += 1
-            if is_mcp_error(parsed.error): consecutive_mcp_fail += 1
+            mcp_fail = is_mcp_error(parsed.error)
+            if mcp_fail: consecutive_mcp_fail += 1
+            report_event(
+                source_module="goal_orchestrator", event_type="write_failed",
+                level="error" if mcp_fail else "warning",
+                message=f"问题 #{qid} {stage}失败：{parsed.error}",
+                payload={
+                    "qid": qid, "tpl_id": tpl_id, "attempts": attempts,
+                    "is_mcp_error": mcp_fail, "error": parsed.error,
+                },
+            )
             break   # 落库失败：不在同一问题上耗重写预算，直接换下一题
         consecutive_mcp_fail = 0
         article_id = parsed["article_id"]
         article_title = parsed["title"]
+        main_category_id = parsed["main_category_id"]
+        game_positions = parsed.get("game_positions")
+        report_event(
+            source_module="goal_orchestrator", event_type="write_succeeded", level="info",
+            message=f"问题 #{qid} {stage}成功，文章 #{article_id}《{article_title}》",
+            payload={
+                "qid": qid, "tpl_id": tpl_id, "attempts": attempts,
+                "article_id": article_id, "article_title": article_title,
+            },
+        )
 
         # === Verifier subagent（fresh context, Haiku）===
         verifier_result = Agent(
@@ -212,7 +256,13 @@ No other text.""",
             description=f"评审文章 #{article_id}",
             prompt=f"""Read .claude/skills/geo-article-verifier/SKILL.md and follow it strictly.
 
-Input: article_id={article_id}, qid={qid}, tpl_id={tpl_id}
+Input:
+  article_id={article_id}
+  qid={qid}
+  question_text={item.question_text}
+  tpl_id={tpl_id}
+  template_name={tpl.name}
+  template_content=\"\"\"{tpl.content}\"\"\"
 
 Output: ONLY a single-line JSON object as the final message, like:
   {{"decision": "approved", "score_total": 82, "weak_dims": [], "reasoning": "..."}}
@@ -223,19 +273,69 @@ No other text.""",
             echo(f"[第 {attempts}/{attempt_cap} 轮] 问题 #{qid} 评审失败，文章 #{article_id} 留待人工审核")
             failed_rounds += 1
             run_log.append(RunLogEntry(qid, question_text, article_id, article_title, None, None))
+            report_event(
+                source_module="goal_orchestrator", event_type="verify_failed", level="warning",
+                message=f"问题 #{qid} 文章 #{article_id} 评审失败：{parsed_v.error}",
+                payload={
+                    "qid": qid, "tpl_id": tpl_id, "attempts": attempts,
+                    "article_id": article_id, "error": parsed_v.error,
+                },
+            )
+            # 评审没评出结果，这份稿子和"决策已知但放弃重写"一样是终态（留人工复审），照常配图
+            illu = ai_illustrate_article(
+                article_id=article_id, main_category_id=main_category_id,
+                web_fallback=True, game_positions=game_positions,
+            )
+            illustration_warnings = collect_illustration_warnings(illu)
+            report_event(
+                source_module="goal_orchestrator", event_type="illustration_result", level="info",
+                message=f"问题 #{qid} 文章 #{article_id} 配图完成",
+                payload={
+                    "qid": qid, "article_id": article_id,
+                    "illustration_warnings": illustration_warnings,
+                },
+            )
             break   # 评审失败不重试同题（无从判断该不该重写），换下一题
         decision = parsed_v.decision
         score_total = parsed_v.score_total
         echo(f"[第 {attempts}/{attempt_cap} 轮] 问题 #{qid} 评审结果：{decision}　分数 {score_total}")
         run_log.append(RunLogEntry(qid, question_text, article_id, article_title, decision, score_total))
+        report_event(
+            source_module="goal_orchestrator",
+            event_type="verify_passed" if decision == "approved" else "verify_rejected",
+            level="info" if decision == "approved" else "warning",
+            message=f"问题 #{qid} 文章 #{article_id} 评审：{decision} · {score_total} 分",
+            payload={
+                "qid": qid, "tpl_id": tpl_id, "attempts": attempts, "article_id": article_id,
+                "decision": decision, "score_total": score_total,
+                "weak_dims": parsed_v.get("weak_dims", []),
+            },
+        )
 
-        # 逐篇发卡：approved / needs_rewrite 才发（rejected 不发，群里保持清爽）。这是
-        # "边写边发"的即时通知，让审核人不用等整轮 /goal 跑完就能点进去看文章；收尾的
-        # notify_exit 批量汇总（见上方）保留不动，两者并存不冲突。
-        if decision in ("approved", "needs_rewrite"):
-            notify_review_card(
-                article_id=article_id, title=article_title, question=question_text,
-                score=score_total, decision=decision,
+        # === 配图决策：只在「确定要留下这份稿子」时才配图 ===
+        # 锁定问题词时最多重写 REWRITE_CAP 次；未过审且这不是最后一次机会 → 马上会被下一稿取代，
+        # 配图纯属浪费（评审只看文本，不看图）。其余情况（过审 / 已经放弃这题）都照常配图。
+        will_rewrite_same_question = q_exact and decision != "approved" and r < rewrite_budget
+        should_illustrate_now = (decision == "approved") or (not will_rewrite_same_question)
+        if should_illustrate_now:
+            illu = ai_illustrate_article(
+                article_id=article_id, main_category_id=main_category_id,
+                web_fallback=True, game_positions=game_positions,
+            )
+            illustration_warnings = collect_illustration_warnings(illu)
+            report_event(
+                source_module="goal_orchestrator", event_type="illustration_result", level="info",
+                message=f"问题 #{qid} 文章 #{article_id} 配图完成",
+                payload={
+                    "qid": qid, "article_id": article_id,
+                    "illustration_warnings": illustration_warnings,
+                },
+            )
+        else:
+            report_event(
+                source_module="goal_orchestrator", event_type="illustration_skipped", level="info",
+                message=f"问题 #{qid} 稿件即将重写，跳过本稿配图",
+                payload={"qid": qid, "article_id": article_id},
             )
 
         if decision == "approved":
@@ -322,6 +422,8 @@ No other text.""",
 | `matrix_suffix(code)` | `code == ""` → `""`；否则 `"-" + code` |
 | `topic_hint_match(item, hint)` | 不区分大小写子串匹配；`hint in item.question_text` OR `hint in item.category` |
 | `find_item(candidates, qid)` | 在 `candidates` 里找 `id == qid` 的那条；找不到返 `None`（被 worklist 过滤掉，说明 candidates 抓少了） |
+| `find_template(templates, tpl_id)` | 在 `templates` 里找 `id == tpl_id` 的那条；找不到返 `None`（说明 `tpl_locked` 时用户传的模板 id 不在候选列表里，属输入错误） |
+| `collect_illustration_warnings(illu)` | 若 `illu` 是调用失败（异常/超时）→ 返回 `["call_failed: <message>"]`，**不触发** `consecutive_mcp_fail` / `failed_rounds`（配图 best-effort）；否则按 5 类信号收集：`format_error` 非空→`"format_error: <值>"`；`cover_error` 非空→`"cover_error: <值>"`；`warning` 非空→`"warning: <值>"`；`images_inserted == 0`→额外加 `"images_inserted=0"`；`missed > 0`→加 `"partial: 应配 {requested} 张、实配 {images_inserted} 张，缺 {missed} 张（{missed_games}）"` |
 | `is_mcp_error(error)` | `mcp__geo__*` 返回 `{ok:false, error}` 或抛 401/502/5xx/超时 → True |
 | `estimated_main_tokens` | 粗估 `attempts * 8000`；Claude Code 暴露精确 API 后再换 |
 | `parse_last_json_line(text)` | 找最后一行能 `json.loads` 解析的；找不到返 `{"error": "no JSON in subagent output"}` |
@@ -340,8 +442,9 @@ No other text.""",
 # 四个不变式（硬约束）
 
 1. **单点失败不杀 loop**——除非 MCP 连续 3 次
-2. **落库失败 ≠ 验证失败**：save_article 失败 → 不在同一题上耗重写预算、直接换下一个工作项；
-   verifier 失败 → 文章留 pending 由人审、也不重试同题
+2. **落库失败 ≠ 验证失败 ≠ 配图失败**：save_article 失败 → 不在同一题上耗重写预算、直接换下一个工作项；
+   verifier 失败 → 文章留 pending 由人审、也不重试同题；`ai_illustrate_article` 失败（best-effort）→
+   只记 `illustration_warnings`，不计入 `consecutive_mcp_fail` / `failed_rounds`，不影响文章已经写完过审这个事实
 3. **netto 是唯一计数事实**：subagent 自报"我写好了"都不算数，必须查 MCP
 4. **锁定即不换**：用户精确点名的问题词 / 生文提示词，重试全程不替换；只有**没被锁定**的那一维
    才允许在重试时变化。评分不过时——问题词被锁就"重写同一问题"（≤2 次），没锁就"换下一问题"，
