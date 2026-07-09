@@ -67,7 +67,9 @@ build:web:
         --destination "$IMG:$VER" --destination "$IMG:latest"
 
 deploy:
-  image: ${HARBOR_REGISTRY}/${HARBOR_PROJECT}/skopeo-stable:latest
+  image:
+    name: ${HARBOR_REGISTRY}/${HARBOR_PROJECT}/skopeo-stable:latest
+    entrypoint: [""]          # skopeo 镜像 ENTRYPOINT 是 skopeo，覆盖成空才能让 GitLab 用 shell 跑 job 脚本
   stage: deploy
   interruptible: false
   rules:
