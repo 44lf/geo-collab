@@ -1,7 +1,8 @@
 import { useState, type CSSProperties } from "react";
-import { ChevronDown, ChevronUp, Download, FileText, ShieldCheck, Trash2, User } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, FileText, ShieldCheck, Trash2, Upload, User } from "lucide-react";
 import { skillDownloadUrl, type Skill, type SkillVersion } from "../../../api/skills";
 import { VersionHistory } from "./VersionHistory";
+import { VersionUploader } from "./VersionUploader";
 
 function formatBytes(n: number): string {
   if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
@@ -78,6 +79,8 @@ export function SkillCard({
   onDeleteSkill: (s: Skill) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showUploader, setShowUploader] = useState(false);
+  const canUploadVersion = isAdmin || !skill.is_official;
 
   const canDeleteVersion = (v: SkillVersion) =>
     isAdmin || (!skill.is_official && v.uploaded_by === currentUserId);
@@ -99,6 +102,16 @@ export function SkillCard({
         {skill.is_official ? <OfficialBadge /> : <CustomBadge />}
         <CategoryBadge category={skill.category} />
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            className="secondaryButton"
+            style={{ height: 30, padding: "0 10px", fontSize: 12.5 }}
+            title={canUploadVersion ? "上传新版本（完全替换）" : "官方包仅 admin 可上传新版本"}
+            disabled={!canUploadVersion}
+            onClick={() => setShowUploader((v) => !v)}
+          >
+            <Upload size={13} /> 上传新版本
+          </button>
           <button
             type="button"
             className="secondaryButton"
@@ -135,6 +148,19 @@ export function SkillCard({
       {expanded ? (
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--hair)" }}>
           <VersionHistory skill={skill} canDelete={canDeleteVersion} onChanged={onChanged} />
+        </div>
+      ) : null}
+
+      {showUploader ? (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--hair)" }}>
+          <VersionUploader
+            skillId={skill.id}
+            onDone={() => {
+              setShowUploader(false);
+              onChanged();
+            }}
+            onCancel={() => setShowUploader(false)}
+          />
         </div>
       ) : null}
     </div>
