@@ -13,6 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { listSkillVersions, uploadSkill } from "../../../api/skills";
+import { filesFromDataTransferItems } from "./fileDrop";
 
 type Phase = "idle" | "receiving" | "validating" | "storing" | "done" | "error";
 
@@ -53,62 +54,6 @@ function classifyError(msg: string): { badge: string } {
     return { badge: sizeMatch ? `文件过大 · ${sizeMatch[0]}` : "文件过大" };
   }
   return { badge: "上传失败" };
-}
-
-// ─── 拖拽文件夹：递归读取 DataTransferItem → FileSystemEntry ───
-
-function withRelativePath(file: File, relativePath: string): File {
-  try {
-    Object.defineProperty(file, "webkitRelativePath", { value: relativePath, configurable: true });
-  } catch {
-    // 极少数浏览器禁止重定义只读属性——忽略即可，deriveSkillName 会退回用文件名
-  }
-  return file;
-}
-
-function readAllDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
-  return new Promise((resolve, reject) => {
-    const all: FileSystemEntry[] = [];
-    const readBatch = () => {
-      reader.readEntries((batch) => {
-        if (batch.length === 0) {
-          resolve(all);
-          return;
-        }
-        all.push(...batch);
-        readBatch();
-      }, reject);
-    };
-    readBatch();
-  });
-}
-
-async function walkEntry(entry: FileSystemEntry, prefix: string, out: File[]): Promise<void> {
-  if (entry.isFile) {
-    const fileEntry = entry as FileSystemFileEntry;
-    const file = await new Promise<File>((resolve, reject) => fileEntry.file(resolve, reject));
-    out.push(withRelativePath(file, `${prefix}${entry.name}`));
-  } else if (entry.isDirectory) {
-    const dirEntry = entry as FileSystemDirectoryEntry;
-    const reader = dirEntry.createReader();
-    const children = await readAllDirectoryEntries(reader);
-    for (const child of children) {
-      await walkEntry(child, `${prefix}${entry.name}/`, out);
-    }
-  }
-}
-
-async function filesFromDataTransferItems(items: DataTransferItemList): Promise<File[]> {
-  const entries: FileSystemEntry[] = [];
-  for (let i = 0; i < items.length; i++) {
-    const entry = items[i]?.webkitGetAsEntry?.();
-    if (entry) entries.push(entry);
-  }
-  const out: File[] = [];
-  for (const entry of entries) {
-    await walkEntry(entry, "", out);
-  }
-  return out;
 }
 
 export function UploadZone({ onUploaded }: { onUploaded: () => void }) {

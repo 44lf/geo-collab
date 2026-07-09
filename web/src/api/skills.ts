@@ -46,6 +46,21 @@ export function uploadSkill(
   });
 }
 
+export function uploadSkillVersion(
+  skillId: number,
+  files: File[],
+): Promise<{ skill_id: number; slug: string; version_label: string }> {
+  const form = new FormData();
+  for (const file of files) {
+    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    form.append("files", file, relativePath || file.name);
+  }
+  return api<{ skill_id: number; slug: string; version_label: string }>(
+    `/api/mcp/skills/${skillId}/versions`,
+    { method: "POST", body: form },
+  );
+}
+
 export function listSkillVersions(skillId: number): Promise<{ versions: SkillVersion[] }> {
   return api<{ versions: SkillVersion[] }>(`/api/mcp/skills/${skillId}/versions`);
 }
