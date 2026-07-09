@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderOpen, Loader2, UploadCloud, X } from "lucide-react";
+import { Folder, FolderOpen, Loader2, UploadCloud, X } from "lucide-react";
 import { uploadSkillVersion } from "../../../api/skills";
 import { useToast } from "../../../components/Toast";
 import { filesFromDataTransferItems } from "./fileDrop";
@@ -104,8 +104,8 @@ export function VersionUploader({
                 style={hiddenInput}
               />
             </label>
-            <label style={{ cursor: "pointer", color: "var(--accent-deep)", fontSize: 12.5, textDecoration: "underline" }}>
-              选择文件夹
+            <label className="primaryButton" style={{ cursor: "pointer", height: 32, padding: "0 12px" }}>
+              <Folder size={13} /> 选择文件夹
               <input
                 type="file"
                 onChange={onPick}
