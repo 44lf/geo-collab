@@ -11,7 +11,7 @@ RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /
 # 浏览器自动化系统依赖（Chromium / Xvfb / VNC / noVNC / 中文字体 / 运行时库）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb x11vnc websockify novnc chromium \
-    fonts-noto-cjk libnss3 libnspr4 libatk-bridge2.0-0 \
+    fonts-noto-cjk ffmpeg libnss3 libnspr4 libatk-bridge2.0-0 \
     libdrm2 libxkbcommon0 libgbm1 libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
