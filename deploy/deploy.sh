@@ -39,7 +39,7 @@ DAILYHOT_IMAGE="geo-dailyhot"
 
 IMAGE_SOURCE="${IMAGE_SOURCE:-tarball}"          # tarball（默认，docker load）| registry（docker pull 本地仓）
 LOCAL_REGISTRY="${LOCAL_REGISTRY:-127.0.0.1:5000}"
-HARBOR_PROJECT="${HARBOR_PROJECT:-geo}"
+HARBOR_PROJECT="${HARBOR_PROJECT:-agent-geo-collab}"
 
 read_pkg_ver() {
   local key="$1" file="$DEPLOY_DIR/VERSION" v=""
