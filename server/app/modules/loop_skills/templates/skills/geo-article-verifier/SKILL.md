@@ -13,21 +13,27 @@ decision + 调 `submit_review_decision`。
 
 # Required Checklist (per spawn)
 
-1. `get_article(article_id)` — 拿完整内容 + qid + tpl_id（从 metrics 或 input）
-2. `list_question_items(pool_id=...)` 反查 qid 对应 question_text
-3. `list_prompt_templates(scope="generation")` 反查 tpl_id 对应 template
-4. 按 4 维度评分（0-100，整数）
-5. 计算 `score_total = round((factuality + readability + style + policy_safety) / 4)`
-6. 决策（门槛见下）
-7. `submit_review_decision(article_id, decision, score_total, pass_line=<合格线>,
-   score_breakdown, reasoning, decided_by="claude-goal-verifier")`
-   —— `pass_line` 传「决策门槛」里的**合格线**（approval 的 score_total 门槛，当前 70），
-   **过没过审都要传**：没过线的文章据此在内容列表显示「真实分 / 合格线」（如 65 / 80）
-8. 返回 `{"decision": str, "score_total": int, "weak_dims": [str], "reasoning": str}`
+1. `get_article(article_id)` — 拿完整内容（落库后的真实标题 / 正文 / 配图状态）
+2. **直接用 input 里给的 `question_text` / `template_content`**（orchestrator 已经查过一次候选池和
+   模板列表，不用你再反查）。仅当这两个字段确实缺失时才退回去查一次作为兜底：
+   `list_question_items(pool_id=...)` 反查 question_text /
+   `list_prompt_templates(scope="generation")` 反查 template
+3. 按 4 维度评分（0-100，整数）
+4. 计算 `score_total = round((factuality + readability + style + policy_safety) / 4)`
+5. 决策（门槛见下）
+6. `submit_review_decision(article_id, decision, score_total, score_breakdown,
+   reasoning, decided_by="claude-goal-verifier", pass_line=<见下>)`
+   - **`pass_line`（合格分数）**：当 `decision != "approved"`（即 `score_total < 70`
+     或 `policy_safety < 80` 被拦下）时，**必须传 `pass_line=70`**——把「合格线 70」
+     一并送给平台，平台会把分数渲染成「真实分 / 合格线」（如 `65 / 70`），运营一眼就知道
+     差在哪、离达标还有多远。
+   - 过审（`decision == "approved"`）时**省略 `pass_line`**（不传）：既然已达标，
+     没必要再标一条合格线。
+7. 返回 `{"decision": str, "score_total": int, "weak_dims": [str], "reasoning": str}`
    作为最后一条消息。其中：
    - `weak_dims` = 所有"拖后腿"的维度名列表：`factuality`/`readability`/`style` 分 < 70 的、
      以及 `policy_safety` 分 < 80 的，都列进去；四项都达标就传 `[]`
-   - `reasoning` = 和第 7 步写进 `submit_review_decision` 的同一句话（1-2 句）
+   - `reasoning` = 和第 6 步写进 `submit_review_decision` 的同一句话（1-2 句）
    - orchestrator 在"重写模式"里把 `weak_dims` + `reasoning` 喂给改写员做针对性改进，
      所以务必如实反映薄弱点，别只报分数
 
@@ -42,17 +48,16 @@ decision + 调 `submit_review_decision`。
 
 # 决策门槛
 
-**合格线（approval 的 score_total 门槛）= 70** —— 运营要调"严/松"改这一个数，并把它作为
-`pass_line` 传给第 7 步。
+合格分数（pass_line）恒为 **70**：
 
-- `score_total >= 合格线`（=70）**且** `policy_safety >= 80` → `"approved"`
+- `score_total >= 70` **且** `policy_safety >= 80` → `"approved"`
 - 否则 `score_total >= 40` → `"needs_rewrite"`
 - 否则 → `"rejected"`
 
 **policy_safety < 80 一律不能 approved**，即使总分高（人审兜底，但减负）。
 
-> `pass_line` 传的是**分数线**（上面的 70），不是 `policy_safety` 那道 80 的硬门。若某文
-> `score_total >= 合格线` 但栽在 policy_safety，列表显示纯数字（它确实过了分数线）。
+**未过审时（needs_rewrite / rejected）务必在 `submit_review_decision` 里传 `pass_line=70`**，
+让平台把「真实分 / 合格线」（如 `65 / 70`）显示出来；过审则省略该参数。
 
 # 反例（什么不该 approve）
 
