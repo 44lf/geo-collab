@@ -51,11 +51,14 @@ workflow:
       changes: *code-paths
     - if: '$CI_COMMIT_BRANCH'
       changes: *code-paths
+    - if: '$CI_COMMIT_TAG =~ /^(base|server|web|release)-/'
 
 stages:
   - lint
   - test
   - frontend
+  - build
+  - deploy
 
 variables:
   PIP_INDEX_URL: "https://pypi.tuna.tsinghua.edu.cn/simple"
@@ -235,3 +238,6 @@ frontend:
     - pnpm --filter @geo/web typecheck
     - pnpm --filter @geo/web build
     - pnpm audit --audit-level moderate || true   # 非阻塞,仅告警
+
+include:
+  - local: ci/deploy.gitlab-ci.yml
