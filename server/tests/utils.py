@@ -107,6 +107,7 @@ def _model_modules() -> None:
     import server.app.modules.loop_skills.models  # noqa: F401
     import server.app.modules.pipelines.models  # noqa: F401
     import server.app.modules.prompt_templates.models  # noqa: F401
+    import server.app.modules.report.models  # noqa: F401
     import server.app.modules.skills.models  # noqa: F401
     import server.app.modules.system.models  # noqa: F401
     import server.app.modules.tasks.models  # noqa: F401

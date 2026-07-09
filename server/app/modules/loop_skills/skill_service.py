@@ -72,6 +72,36 @@ def _next_label(session: Session, skill_id: int) -> str:
 _MAX_LABEL_RETRY_ATTEMPTS = 5
 
 
+def _append_version(
+    session: Session,
+    skill: Skill,
+    bundle: SkillBundle,
+    uploaded_by: int | None,
+) -> SkillVersion:
+    """构造并插入一个新 SkillVersion 行(version_label 由 _next_label 递增)。
+
+    不设 current、不做重试——调用方负责把它包在 try/except IntegrityError 重试循环里，
+    成功后自行设 skill.current_version_id。
+    """
+    version = SkillVersion(
+        skill_id=skill.id,
+        version_label=_next_label(session, skill.id),
+        bundle_sha256=bundle.bundle_sha256,
+        file_count=len(bundle.files),
+        total_bytes=sum(f.size for f in bundle.files),
+        storage_backend="db",
+        files=[
+            {"path": f.path, "content": f.content, "sha256": f.sha256, "size": f.size}
+            for f in bundle.files
+        ],
+        storage_key=None,
+        uploaded_by=uploaded_by,
+    )
+    session.add(version)
+    session.flush()
+    return version
+
+
 def create_version(
     session: Session,
     *,
@@ -109,25 +139,49 @@ def create_version(
                 session.add(skill)
                 session.flush()
 
-            version = SkillVersion(
-                skill_id=skill.id,
-                version_label=_next_label(session, skill.id),
-                bundle_sha256=bundle.bundle_sha256,
-                file_count=len(bundle.files),
-                total_bytes=sum(f.size for f in bundle.files),
-                storage_backend="db",
-                files=[
-                    {"path": f.path, "content": f.content, "sha256": f.sha256, "size": f.size}
-                    for f in bundle.files
-                ],
-                storage_key=None,
-                uploaded_by=uploaded_by,
-            )
-            session.add(version)
-            session.flush()
+            version = _append_version(session, skill, bundle, uploaded_by)
         except IntegrityError as exc:
             # 并发/双击撞 uq_skill_versions_label（或新建 skill 撞 uq_skills_name_active）：
             # rollback 会使本轮 add 的 skill/version 失效，下一轮重新查/建。
+            session.rollback()
+            last_exc = exc
+            continue
+
+        skill.current_version_id = version.id
+        session.flush()
+        return skill, version
+
+    raise ConflictError("版本号并发冲突，请重试上传") from last_exc
+
+
+def add_version(
+    session: Session,
+    *,
+    skill_id: int,
+    entries: list[tuple[str, bytes]],
+    uploaded_by: int | None,
+    is_admin: bool = False,
+) -> tuple[Skill, SkillVersion]:
+    """按 id 给已存在的 skill 追加一个新版本(绕开按 name 匹配的新建路径)。
+
+    纯完全替换：新版本 files = 本次上传全集。官方包仅 admin。
+    """
+    raw = upload.parse_upload(entries)
+    upload.validate_file_map(raw)
+    bundle = build_bundle_from_file_map(raw, version="pending")
+
+    last_exc: IntegrityError | None = None
+    for _attempt in range(_MAX_LABEL_RETRY_ATTEMPTS):
+        skill = session.get(Skill, skill_id)
+        if skill is None or skill.is_deleted:
+            raise ValidationError(f"skill 不存在: {skill_id}")
+        if skill.is_official and not is_admin:
+            raise ClientError("官方包仅管理员可上传新版本")
+
+        try:
+            version = _append_version(session, skill, bundle, uploaded_by)
+        except IntegrityError as exc:
+            # 并发/双击撞 uq_skill_versions_label：rollback 后下一轮重新查 skill + 递增 label。
             session.rollback()
             last_exc = exc
             continue

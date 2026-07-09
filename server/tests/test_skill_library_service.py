@@ -218,3 +218,139 @@ def test_create_version_rejects_bad_category(monkeypatch):
             db.close()
     finally:
         app.cleanup()
+
+
+def test_add_version_appends_and_switches_current(monkeypatch):
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = _db()
+        try:
+            sk, v1 = svc.create_version(
+                db, entries=[("b.zip", _zip({"SKILL.md": b"one"}))], name="w-add", uploaded_by=None
+            )
+            db.commit()
+
+            sk2, v2 = svc.add_version(
+                db,
+                skill_id=sk.id,
+                entries=[("b.zip", _zip({"SKILL.md": b"two"}))],
+                uploaded_by=None,
+            )
+            db.commit()
+            assert sk2.id == sk.id
+            assert v2.version_label == "v2"
+            assert sk2.current_version_id == v2.id
+            assert svc.get_current_bundle(db, sk.slug).files[0].content == "two"
+        finally:
+            db.close()
+    finally:
+        app.cleanup()
+
+
+def test_add_version_official_requires_admin(monkeypatch):
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.app.shared.errors import ClientError
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = _db()
+        try:
+            sk, _ = svc.create_version(
+                db, entries=[("b.zip", _zip({"SKILL.md": b"1"}))], name="off-add", uploaded_by=None
+            )
+            sk.is_official = True
+            db.commit()
+
+            # 非 admin 追加官方包 → ClientError
+            with pytest.raises(ClientError):
+                svc.add_version(
+                    db,
+                    skill_id=sk.id,
+                    entries=[("b.zip", _zip({"SKILL.md": b"2"}))],
+                    uploaded_by=None,
+                    is_admin=False,
+                )
+            # admin 追加官方包 → OK
+            _, v2 = svc.add_version(
+                db,
+                skill_id=sk.id,
+                entries=[("b.zip", _zip({"SKILL.md": b"2"}))],
+                uploaded_by=None,
+                is_admin=True,
+            )
+            db.commit()
+            assert v2.version_label == "v2"
+        finally:
+            db.close()
+    finally:
+        app.cleanup()
+
+
+def test_add_version_missing_skill_raises(monkeypatch):
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.app.shared.errors import ValidationError
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = _db()
+        try:
+            with pytest.raises(ValidationError):
+                svc.add_version(
+                    db,
+                    skill_id=999999,
+                    entries=[("b.zip", _zip({"SKILL.md": b"x"}))],
+                    uploaded_by=None,
+                )
+        finally:
+            db.close()
+    finally:
+        app.cleanup()
+
+
+def test_add_version_complete_replacement(monkeypatch):
+    """追加时是完全替换：上传 1 文件到原 3 文件包 → 新版本只有 1 文件（无 auto-inherit）。"""
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        db = _db()
+        try:
+            sk, _ = svc.create_version(
+                db,
+                entries=[
+                    (
+                        "b.zip",
+                        _zip(
+                            {
+                                "SKILL.md": b"a",
+                                "commands/goal.md": b"b",
+                                "README.md": b"c",
+                            }
+                        ),
+                    )
+                ],
+                name="repl-add",
+                uploaded_by=None,
+            )
+            db.commit()
+
+            _, v2 = svc.add_version(
+                db,
+                skill_id=sk.id,
+                entries=[("b.zip", _zip({"SKILL.md": b"only"}))],
+                uploaded_by=None,
+            )
+            db.commit()
+            assert v2.file_count == 1
+            bundle = svc.get_current_bundle(db, sk.slug)
+            assert [f.path for f in bundle.files] == ["SKILL.md"]
+        finally:
+            db.close()
+    finally:
+        app.cleanup()
