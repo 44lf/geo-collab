@@ -89,6 +89,39 @@ def list_versions(skill_id: int, db: Session = Depends(get_db)) -> SkillVersionL
     )
 
 
+@skills_user_router.post("/skills/{skill_id}/versions", response_model=UploadResult)
+async def upload_skill_version(
+    skill_id: int,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> UploadResult:
+    entries = [(f.filename or "file", await f.read()) for f in files]
+    try:
+        skill, version = svc.add_version(
+            db,
+            skill_id=skill_id,
+            entries=entries,
+            uploaded_by=current_user.id,
+            is_admin=(current_user.role == "admin"),
+        )
+    except (ConflictError, ValidationError):
+        # 冲突(409) / 不存在或校验失败(400) 走全局兜底，不在此处改写
+        raise
+    except ClientError as exc:
+        # 权限类(官方包非 admin 追加) → 403
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    add_audit_entry(
+        db,
+        user=current_user,
+        action="skill.upload",
+        target_type="skill",
+        target_id=str(skill.id),
+        payload={"version": version.version_label},
+    )
+    return UploadResult(skill_id=skill.id, slug=skill.slug, version_label=version.version_label)
+
+
 @skills_user_router.post("/skills/{skill_id}/set-current", status_code=204)
 def set_current(
     skill_id: int,

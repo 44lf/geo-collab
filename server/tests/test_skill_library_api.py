@@ -246,3 +246,124 @@ def test_operator_cannot_upload_official_name_403(monkeypatch):
         assert r.status_code == 403, r.text
     finally:
         app.cleanup()
+
+
+def test_add_version_endpoint_appends(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        c = app.client  # admin
+        r = c.post(
+            "/api/mcp/skills/upload",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"one"}), "application/zip")},
+            data={"name": "endpoint-add"},
+        )
+        assert r.status_code == 200, r.text
+        sid = r.json()["skill_id"]
+
+        r = c.post(
+            f"/api/mcp/skills/{sid}/versions",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"two"}), "application/zip")},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["version_label"] == "v2"
+        assert r.json()["skill_id"] == sid
+
+        labels = [
+            v["version_label"] for v in c.get(f"/api/mcp/skills/{sid}/versions").json()["versions"]
+        ]
+        assert labels == ["v2", "v1"]
+    finally:
+        app.cleanup()
+
+
+def test_add_version_endpoint_official_non_admin_403(monkeypatch):
+    from server.app.modules.loop_skills import skill_service as svc
+    from server.tests.utils import build_test_app, create_extra_user
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            sk, _ = svc.create_version(
+                db,
+                entries=[("b.zip", _zip({"SKILL.md": b"1"}))],
+                name="off-endpoint",
+                uploaded_by=None,
+            )
+            sk.is_official = True
+            db.commit()
+            sid = sk.id
+        finally:
+            db.close()
+
+        _uid, op_client = create_extra_user(app, "op-add-official")
+        r = op_client.post(
+            f"/api/mcp/skills/{sid}/versions",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"2"}), "application/zip")},
+        )
+        assert r.status_code == 403, r.text
+    finally:
+        app.cleanup()
+
+
+def test_add_version_endpoint_non_official_any_user(monkeypatch):
+    from server.tests.utils import build_test_app, create_extra_user
+
+    app = build_test_app(monkeypatch)
+    try:
+        c = app.client  # admin 建一个非官方包
+        sid = c.post(
+            "/api/mcp/skills/upload",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"one"}), "application/zip")},
+            data={"name": "shared-pkg"},
+        ).json()["skill_id"]
+
+        _uid, op_client = create_extra_user(app, "op-add-shared")
+        r = op_client.post(
+            f"/api/mcp/skills/{sid}/versions",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"two"}), "application/zip")},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["version_label"] == "v2"
+    finally:
+        app.cleanup()
+
+
+def test_add_version_endpoint_missing_skill_md_400(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        c = app.client
+        sid = c.post(
+            "/api/mcp/skills/upload",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"one"}), "application/zip")},
+            data={"name": "no-skillmd-add"},
+        ).json()["skill_id"]
+
+        r = c.post(
+            f"/api/mcp/skills/{sid}/versions",
+            files={"files": ("b.zip", _zip({"README.md": b"x"}), "application/zip")},
+        )
+        assert r.status_code == 400, r.text
+    finally:
+        app.cleanup()
+
+
+def test_add_version_endpoint_skill_not_found_400(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        c = app.client
+        r = c.post(
+            "/api/mcp/skills/999999/versions",
+            files={"files": ("b.zip", _zip({"SKILL.md": b"x"}), "application/zip")},
+        )
+        assert r.status_code == 400, r.text
+    finally:
+        app.cleanup()
