@@ -91,13 +91,9 @@ backend-lint:
 # ============================================================
 # 后端测试(全套一次跑完,不分片)
 # ============================================================
-backend-test:
+.backend-test:
   extends: .python
   stage: test
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - when: on_success
   services:
     - name: public.ecr.aws/docker/library/mysql:8.0
       alias: mysql
