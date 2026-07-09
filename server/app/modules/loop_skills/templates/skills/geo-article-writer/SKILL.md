@@ -15,18 +15,24 @@ description: Use when spawned as a writer subagent by /goal, or when manually
 
 0. **看 input 有没有 `rewrite_feedback`**（`none` 以外即有）—— 有就是"重写模式"：
    这是对同一问题的重写，上一版没过审。按下面「重写模式」段有的放矢地改进，别照抄上一版
-1. get question — `list_question_items(pool_id=<from input>)` 拿到 qid 对应条目；
-   或直接用 input 里给的 question_text 兜底（如果 orchestrator 已经带过来）
-2. get template — `list_prompt_templates(scope="generation")` 找到 tpl_id 的 content
-3. 写 markdown body（约束见下；重写模式下先读 `rewrite_feedback` 再动笔）
+1. get question / template — **直接用 input 里给的 `question_text` / `template_content`**（orchestrator
+   已经查过一次候选池和模板列表，这两个字段是命中结果，不用你再查一遍）。仅当这两个字段
+   **确实缺失**时才退回去查一次作为兜底：`list_question_items(pool_id=...)` 反查 `question_text` /
+   `list_prompt_templates(scope="generation")` 反查 `template_content`
+2. **打点，动笔前，独立执行**
+   `report_event(source_module="geo_article_writer", event_type="companion_games_selection_started", level="info", message=f"开始筛选陪衬游戏：{question_text}", source_type="question_item", source_id=qid, payload={"qid": qid, "tpl_id": tpl_id, "question_text": question_text})`
+   标记"开始按 template 的『真实游戏库』要求筛选陪衬游戏、动笔写正文"这一时刻，让
+   orchestrator / 运营不用等文章写完才知道这一步真的发生过。
+3. 写 markdown body（约束见下；重写模式下先读 `rewrite_feedback` 再动笔）。
 4. `save_article(question_item_id, prompt_template_id, title, markdown_content,
-   model_label, prompt_template_name=<step 2 拿到的 tpl.name>,
-   question_text_preview=<step 1 拿到的 question_text 前 ~40 字>)` —
+   model_label, prompt_template_name=<input 里的 template_name>,
+   question_text_preview=<input 里的 question_text 前 ~40 字>)` —
    后两个**展示参数**是给 Claude Code UI 看的：传了之后工具调用渲染会显示
    `prompt_template_id: 13, prompt_template_name: "游戏情绪清单"`，运营在主对话里
    一眼就知道用了哪个模板 / 哪个问题，不用回头查数字。后端会丢弃这两字段
    （Pydantic `extra='ignore'`），传错不报错——但**务必传**，否则 UI 只显示数字
-5. **配图前先判断正文结构,决定要不要传显式游戏清单 `game_positions`:**
+5. **判断正文结构,决定要不要传显式游戏清单 `game_positions`（只判断，不调用配图工具——
+   配图现在由 orchestrator 在拿到评审结果之后决定要不要做）:**
    - 若你写的是**每款游戏各占一个 `##` 小标题**的推荐 / 盘点类文章 → **逐款收一份
      `game_positions`**:每个出现的游戏一项,`game` 用它在小标题里的规范中文名(和小标题
      保持一致;后端会自动去掉《》「」弯引号与「游戏N、」前缀再匹配),顺序按正文小标题顺序。
@@ -35,25 +41,14 @@ description: Use when spawned as a writer subagent by /goal, or when manually
      `requested / missed / missed_games` 计数精确(不再有"漏点游戏"盲区)。
    - 若是**没有分款小标题的散文 / 综述**(游戏名只散在正文、无各自小标题)→ **不要传**
      `game_positions`(设 None),回退现有 AI 模型识别路径(否则游戏匹配不到小标题会落不了图)。
-   然后调:
-   `ai_illustrate_article(article_id, main_category_id=<从矩阵特例段拿>, web_fallback=True, game_positions=<上面那份;散文则 None>)` —
-   AI 智能配图 + 自动封面。`web_fallback=True` 让图库里没有对应栏目的游戏也能
-   联网补图（见矩阵特例段;传了 `game_positions` 时确定性路径内部已写死联网兜底,
-   该参数只对回退路径生效）。**必须**收集这 5 类信号进 `illustration_warnings`
-   数组（任一非空 / 命中即记录，不抛错、不阻塞返回）：
-   - `format_error` 非空 → 加 `"format_error: <值>"`
-   - `cover_error` 非空 → 加 `"cover_error: <值>"`
-   - `warning` 非空 → 加 `"warning: <值>"`（典型值：`ai_returned_no_positions` /
-     `no_match_in_categories` / `no_valid_categories` / `already_has_images` /
-     `partial_images: ...`）
-   - `images_inserted == 0` → 额外加 `"images_inserted=0"`（即便上面三个都为空，
-     也要让 orchestrator 看到"AI 决定不插图"这一事实）
-   - `missed > 0` → 加 `"partial: 应配 {requested} 张、实配 {images_inserted} 张，缺 {missed} 张（{missed_games}）"`
-     （部分配图失败：图库 + 联网都没补齐。**即便 images_inserted 非 0 也要记**——
-     别因为有图就当完全成功；missed_games 指出是哪几款游戏没配上）
-6. 返回 `{"article_id": int, "title": str, "illustration_warnings": [...]}` 作为
-   **最后一条消息**，**只输出 JSON 一行**；`illustration_warnings` 字段始终存在
-   （没有 warning 时为 `[]`），让 orchestrator 可以统一解析
+   确定这份清单后（或确定为 None）打一条：
+  `report_event(source_module="geo_article_writer", event_type="games_selected", level="info",       message=f"文章 #{article_id} 确定配图游戏清单", source_type="article", source_id=article_id, payload={"qid": qid, "tpl_id": tpl_id, "game_positions": game_positions})`
+   `game_positions` 为 `None` 时也要打（payload 里如实记 `null`），这样"这篇是散文、没传清单"
+   本身也是一条可查的事实，不是沉默。
+6. 返回 `{"article_id": int, "title": str, "main_category_id": int, "game_positions": [...] | None}` 作为
+   **最后一条消息**，**只输出 JSON 一行**。`main_category_id` 取「矩阵特例」段里定义的值；
+   `game_positions` 就是上一步确定的那份清单（或 `None`）。orchestrator 会在拿到评审结果之后
+   自己决定要不要、什么时候调配图工具——你不再需要关心配图这件事
 
 # 重写模式（input 带 `rewrite_feedback` 时）
 
@@ -105,17 +100,10 @@ orchestrator 在评分不过、且用户**锁定了这个问题词**时，会带
   图库里还没有的新游戏也配得上图。best-effort：需容器配 `GEO_BAIDU_API_KEY`，
   key 缺失 / 网络失败时静默不补、不报错，绝不阻塞交付）
 
-> 调用约定：
-> `ai_illustrate_article(article_id=<>, main_category_id=<上面那个值>, web_fallback=True, game_positions=<见 Checklist step 5：每款一标题的文章传清单、散文传 None>)`
-> 其余布尔参数（include_companion / aggressive_images / set_cover）走默认即可；
-> `web_fallback` 建议显式带 `True`，让图库里没有的游戏也能联网补图。
-> 传了 `game_positions` 时走**确定性落图**（按游戏名匹配小标题、计数精确、不调配图模型）；
-> 这是修「弱模型漏点游戏导致缺图」的主路径，每款一标题的推荐 / 盘点文优先用它。
->
-> **务必**检查返回的 `format_error` / `cover_error` / `warning` / `images_inserted`
-> 四个字段，按上面 step 5 规则进 `illustration_warnings`——历史 bug：silent
-> zero（AI 返了 0 张图，服务端 warning=`ai_returned_no_positions`，writer 不报警
-> → 文章 0 图入库无人感知）。
+> 这一段的 `main_category_id` 值和上面几条默认参数是**给 orchestrator 用的**——
+> 你只需要在返回 JSON 里带上这个 `main_category_id`；实际调用 `ai_illustrate_article`
+> 的时机和参数组装（`web_fallback=True`、`game_positions` 等）由 orchestrator 决定，
+> 详见 `geo-goal-orchestrator/SKILL.md` 主循环里的配图决策块。
 
 ## 加新矩阵的方法（给团队同事）
 
@@ -131,21 +119,20 @@ orchestrator 在评分不过、且用户**锁定了这个问题词**时，会带
 
 - `save_article` 失败（如 415 / 标题超长 / DB 冲突）
   → 输出 `{"error": "<message>"}` 退出；orchestrator 会跳过这条 qid 不再重试
-- `list_question_items` / `list_prompt_templates` 失败 → 同上
-- `illustrate_article` 失败 → 内吞、不上抛；文章已落库无配图也算交付
+- `list_question_items` / `list_prompt_templates`（兜底路径，仅 input 缺字段时才会用到）失败 → 同上
 
 # 返回格式（**强制**）
 
 最后一条消息只能是单行 JSON：
 
-成功（无配图警告）：
+成功（每款游戏各占一个小标题，传了游戏清单）：
 ```
-{"article_id": 824, "title": "国风游戏 2026 推荐 10 选", "illustration_warnings": []}
+{"article_id": 824, "title": "国风游戏 2026 推荐 10 选", "main_category_id": 12, "game_positions": [{"game": "原神"}, {"game": "明日方舟"}]}
 ```
 
-成功但配图缺失（AI 返 0 张位置）：
+成功（散文/综述，没有可用的游戏清单）：
 ```
-{"article_id": 824, "title": "国风游戏 2026 推荐 10 选", "illustration_warnings": ["warning: ai_returned_no_positions", "images_inserted=0"]}
+{"article_id": 824, "title": "国风游戏 2026 生态观察", "main_category_id": 12, "game_positions": null}
 ```
 
 失败：
@@ -154,5 +141,5 @@ orchestrator 在评分不过、且用户**锁定了这个问题词**时，会带
 ```
 
 不要在 JSON 前后加任何解释 / markdown 包裹 / "我写完了" 之类的话。
-orchestrator 用正则匹配最后一行 JSON 拿结果；`illustration_warnings` 字段始终存在
-（无 warning 时为 `[]`），让 orchestrator 统一解析逻辑不用 `.get()` 兜空。
+orchestrator 用正则匹配最后一行 JSON 拿结果；`main_category_id` / `game_positions`
+字段始终存在（成功时），让 orchestrator 统一解析逻辑不用 `.get()` 兜空。
