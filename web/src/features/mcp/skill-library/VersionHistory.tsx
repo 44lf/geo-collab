@@ -99,14 +99,14 @@ export function VersionHistory({
         <div style={{ fontSize: 12.5, color: "var(--red)" }}>{error}</div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 12.5 }}>
             <thead>
               <tr style={{ textAlign: "left", color: "var(--fg-3)" }}>
-                <th style={thStyle}>版本</th>
-                <th style={thStyle}>上传时间</th>
-                <th style={thStyle}>上传人</th>
-                <th style={thStyle}>SHA-256</th>
-                <th style={thStyle}>操作</th>
+                <th style={{ ...thStyle, width: COL_WIDTHS.version }}>版本</th>
+                <th style={{ ...thStyle, width: COL_WIDTHS.uploadedAt }}>上传时间</th>
+                <th style={{ ...thStyle, width: COL_WIDTHS.uploadedBy }}>上传人</th>
+                <th style={{ ...thStyle, width: COL_WIDTHS.sha }}>SHA-256</th>
+                <th style={{ ...thStyle, width: COL_WIDTHS.actions }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -246,6 +246,13 @@ export function VersionHistory({
   );
 }
 
+const COL_WIDTHS = {
+  version: "14%",
+  uploadedAt: "22%",
+  uploadedBy: "16%",
+  sha: "20%",
+  actions: "28%",
+} as const;
 const thStyle: CSSProperties = { padding: "6px 8px", fontWeight: 500 };
 const tdStyle: CSSProperties = { padding: "8px", color: "var(--fg-2)", verticalAlign: "middle" };
 const codeStyle: CSSProperties = { fontFamily: "var(--mono)", fontSize: 11.5, color: "var(--fg-2)" };

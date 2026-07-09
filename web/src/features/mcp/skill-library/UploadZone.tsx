@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronRight,
   FileX,
+  Folder,
   FolderOpen,
   Info,
   Loader2,
@@ -268,7 +269,8 @@ export function UploadZone({ onUploaded }: { onUploaded: () => void }) {
                   style={hiddenInputStyle}
                 />
               </label>
-              <label style={{ cursor: "pointer", color: "var(--accent-deep)", fontSize: 12.5, textDecoration: "underline" }}>
+              <label className="primaryButton" style={{ cursor: "pointer", height: 34, padding: "0 14px" }}>
+                <Folder size={14} />
                 选择文件夹
                 <input
                   ref={folderInputRef}
@@ -283,7 +285,7 @@ export function UploadZone({ onUploaded }: { onUploaded: () => void }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12, color: "var(--fg-3)" }}>
             <Info size={12} />
-            单个 skill ≤ 5 MB · 需包含至少一个 SKILL.md · 同名 skill 将追加为新版本，不覆盖旧版本
+            需包含至少一个 SKILL.md · 同名 skill 将追加为新版本，不覆盖旧版本
           </div>
         </div>
       )}
