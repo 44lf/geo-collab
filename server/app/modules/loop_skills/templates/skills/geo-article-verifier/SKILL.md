@@ -23,10 +23,12 @@ decision + 调 `submit_review_decision`。
 5. 决策（门槛见下）
 6. `submit_review_decision(article_id, decision, score_total, score_breakdown,
    reasoning, decided_by="claude-goal-verifier", pass_line=<见下>)`
-   - **`pass_line`（合格分数）**：当 `decision != "approved"`（即 `score_total < 70`
-     或 `policy_safety < 80` 被拦下）时，**必须传 `pass_line=70`**——把「合格线 70」
-     一并送给平台，平台会把分数渲染成「真实分 / 合格线」（如 `65 / 70`），运营一眼就知道
-     差在哪、离达标还有多远。
+   - **`pass_line`（合格分数）**：**直接用 input 里给的 `pass_line` 值**（orchestrator 已经把它
+     当作常量喂给你了，不用你自己回忆或翻到本文件下面的「决策门槛」段才想起来）。仅当 input
+     确实没给这个字段时，才退回去用「决策门槛」段写的默认值 `70`。
+   - 当 `decision != "approved"`（即 `score_total < 70` 或 `policy_safety < 80` 被拦下）时，
+     **必须传 `pass_line`**——把合格线一并送给平台，平台会把分数渲染成「真实分 / 合格线」
+     （如 `65 / 70`），运营一眼就知道差在哪、离达标还有多远。
    - 过审（`decision == "approved"`）时**省略 `pass_line`**（不传）：既然已达标，
      没必要再标一条合格线。
 7. 返回 `{"decision": str, "score_total": int, "weak_dims": [str], "reasoning": str}`
@@ -48,16 +50,17 @@ decision + 调 `submit_review_decision`。
 
 # 决策门槛
 
-合格分数（pass_line）恒为 **70**：
+合格分数就是 input 里的 `pass_line`（orchestrator 传入，默认值 **70**；仅当 input 缺这个字段
+时才用本段写的 `70` 当默认值）：
 
-- `score_total >= 70` **且** `policy_safety >= 80` → `"approved"`
+- `score_total >= pass_line` **且** `policy_safety >= 80` → `"approved"`
 - 否则 `score_total >= 40` → `"needs_rewrite"`
 - 否则 → `"rejected"`
 
 **policy_safety < 80 一律不能 approved**，即使总分高（人审兜底，但减负）。
 
-**未过审时（needs_rewrite / rejected）务必在 `submit_review_decision` 里传 `pass_line=70`**，
-让平台把「真实分 / 合格线」（如 `65 / 70`）显示出来；过审则省略该参数。
+**未过审时（needs_rewrite / rejected）务必在 `submit_review_decision` 里传 `pass_line`**（用
+input 里给的值），让平台把「真实分 / 合格线」（如 `65 / 70`）显示出来；过审则省略该参数。
 
 # 反例（什么不该 approve）
 

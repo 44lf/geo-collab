@@ -94,6 +94,8 @@ q_scope    = (not q_exact) and (target.topic_hint is not None)  # 范围锁：�
 tpl_locked = target.tpl_id is not None                          # 模板锁：全程用这个生文提示词
 
 REWRITE_CAP = 2   # 问题词被精确锁定时，同一问题最多重写 2 次（含首稿共 3 稿），仍不过就放弃该题
+PASS_LINE = 70    # 合格分数，直接喂给 verifier（见下方 Agent prompt），不依赖它自己翻 SKILL.md 想起来；
+                  # 需和 geo-article-verifier/SKILL.md「决策门槛」里的门槛值保持一致
 
 # ---- 构建工作清单（worklist）----
 if q_exact:
@@ -263,6 +265,7 @@ Input:
   tpl_id={tpl_id}
   template_name={tpl.name}
   template_content=\"\"\"{tpl.content}\"\"\"
+  pass_line={PASS_LINE}
 
 Output: ONLY a single-line JSON object as the final message, like:
   {{"decision": "approved", "score_total": 82, "weak_dims": [], "reasoning": "..."}}
