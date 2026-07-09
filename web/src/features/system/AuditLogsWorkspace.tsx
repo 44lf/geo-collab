@@ -3,6 +3,7 @@ import { RefreshCw, Search, RotateCcw } from "lucide-react";
 import { api } from "../../api/client";
 import { useToast } from "../../components/Toast";
 import { formatDateTime } from "../../utils/dateFormat";
+import { ReportEventPanel } from "./ReportEventsWorkspace";
 
 type AuditLogItem = {
   id: number;
@@ -110,6 +111,31 @@ function truncate(value: string | null | undefined, max: number): string {
 }
 
 export function AuditLogsWorkspace() {
+  const [subTab, setSubTab] = useState<"audit" | "report">("audit");
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <button
+          className={subTab === "audit" ? "primaryButton" : "secondaryButton"}
+          type="button"
+          onClick={() => setSubTab("audit")}
+        >
+          审计日志
+        </button>
+        <button
+          className={subTab === "report" ? "primaryButton" : "secondaryButton"}
+          type="button"
+          onClick={() => setSubTab("report")}
+        >
+          打点日志
+        </button>
+      </div>
+      {subTab === "audit" ? <AuditLogPanel /> : <ReportEventPanel />}
+    </>
+  );
+}
+
+function AuditLogPanel() {
   const { toast } = useToast();
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   // 已应用的筛选条件（点击"筛选"后才会落到 appliedFilters，再用于请求）

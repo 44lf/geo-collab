@@ -26,6 +26,9 @@ class AutoReviewDecision(Base):
     # values: "approved" | "needs_rewrite" | "rejected"
 
     score_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 本次评分所用的合格线（approval 的 score_total 门槛，由 verifier skill 传入）。
+    # 仅用于内容列表显示「真实分 / 合格线」；score_total < pass_line 即"没过线"。
+    pass_line: Mapped[int | None] = mapped_column(Integer, nullable=True)
     score_breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
 

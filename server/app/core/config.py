@@ -22,7 +22,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     # 飞书自建应用凭据（问题库从多维表同步、以及未来发布采集写回 都用它换 tenant_access_token）
     feishu_app_id: str | None = None  # GEO_FEISHU_APP_ID
     feishu_app_secret: str | None = None  # GEO_FEISHU_APP_SECRET
+    # 飞书审核卡片 + 端内 H5 免登（B 档）
+    feishu_public_base_url: str | None = Field(
+        default=None, validation_alias="GEO_PUBLIC_BASE_URL"
+    )  # GEO_PUBLIC_BASE_URL 评审链接根（无尾斜杠）
+    feishu_review_card_enabled: bool = False  # GEO_FEISHU_REVIEW_CARD_ENABLED 发卡总开关
+    feishu_review_chat_id: str | None = None  # GEO_FEISHU_REVIEW_CHAT_ID 目标群 chat_id
+    feishu_h5_enabled: bool = False  # GEO_FEISHU_H5_ENABLED H5 免登开关（复用 app_id/secret）
     # 问题池定时镜像同步（应用内后台线程）。默认关闭，避免本地 / 测试打真实飞书。
     question_pool_auto_sync_enabled: bool = False  # GEO_QUESTION_POOL_AUTO_SYNC_ENABLED
     question_pool_sync_interval_seconds: int = (

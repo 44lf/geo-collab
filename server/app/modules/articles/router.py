@@ -965,6 +965,7 @@ from server.app.modules.articles.ai_illustrate_svc import (  # noqa: E402
     illustrate_one,
 )
 from server.app.modules.image_library.hook import insert_images_for_article  # noqa: E402
+from server.app.shared.feishu_card import build_review_link, send_review_card  # noqa: E402
 
 # MCP 路径下没有 user JWT，跟 save_from_mcp 同款用环境变量常量
 _MCP_OPERATOR_USER_ID = int(os.environ.get("GEO_MCP_OPERATOR_USER_ID", "1"))
@@ -1269,3 +1270,52 @@ def set_review_status_mcp(
     db.commit()
     db.refresh(article)
     return SetReviewStatusResponse(article_id=article_id, review_status=article.review_status)
+
+
+class ReviewCardPayload(BaseModel):
+    title: str
+    question: str = ""
+    score: int | None = None
+    decision: str | None = None
+
+
+class ReviewCardResponse(BaseModel):
+    sent: bool
+    message_id: str | None = None
+
+
+@articles_mcp_router.post(
+    "/{article_id}/review-card",
+    response_model=ReviewCardResponse,
+    dependencies=[Depends(require_mcp_token)],
+)
+def post_review_card(
+    article_id: int,
+    payload: ReviewCardPayload,
+    db: Session = Depends(get_db),
+) -> ReviewCardResponse:
+    """[MCP] 给一篇文章发一张飞书待审交互卡。开关关 / 无 chat_id → sent=False。"""
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if article is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    settings = get_settings()
+    # 有 feishu_app_id → 拼飞书网页应用 AppLink（端内以网页应用身份打开、注入 h5sdk，
+    # H5 免登才生效）；无则回落裸永久链接。详见 feishu_card.build_review_link。
+    review_url = build_review_link(
+        article_id=article_id,
+        base_url=settings.feishu_public_base_url,
+        app_id=settings.feishu_app_id,
+    )
+    try:
+        mid = send_review_card(
+            chat_id=settings.feishu_review_chat_id or "",
+            article_id=article_id,
+            title=payload.title,
+            question=payload.question,
+            score=payload.score,
+            decision=payload.decision,
+            review_url=review_url,
+        )
+    except Exception as exc:  # 理论上 send_review_card 已吞异常，这里兜底走 MCP 错误规约
+        raise mcp_exception_response(exc, context=f"review_card article_id={article_id}") from exc
+    return ReviewCardResponse(sent=mid is not None, message_id=mid)

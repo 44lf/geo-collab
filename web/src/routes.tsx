@@ -45,6 +45,9 @@ const AuditLogsWorkspace = lazy(() =>
 const AiModelsWorkspace = lazy(() =>
   import("./features/system/AiModelsWorkspace").then((m) => ({ default: m.AiModelsWorkspace })),
 );
+const VideosWorkspace = lazy(() =>
+  import("./features/videos/VideosWorkspace").then((m) => ({ default: m.VideosWorkspace })),
+);
 
 // admin 专属页守卫：非 admin 直接重定向回默认页（RootLayout 已保证此处必有登录用户）。
 function RequireAdmin({ children }: { children: ReactElement }) {
@@ -117,6 +120,7 @@ export const router = createBrowserRouter([
       { path: "prompts", element: <PromptsRoute /> },
       { path: "prompts/:scope", element: <PromptsRoute /> },
       { path: "image-library", element: <ImageLibraryWorkspace /> },
+      { path: "videos", element: <VideosWorkspace /> },
       { path: "media", element: <AccountsWorkspace isActive /> },
       { path: "tasks", element: <TasksWorkspace isActive /> },
       { path: "system", element: <SystemWorkspace /> },

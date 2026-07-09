@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import server.app.modules.video.models  # noqa: F401  (register VideoJob table)
 from server.app.core.config import get_settings
 from server.app.core.limiter import limiter
 from server.app.core.logging import configure_logging
@@ -57,6 +58,7 @@ from server.app.modules.articles.router import (
 )
 from server.app.modules.audit.router import router as audit_router
 from server.app.modules.auto_review.router import router as auto_review_router
+from server.app.modules.feishu.router import h5_auth_router, h5_public_router
 from server.app.modules.image_library.router import files_router as stock_files_router
 from server.app.modules.image_library.router import router as stock_images_router
 from server.app.modules.loop_skills.router import (
@@ -64,6 +66,10 @@ from server.app.modules.loop_skills.router import (
 )
 from server.app.modules.loop_skills.router import (
     router as loop_skills_user_router,
+)
+from server.app.modules.loop_skills.skill_router import (
+    skills_mcp_router,
+    skills_user_router,
 )
 from server.app.modules.mcp_catalog.connect_router import (
     mcp_connect_health_router,
@@ -73,12 +79,15 @@ from server.app.modules.mcp_catalog.router import router as mcp_catalog_router
 from server.app.modules.performance.router import router as performance_router
 from server.app.modules.pipelines.router import router as pipelines_router
 from server.app.modules.prompt_templates.router import router as prompt_templates_router
+from server.app.modules.report.router import report_mcp_router
+from server.app.modules.report.router import router as report_router
 from server.app.modules.system.auth_router import router as auth_router
 from server.app.modules.system.models import User
 from server.app.modules.system.system_router import mcp_system_router
 from server.app.modules.system.system_router import router as system_router
 from server.app.modules.system.users_router import router as users_router
 from server.app.modules.tasks.router import publish_records_router, tasks_mcp_router, tasks_router
+from server.app.modules.video.router import video_files_router, video_list_router, video_mcp_router
 from server.app.shared.errors import AccountError, ClientError, ConflictError, ValidationError
 
 # PyInstaller 打包后 sys._MEIPASS 指向解压目录
@@ -237,6 +246,15 @@ def create_app() -> FastAPI:
         prefix="/api/mcp",
         tags=["loop-skills-mcp"],
     )
+    # 多 skill 库（Task 6）—— user JWT 鉴权
+    app.include_router(
+        skills_user_router,
+        prefix="/api/mcp",
+        tags=["skills"],
+        dependencies=[Depends(get_current_user)],
+    )
+    # MCP token 鉴权 (router 自带 dependency)
+    app.include_router(skills_mcp_router, prefix="/api/mcp", tags=["skills-mcp"])
     # MCP token 鉴权（router 自带 dependency）
     app.include_router(
         mcp_connect_health_router,
@@ -253,6 +271,12 @@ def create_app() -> FastAPI:
         prefix="/api/articles",
         tags=["articles-mcp"],
         # 不挂 get_current_user — MCP token 在 endpoint 内单独校验
+    )
+    app.include_router(
+        video_mcp_router,
+        prefix="/api/videos",
+        tags=["video-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验（router 自带 dependency）
     )
     # auto_review 走 /api/articles 前缀（与现有 article 路由同前缀，由 MCP token 单独鉴权）
     app.include_router(
@@ -358,11 +382,32 @@ def create_app() -> FastAPI:
         dependencies=[Depends(get_current_user)],
     )
     app.include_router(stock_files_router, prefix="/api/stock-images", tags=["stock-images"])
+    app.include_router(video_files_router, prefix="/api/videos", tags=["video-files"])
+    app.include_router(video_list_router, prefix="/api/videos", tags=["videos"])
+    app.include_router(h5_public_router, prefix="/api/feishu", tags=["feishu"])
+    app.include_router(
+        h5_auth_router,
+        prefix="/api/feishu",
+        tags=["feishu"],
+        dependencies=[Depends(get_current_user)],
+    )
     app.include_router(
         audit_router,
         prefix="/api/audit-logs",
         tags=["audit-logs"],
         dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        report_router,
+        prefix="/api/report-events",
+        tags=["report-events"],
+        dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        report_mcp_router,
+        prefix="/api/report-events",
+        tags=["report-events-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验
     )
     app.include_router(
         ai_models_router,
@@ -380,6 +425,11 @@ def create_app() -> FastAPI:
     import server.app.modules.pipelines.router as _pipelines_routes
 
     _pipelines_routes.bg_session_factory = SessionLocal
+
+    # 为 video 合成后台线程提供 SessionLocal（spawn_video_job 读的是 service 里这个变量）
+    import server.app.modules.video.service as _video_service
+
+    _video_service.bg_session_factory = SessionLocal
 
     # 问题池定时镜像同步：仅在 GEO_QUESTION_POOL_AUTO_SYNC_ENABLED=true 时启动后台线程。
     # 默认关闭，测试 / 本地不会打真实飞书。启动失败只记日志，不致命。

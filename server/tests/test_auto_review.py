@@ -69,6 +69,7 @@ def test_submit_decision_persists(monkeypatch):
                 AutoReviewSubmitRequest(
                     decision="approved",
                     score_total=85,
+                    pass_line=70,
                     score_breakdown={"factuality": 90, "readability": 80},
                     reasoning="reads well",
                     decided_by="claude-code-loop",
@@ -77,9 +78,55 @@ def test_submit_decision_persists(monkeypatch):
             db.commit()
             assert decision.id is not None
             assert decision.decision == "approved"
+            assert decision.pass_line == 70
             assert decision.score_breakdown == {"factuality": 90, "readability": 80}
         finally:
             db.close()
+    finally:
+        test_app.cleanup()
+
+
+def test_post_auto_review_api_round_trips_pass_line(monkeypatch):
+    """POST /auto-review 带 pass_line → 落库并经 AutoReviewDecisionRead 读回。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        from server.app.modules.articles.models import Article
+
+        db = test_app.session_factory()
+        try:
+            a = Article(
+                user_id=test_app.admin_id,
+                title="rt",
+                content_json=json.dumps({"type": "doc", "content": []}),
+                content_html="",
+                plain_text="",
+                word_count=0,
+                status="draft",
+                review_status="pending",
+            )
+            db.add(a)
+            db.commit()
+            article_id = a.id
+        finally:
+            db.close()
+
+        r = test_app.client.post(
+            f"/api/articles/{article_id}/auto-review",
+            json={
+                "decision": "needs_rewrite",
+                "score_total": 65,
+                "pass_line": 80,
+                "decided_by": "claude-goal-verifier",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200
+        assert r.json()["pass_line"] == 80
     finally:
         test_app.cleanup()
 

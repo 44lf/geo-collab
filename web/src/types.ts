@@ -1,7 +1,7 @@
-import { Bot, FileText, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
+import { Bot, FileText, Film, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "agents" | "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
+export type NavKey = "agents" | "ai" | "content" | "prompts" | "image-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -216,8 +216,11 @@ export type ArticleSummary = {
   /** 生成此文的提示词「模板」名；手动/历史文章为 null */
   source_template_name: string | null;
   source_template_id: number | null;
-  /** MCP loop/goal 生文的自评分（0-100）；手动/pipeline/方案文章为 null */
-  auto_review_score: number | null;
+  /**
+   * MCP loop/goal 生文的自评分显示串；手动/pipeline/方案文章为 null。
+   * 过线/老数据 = 纯数字 "84"；没过线 = "65 _ 80"（真实分 _ 合格线，前端拆成 65 / 80 标红）。
+   */
+  auto_review_score: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -608,6 +611,7 @@ export const navItems: {
     ],
   },
   { key: "image-library", label: "图片库", icon: Images },
+  { key: "videos", label: "视频库", icon: Film },
   { key: "media", label: "媒体矩阵", icon: RadioTower },
   { key: "tasks", label: "分发引擎", icon: Send },
   { key: "system", label: "系统状态", icon: MonitorCog },
@@ -702,4 +706,23 @@ export type RunLogPage = {
   total: number;
   page: number;
   page_size: number;
+};
+
+export type VideoJobSummary = {
+  job_id: string;
+  article_id: number;
+  article_title: string | null;
+  title: string | null;
+  status: "done" | "failed";
+  video_url: string | null;
+  srt_url: string | null;
+  tags: string[];
+  engine: string | null;
+  error: string | null;
+  created_at: string;
+};
+
+export type VideoListResponse = {
+  items: VideoJobSummary[];
+  total: number;
 };
