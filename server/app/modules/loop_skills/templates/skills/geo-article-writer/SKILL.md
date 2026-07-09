@@ -1,8 +1,9 @@
 ---
 name: geo-article-writer
 description: Use when spawned as a writer subagent by /goal, or when manually
-  composing one GEO article. Reads a question + template from MCP, writes
-  markdown, calls save_article + (best-effort) illustrate_article, returns
+  composing one GEO article. Writes markdown and calls save_article; when
+  spawned by /goal, orchestrator handles illustration afterward — manual
+  standalone use needs an extra explicit ai_illustrate_article call. Returns
   article_id.
 ---
 
@@ -49,6 +50,12 @@ description: Use when spawned as a writer subagent by /goal, or when manually
    **最后一条消息**，**只输出 JSON 一行**。`main_category_id` 取「矩阵特例」段里定义的值；
    `game_positions` 就是上一步确定的那份清单（或 `None`）。orchestrator 会在拿到评审结果之后
    自己决定要不要、什么时候调配图工具——你不再需要关心配图这件事
+
+> **不是 `/goal` loop、而是被人工单独 `Skill geo-article-writer` 手动叫起来写一篇时**：
+> 没有 orchestrator 主循环在后面接手配图，`main_category_id`/`game_positions` 写进返回 JSON
+> 也不会有人读它。这种手动模式下，写完之后要配图需要用户另外显式说一句让 Claude 调
+> `ai_illustrate_article(article_id, main_category_id=<矩阵特例段的值>, web_fallback=True, game_positions=<上面判断的那份或 None>)`，
+> 不会自动发生。
 
 # 重写模式（input 带 `rewrite_feedback` 时）
 
