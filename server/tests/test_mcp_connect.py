@@ -31,6 +31,21 @@ def test_status_returns_configured_true_when_token_set(monkeypatch):
         core_config.get_settings.cache_clear()
 
 
+def test_status_honors_x_forwarded_proto_https(monkeypatch):
+    """反代（边缘 nginx 终止 TLS）场景：带 X-Forwarded-Proto: https 时
+    suggested_base_url 应还原成 https://，而非后端连接的 http://。"""
+    monkeypatch.setenv("GEO_MCP_TOKEN", "test-token-abc")
+    core_config.get_settings.cache_clear()
+    test_app = build_test_app(monkeypatch)
+    try:
+        resp = test_app.client.get("/api/mcp/status", headers={"X-Forwarded-Proto": "https"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["suggested_base_url"].startswith("https://")
+    finally:
+        test_app.cleanup()
+        core_config.get_settings.cache_clear()
+
+
 def test_status_returns_configured_false_when_token_empty(monkeypatch):
     monkeypatch.setenv("GEO_MCP_TOKEN", "")
     core_config.get_settings.cache_clear()

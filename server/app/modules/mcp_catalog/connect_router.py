@@ -125,6 +125,33 @@ def _attach_zh(infos: list[McpToolInfo]) -> None:
         i.summary_zh = _CURATED_ZH.get(i.name) or zh.get(i.name) or i.summary
 
 
+def _first_forwarded(value: str | None) -> str | None:
+    """取逗号分隔转发头的第一个（最外层客户端）非空值；空/空白视作缺失。"""
+    if not value:
+        return None
+    first = value.split(",")[0].strip()
+    return first or None
+
+
+def resolve_public_base_url(
+    *,
+    default_scheme: str,
+    default_netloc: str,
+    forwarded_proto: str | None,
+    forwarded_host: str | None,
+) -> str:
+    """还原用户实际访问的 base_url（协议 + 主机）。
+
+    边缘 nginx 终止 TLS、以 http 反代给后端，故 request.base_url 的 scheme 恒为 http、
+    host 也可能是内网名——直接拿来展示会把 https 访问显示成 http://（见 MCP 接入页 bug）。
+    优先采信代理设置的 X-Forwarded-Proto / X-Forwarded-Host 还原真实协议与主机；
+    dev 直连无这些头时回落 request 自身的 scheme/host。结果不带尾斜杠。
+    """
+    scheme = _first_forwarded(forwarded_proto) or default_scheme
+    host = _first_forwarded(forwarded_host) or default_netloc
+    return f"{scheme}://{host}".rstrip("/")
+
+
 # user JWT 鉴权（依赖在 main.py include_router 时注入）
 mcp_connect_user_router = APIRouter()
 
@@ -141,7 +168,12 @@ def get_mcp_status(request: Request) -> McpStatusResponse:
     _attach_zh(tools)
     return McpStatusResponse(
         configured=bool(settings.mcp_token),
-        suggested_base_url=str(request.base_url).rstrip("/"),
+        suggested_base_url=resolve_public_base_url(
+            default_scheme=request.base_url.scheme,
+            default_netloc=request.base_url.netloc,
+            forwarded_proto=request.headers.get("x-forwarded-proto"),
+            forwarded_host=request.headers.get("x-forwarded-host"),
+        ),
         tools_count=len(tools),
         tools=tools,
     )
