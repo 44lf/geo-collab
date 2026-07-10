@@ -70,7 +70,7 @@ pnpm --filter @geo/web format:check  # prettier --check src（去掉 :check 直�
 
 > 前端**没有单元测试框架**（无 vitest / jest）——`typecheck` + `build` 就是前端的 CI 门禁，没有 `pnpm test`。
 
-CI（`.github/workflows/ci.yml`，push 到 main 和所有 PR 触发）：**后端 ruff check / ruff format / mypy / pytest、前端 typecheck + build 都是硬门禁**；只剩前端 eslint 仍是 `continue-on-error` 的非阻塞步骤（存量 lint error 清完后再删掉 `continue-on-error` 变硬门禁）。CI 用 `mysql:8.0` service 起临时测试库 `geo_test`。
+CI（GitLab，`.gitlab-ci.yml`，MR 与分支 push 触发）：硬门禁是 **`backend-lint`（ruff check / ruff format --check / mypy）+ `frontend`（typecheck + build）**；`backend-test`（pytest，`mysql:8.0` service、库 `geo_test`）当前因一个早红的无关测试被整体禁用（job 名前加点隐藏）；`security-audit`（pip-audit）非阻塞、仅 requirements 变更或夜间 schedule 跑。**tag（`base-/server-/web-/release-`）流水线只做构建+部署、不重跑 lint+frontend**（tag 落在已过 main gate 的 commit 上；部署链在 `ci/deploy.gitlab-ci.yml`，设计见 `docs/superpowers/specs/2026-07-10-ci-release-dedup-design.md`）。GitHub Actions 已退役、团队只用 GitLab（`hlgit`）。
 
 ## Architecture
 

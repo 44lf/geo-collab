@@ -27,8 +27,8 @@
 #     放大,2 次全量 1 次挂)——已回退 -n 2,竞态测试加固后再升
 #
 # 若将来把 runner 的 concurrent 调到 ≥4(或加 runner),可参照
-# .github/workflows/ci.yml 把 backend-test 重新拆成 parallel:matrix 并行,
-# 后端测试能从 ~8min 压到 ~2min。改 runner 才是追平 GitHub 速度的关键。
+# git 历史里已退役的 GitHub Actions(原 .github/workflows/ci.yml)把 backend-test
+# 重新拆成 parallel:matrix 并行,后端测试能从 ~8min 压到 ~2min。改 runner 才是关键。
 # ============================================================
 
 # 触发流水线的「代码相关」路径(纯文档改动则不跑,省下唯一的 runner)
