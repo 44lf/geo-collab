@@ -59,6 +59,25 @@ function isLocalhost(url: string): boolean {
   return LOCALHOST_PATTERN.test(url.trim());
 }
 
+// 后端 suggested_base_url 直接读 request.base_url——反代终止 TLS 转发给后端是明文
+// HTTP、后端又没配 proxy-headers 信任 X-Forwarded-Proto 时，即便用户走 https 访问本页，
+// 拿到的地址永远是 http://。既然本页本身能用 https 加载，说明公网入口一定支持 https，
+// 纯前端把 scheme 升级即可，无需等后端 / 反代改造。localhost 场景保持原样。
+function upgradeToHttpsIfPageIsSecure(url: string): string {
+  if (typeof window === "undefined" || window.location.protocol !== "https:") return url;
+  try {
+    const parsed = new URL(url);
+    const isLocalHost = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+    if (parsed.protocol === "http:" && !isLocalHost) {
+      parsed.protocol = "https:";
+      return parsed.toString().replace(/\/$/, "");
+    }
+  } catch {
+    // 不是合法 URL（理论上不会发生），原样返回
+  }
+  return url;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,7 +120,9 @@ export function McpConnectWorkspace() {
     void refreshStatus();
   }, [refreshStatus]);
 
-  const suggestedBaseUrl = status?.suggested_base_url ?? "http://127.0.0.1:8000";
+  const suggestedBaseUrl = upgradeToHttpsIfPageIsSecure(
+    status?.suggested_base_url ?? "http://127.0.0.1:8000",
+  );
   const configJson = useMemo(
     () =>
       transport === "http"
@@ -285,11 +306,11 @@ export function McpConnectWorkspace() {
               ) : null}
               <div style={{ fontSize: 13, color: "var(--fg-2)" }}>
                 <span style={{ marginRight: 8 }}>建议 base_url：</span>
-                <code style={inlineCode}>{status.suggested_base_url}</code>
+                <code style={inlineCode}>{suggestedBaseUrl}</code>
               </div>
               <div style={{ fontSize: 13, color: "var(--fg-2)" }}>
                 <span style={{ marginRight: 8 }}>MCP endpoint：</span>
-                <code style={inlineCode}>{status.suggested_base_url}/mcp/</code>
+                <code style={inlineCode}>{suggestedBaseUrl}/mcp/</code>
               </div>
               {localhostWarn ? (
                 <div
