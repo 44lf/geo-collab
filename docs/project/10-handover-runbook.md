@@ -19,9 +19,9 @@
 ## 2. 交接清单
 
 ### 2.1 代码与文档
-- [ ] 仓库访问权限（GitHub）已转移/授予
+- [ ] 仓库访问权限（GitLab `hlgit`；GitHub 仅历史备份）已转移/授予
 - [ ] `CLAUDE.md`、`docs/AI_GENERATION.md`、`docs/DEPLOYMENT.md`、本 `doc/` 已通读
-- [ ] CI（`.github/workflows/ci.yml`）与分支保护设置已知悉
+- [ ] CI（GitLab `.gitlab-ci.yml` + `ci/deploy.gitlab-ci.yml`）与分支保护设置已知悉
 
 ### 2.2 凭据与密钥（经安全渠道移交，勿写进文档/仓库）
 - [ ] `GEO_JWT_SECRET`（生产）

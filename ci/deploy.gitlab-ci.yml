@@ -1,8 +1,8 @@
 # Tag 驱动构建 + 部署（被 .gitlab-ci.yml include）。参考 .gitlab-ci-hr.yml。
 # tag: base-<ver> / server-<ver> / web-<ver> / release-<ver>
-# 打 tag 触发的流水线会先跑既有的 backend-lint + frontend（rules 是 on_success），
-# 作为"不绿不构建"的前置门禁——这是 spec §6 的有意设计；build/deploy 在更后的 stage，
-# 前置门禁不过则不会构建部署。
+# 打 tag 触发的流水线只做 build+deploy：lint+frontend 已在 main gate（MR / 合并进 main
+# 时）跑过、tag 落在已绿的 main commit 上，故不再重跑（见
+# docs/superpowers/specs/2026-07-10-ci-release-dedup-design.md）。
 
 .kaniko:
   image:

@@ -27,8 +27,8 @@
 #     放大,2 次全量 1 次挂)——已回退 -n 2,竞态测试加固后再升
 #
 # 若将来把 runner 的 concurrent 调到 ≥4(或加 runner),可参照
-# .github/workflows/ci.yml 把 backend-test 重新拆成 parallel:matrix 并行,
-# 后端测试能从 ~8min 压到 ~2min。改 runner 才是追平 GitHub 速度的关键。
+# git 历史里已退役的 GitHub Actions(原 .github/workflows/ci.yml)把 backend-test
+# 重新拆成 parallel:matrix 并行,后端测试能从 ~8min 压到 ~2min。改 runner 才是关键。
 # ============================================================
 
 # 触发流水线的「代码相关」路径(纯文档改动则不跑,省下唯一的 runner)
@@ -84,9 +84,12 @@ default:
       - api_failure
       - scheduler_failure
 
-# 常规 job 共用的 rules:夜间 schedule 流水线是 security-audit 专场,其余 job 让位
-.skip-on-schedule: &skip-on-schedule
+# 常规 job 共用的 rules:只在 MR / 分支 push 时作为"合并前门禁"跑;
+# 夜间 schedule(security-audit 专场)与 tag(已在 main 上绿过、发版流水线只构建部署)都让位。
+.gate-only: &gate-only
   - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    when: never
+  - if: '$CI_COMMIT_TAG'
     when: never
   - when: on_success
 
@@ -129,7 +132,7 @@ default:
 backend-lint:
   extends: .python
   stage: lint
-  rules: *skip-on-schedule
+  rules: *gate-only
   script:
     - ruff check server/
     - ruff format --check server/
@@ -193,7 +196,7 @@ backend-lint:
 # ============================================================
 # 依赖安全扫描(后端 pip-audit)—— 非阻塞,仅告警
 # 修复:pip-audit 没有 -i 参数(那会把 URL 当成位置参数 project_path 报错);
-#       镜像源改走 PIP_INDEX_URL 环境变量。与 GitHub CI 用同一个 requirements-audit.txt。
+#       镜像源改走 PIP_INDEX_URL 环境变量。依赖清单用 requirements-audit.txt。
 # 触发时机:只在依赖清单变化的流水线上跑 + 夜间 schedule 例行全量扫描
 # (schedule 在 GitLab UI / API 建,指向 main;本文件合并进 main 后再启用)
 # ============================================================
@@ -203,6 +206,8 @@ security-audit:
   stage: test
   allow_failure: true
   rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
     - changes:
         - requirements*.txt
@@ -221,7 +226,7 @@ frontend:
   image: public.ecr.aws/docker/library/node:22-bookworm-slim
   tags: [docker]
   stage: frontend
-  rules: *skip-on-schedule
+  rules: *gate-only
   cache:
     - key:
         prefix: pnpm
