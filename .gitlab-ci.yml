@@ -196,7 +196,7 @@ backend-lint:
 # ============================================================
 # 依赖安全扫描(后端 pip-audit)—— 非阻塞,仅告警
 # 修复:pip-audit 没有 -i 参数(那会把 URL 当成位置参数 project_path 报错);
-#       镜像源改走 PIP_INDEX_URL 环境变量。与 GitHub CI 用同一个 requirements-audit.txt。
+#       镜像源改走 PIP_INDEX_URL 环境变量。依赖清单用 requirements-audit.txt。
 # 触发时机:只在依赖清单变化的流水线上跑 + 夜间 schedule 例行全量扫描
 # (schedule 在 GitLab UI / API 建,指向 main;本文件合并进 main 后再启用)
 # ============================================================
