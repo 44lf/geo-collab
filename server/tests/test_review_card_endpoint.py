@@ -63,9 +63,7 @@ def test_review_card_builds_review_url_and_sends(monkeypatch):
             captured.update(kwargs)
             return "om_1"
 
-        monkeypatch.setattr(
-            "server.app.modules.articles.routers.mcp.send_review_card", fake_send
-        )
+        monkeypatch.setattr("server.app.modules.articles.routers.mcp.send_review_card", fake_send)
 
         aid = _make_article(test_app)
         r = test_app.client.post(
@@ -102,9 +100,7 @@ def test_review_card_uses_applink_when_app_id_set(monkeypatch):
             captured.update(kwargs)
             return "om_1"
 
-        monkeypatch.setattr(
-            "server.app.modules.articles.routers.mcp.send_review_card", fake_send
-        )
+        monkeypatch.setattr("server.app.modules.articles.routers.mcp.send_review_card", fake_send)
 
         aid = _make_article(test_app)
         r = test_app.client.post(
