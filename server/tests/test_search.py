@@ -194,9 +194,12 @@ class TestArticleSearch:
         记录调用次数与是否抛异常——FTS 正常时 raised==0；一旦 MATCH 子句再次写坏（如 #50 的
         func.match().against()），它会抛、被 except 接住回退 LIKE，本断言 raised==0 即抓回该回归。
         """
-        from server.app.modules.articles import service as svc
+        # _search_articles 随 list_articles 迁至 services/feed.py；list_articles 内部对它的调用
+        # 绑定在 feed 命名空间，故必须 patch 真实使用点 feed._search_articles（patch facade
+        # articles.service 上的名字不影响真实调用 → spy 计数为 0、断言假绿）。
+        from server.app.modules.articles.services import feed
 
-        real = svc._search_articles
+        real = feed._search_articles
         calls = {"n": 0, "raised": 0}
 
         def spy(db, query, user_id=None):
@@ -207,7 +210,7 @@ class TestArticleSearch:
                 calls["raised"] += 1
                 raise
 
-        monkeypatch.setattr(svc, "_search_articles", spy)
+        monkeypatch.setattr(feed, "_search_articles", spy)
 
         test_app = build_test_app(monkeypatch)
         try:

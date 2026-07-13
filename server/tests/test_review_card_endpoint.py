@@ -49,6 +49,10 @@ def test_review_card_builds_review_url_and_sends(monkeypatch):
         monkeypatch.setenv("GEO_FEISHU_REVIEW_CARD_ENABLED", "true")
         monkeypatch.setenv("GEO_FEISHU_REVIEW_CHAT_ID", "oc_abc")
         monkeypatch.setenv("GEO_PUBLIC_BASE_URL", "https://geo.example.com")
+        # 断言「无 app_id → 裸永久链接」，必须显式清掉本机 .env 可能带的 GEO_FEISHU_APP_ID，
+        # 否则该值经 pydantic-settings 从 .env 文件回落进 get_settings()，build_review_link
+        # 会改吐 AppLink（env_file 的值要用 os.environ 设空串压过，delenv 不够）。
+        monkeypatch.setenv("GEO_FEISHU_APP_ID", "")
         from server.app.core import config
 
         config.get_settings.cache_clear()
@@ -59,7 +63,7 @@ def test_review_card_builds_review_url_and_sends(monkeypatch):
             captured.update(kwargs)
             return "om_1"
 
-        monkeypatch.setattr("server.app.modules.articles.router.send_review_card", fake_send)
+        monkeypatch.setattr("server.app.modules.articles.routers.mcp.send_review_card", fake_send)
 
         aid = _make_article(test_app)
         r = test_app.client.post(
@@ -96,7 +100,7 @@ def test_review_card_uses_applink_when_app_id_set(monkeypatch):
             captured.update(kwargs)
             return "om_1"
 
-        monkeypatch.setattr("server.app.modules.articles.router.send_review_card", fake_send)
+        monkeypatch.setattr("server.app.modules.articles.routers.mcp.send_review_card", fake_send)
 
         aid = _make_article(test_app)
         r = test_app.client.post(
