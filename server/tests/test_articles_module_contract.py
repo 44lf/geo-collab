@@ -17,6 +17,9 @@
   build_test_app（它设好 env），并把 Router 的 import 放在函数体内、全部打 @pytest.mark.mysql。
 """
 
+import ast
+from pathlib import Path
+
 import pytest
 
 from server.tests.utils import build_test_app
@@ -393,3 +396,114 @@ def test_articles_public_imports_remain_available(monkeypatch):
         assert callable(store_bytes)
     finally:
         test_app.cleanup()
+
+
+# ── 模块结构门禁（Task 5）─────────────────────────────────────────────────────
+#
+# 纯静态 AST 检查（读源码、不 import、不建库，故无需 @pytest.mark.mysql，缺库也会跑），
+# 锁住本次拆分已确定的边界，防止业务实现日后又回堆到 facade。不做全仓依赖图。
+
+_ARTICLES_DIR = Path(__file__).resolve().parents[1] / "app" / "modules" / "articles"
+_ARTICLES_PKG = "server.app.modules.articles"
+# APIRouter 路由注册方法（端点装饰器如 @articles_router.post(...)）
+_ROUTE_METHODS = {
+    "get",
+    "post",
+    "put",
+    "delete",
+    "patch",
+    "head",
+    "options",
+    "trace",
+    "api_route",
+    "websocket",
+}
+
+
+def _parse(path: Path) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _file_package(path: Path) -> str:
+    """文件所在包的绝对点路径，如 routers/assets.py → server.app.modules.articles.routers。"""
+    parts = path.resolve().relative_to(_ARTICLES_DIR).parts[:-1]  # 去掉文件名
+    return ".".join([_ARTICLES_PKG, *parts]) if parts else _ARTICLES_PKG
+
+
+def _resolved_from_imports(tree: ast.Module, file_pkg: str) -> set[str]:
+    """`from X import ...` 的绝对模块路径集；相对导入按文件所在包解析成绝对路径。"""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level == 0:
+            if node.module:
+                out.add(node.module)
+            continue
+        base = file_pkg.split(".")
+        anchor = base[: len(base) - (node.level - 1)]
+        out.add(".".join([*anchor, node.module]) if node.module else ".".join(anchor))
+    return out
+
+
+def _has_star_import(tree: ast.Module) -> bool:
+    return any(
+        isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names)
+        for n in ast.walk(tree)
+    )
+
+
+def _endpoint_functions(tree: ast.Module) -> list[str]:
+    """带路由装饰器（@x.get / @x.post / ...）的顶层函数名。"""
+    names: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for dec in node.decorator_list:
+            func = dec.func if isinstance(dec, ast.Call) else dec
+            if isinstance(func, ast.Attribute) and func.attr in _ROUTE_METHODS:
+                names.append(node.name)
+                break
+    return names
+
+
+def _top_level_functions(tree: ast.Module) -> list[str]:
+    return [n.name for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+
+
+def test_router_facade_defines_no_endpoints():
+    """门禁：articles/router.py 只做重导出，不得再定义任何路由端点（端点归 routers/*.py）。"""
+    tree = _parse(_ARTICLES_DIR / "router.py")
+    endpoints = _endpoint_functions(tree)
+    assert not endpoints, f"router.py 不应再定义端点，发现：{endpoints}（应移到 routers/*.py）"
+    assert not _has_star_import(tree), "router.py facade 不得用 import * 构建"
+
+
+def test_service_facade_defines_no_business_functions():
+    """门禁：articles/service.py 只做重导出，不得再定义任何业务函数（实现归 services/*.py）。"""
+    tree = _parse(_ARTICLES_DIR / "service.py")
+    funcs = _top_level_functions(tree)
+    assert not funcs, f"service.py 不应再定义业务函数，发现：{funcs}（应移到 services/*.py）"
+    assert not _has_star_import(tree), "service.py facade 不得用 import * 构建"
+
+
+def test_routers_do_not_import_from_router_facade():
+    """门禁：routers/*.py 不得反向从 facade articles.router 导入（防循环 / 防回堆）。"""
+    for path in sorted((_ARTICLES_DIR / "routers").glob("*.py")):
+        tree = _parse(path)
+        targets = _resolved_from_imports(tree, _file_package(path))
+        assert f"{_ARTICLES_PKG}.router" not in targets, (
+            f"{path.name} 不得从 facade articles.router 反向导入"
+        )
+        assert not _has_star_import(tree), f"{path.name} 不得用 import *"
+
+
+def test_services_do_not_import_from_service_facade():
+    """门禁：services/*.py 不得反向从 facade articles.service 导入（防循环 / 防回堆）。"""
+    for path in sorted((_ARTICLES_DIR / "services").glob("*.py")):
+        tree = _parse(path)
+        targets = _resolved_from_imports(tree, _file_package(path))
+        assert f"{_ARTICLES_PKG}.service" not in targets, (
+            f"{path.name} 不得从 facade articles.service 反向导入"
+        )
+        assert not _has_star_import(tree), f"{path.name} 不得用 import *"
