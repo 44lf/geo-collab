@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>内容质量前置门 · 产品说明</title>
+<style>
+  :root {
+    --bg: #f6f8fc; --card: #ffffff; --border: #e4e9f2; --text: #0f172a;
+    --muted: #64748b; --link: #1e40af;
+    --gate: #6366f1; --gate-soft: rgba(99,102,241,0.08);
+    --good: #10b981; --good-soft: rgba(16,185,129,0.09);
+    --ai: #f59e0b; --ai-soft: rgba(245,158,11,0.11);
+    --stop: #ef4444; --stop-soft: rgba(239,68,68,0.08);
+    --human: #0ea5e9; --human-soft: rgba(14,165,233,0.10);
+    --later: #8b5cf6;
+    --new-bg: #fef9c3; --new-border: #facc15; --new-text: #713f12;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    margin: 0 auto; padding: 40px 28px 72px; background: var(--bg); color: var(--text);
+    line-height: 1.68; max-width: 1120px;
+  }
+  h1 { font-size: 27px; margin: 0 0 8px; letter-spacing: -0.2px; }
+  h2 { font-size: 19px; font-weight: 800; margin: 0 0 4px; }
+  p { margin: 6px 0; }
+  a { color: var(--link); text-decoration: none; }
+
+  .doc-header { border-bottom: 2px solid var(--border); padding-bottom: 16px; margin-bottom: 10px; }
+  .doc-header .tag { display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: 1.2px;
+    color: var(--gate); background: var(--gate-soft); padding: 4px 11px; border-radius: 5px; margin-right: 8px; }
+  .doc-header .date { color: var(--muted); font-size: 12.5px; }
+  .doc-header .sub { color: var(--muted); font-size: 13.5px; margin-top: 6px; }
+  .doc-header .sub b { color: var(--text); }
+
+  .section-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    padding: 22px 26px; margin: 18px 0; box-shadow: 0 1px 3px rgba(15,23,42,0.05); }
+  .sec-sub { color: var(--muted); font-size: 13px; margin: 2px 0 16px; }
+
+  /* TL;DR */
+  .tldr { background: linear-gradient(135deg, var(--gate-soft), #fff);
+    border: 1px solid var(--border); border-left: 6px solid var(--gate);
+    border-radius: 0 16px 16px 0; padding: 20px 24px; margin: 14px 0 4px; }
+  .tldr h2 { color: var(--gate); font-size: 15px; margin-bottom: 12px; letter-spacing: 0.5px; }
+  .tldr .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+  .kpi { text-align: center; padding: 14px 12px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+  .kpi .num { font-size: 22px; font-weight: 800; color: var(--gate); line-height: 1.15; }
+  .kpi .lbl { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+  .tldr .one { font-size: 14.5px; line-height: 1.75; }
+  .tldr .one b { color: var(--text); }
+  .tldr .one .old { color: var(--stop); font-weight: 800; }
+  .tldr .one .new { color: var(--good); font-weight: 800; }
+
+  /* Before/After */
+  .ba { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: stretch; }
+  .ba .col { border-radius: 14px; padding: 16px 18px; border: 1px solid var(--border); }
+  .ba .before { background: var(--stop-soft); border-color: rgba(239,68,68,0.25); }
+  .ba .after  { background: var(--good-soft); border-color: rgba(16,185,129,0.3); }
+  .ba .col h3 { margin: 0 0 10px; font-size: 14px; font-weight: 800; display: flex; align-items: center; gap: 7px; }
+  .ba .before h3 { color: var(--stop); }
+  .ba .after h3  { color: var(--good); }
+  .ba ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.75; }
+  .ba .arrow { display: flex; align-items: center; font-size: 26px; color: var(--gate); }
+  @media (max-width: 720px) { .ba { grid-template-columns: 1fr; } .ba .arrow { justify-content: center; } }
+
+  /* Flow */
+  .flow-stage { width: 100%; margin: 6px auto 0; }
+  .flow-stage svg { display: block; width: 100%; height: auto; }
+  .flow-note { margin-top: 14px; padding: 12px 16px; background: #f8fafc; border: 1px solid var(--border);
+    border-left: 4px solid var(--gate); border-radius: 0 10px 10px 0; font-size: 12.5px; line-height: 1.7; color: var(--text); }
+  .flow-note b { color: var(--gate); }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted);
+    margin: 14px 0 0; padding: 9px 14px; background: #f8fafc; border: 1px solid var(--border); border-radius: 9px; align-items: center; }
+  .lg { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  /* 3 steps */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .step { border: 1px solid var(--border); border-radius: 13px; padding: 16px 16px 14px; background: #fff;
+    position: relative; border-top: 4px solid var(--gate); }
+  .step .idx { position: absolute; top: -13px; left: 15px; width: 26px; height: 26px; line-height: 26px;
+    border-radius: 50%; background: var(--gate); color: #fff; font-size: 13px; font-weight: 800; text-align: center; }
+  .step .nm { font-size: 15px; font-weight: 800; margin: 9px 0 6px; }
+  .step .what { font-size: 12.8px; color: var(--text); line-height: 1.65; }
+  .step .what b { color: var(--gate); }
+  @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
+
+  /* sources */
+  .srcs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .src { border: 1px solid var(--border); border-radius: 13px; padding: 16px 18px; background: #fff; border-top: 4px solid var(--good); }
+  .src.mid { border-top-color: var(--gate); background: linear-gradient(180deg, var(--gate-soft), #fff 62%); }
+  .src.future { border-top-color: var(--later); border-style: dashed; }
+  .src .badge { font-size: 11px; font-weight: 800; letter-spacing: 0.5px; color: var(--good); }
+  .src.mid .badge { color: var(--gate); }
+  .src.future .badge { color: var(--later); }
+  .src .nm { font-size: 15.5px; font-weight: 800; margin: 4px 0 7px; }
+  .src .desc { font-size: 12.8px; color: var(--text); line-height: 1.65; }
+  @media (max-width: 720px) { .srcs { grid-template-columns: 1fr; } }
+
+  /* changes for product */
+  .chg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .chg { border-radius: 13px; padding: 15px 18px; border: 1px solid var(--border); background: #fff; }
+  .chg h3 { margin: 0 0 8px; font-size: 14px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
+  .chg ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.75; color: var(--text); }
+  .chg.see h3 { color: var(--human); }
+  .chg.do  h3 { color: var(--new-text); }
+  .chg.do { background: var(--new-bg); border-color: var(--new-border); }
+  @media (max-width: 720px) { .chg-grid { grid-template-columns: 1fr; } }
+
+  /* reassurance */
+  .reassure { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .re { display: flex; gap: 11px; align-items: flex-start; border: 1px solid var(--border); border-radius: 11px;
+    padding: 13px 15px; background: #f8fafc; }
+  .re .ic { font-size: 20px; flex-shrink: 0; }
+  .re .tx { font-size: 12.8px; line-height: 1.6; }
+  .re .tx b { color: var(--good); }
+  @media (max-width: 720px) { .reassure { grid-template-columns: 1fr; } }
+
+  .foot { margin-top: 20px; font-size: 12px; color: var(--muted); text-align: center; }
+
+  @media print {
+    body { background: #fff; padding: 16px 12px; max-width: none; }
+    .section-wrap { box-shadow: none; page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="doc-header">
+  <div>
+    <span class="tag">内容质量 · 前置门</span>
+    <span class="date">产品说明 · 2026-07-13</span>
+  </div>
+  <h1>给内容加一道「上桌前的质检」</h1>
+  <div class="sub">一句话：AI 写完的文章，<b>先跟同类的真实好文比一比</b>——像好文的才送到人工审核台，不像的先拦在门外。<b>人工审核仍然是最后一关，一切照旧。</b></div>
+</div>
+
+<!-- TL;DR -->
+<div class="tldr">
+  <h2>一页看懂</h2>
+  <div class="kpis">
+    <div class="kpi"><div class="num">+1 道门</div><div class="lbl">在「人工审核」之前，多一道自动质量门</div></div>
+    <div class="kpi"><div class="num">比一比</div><div class="lbl">拿 1~3 篇同主题真实好文当尺子，判像不像好文</div></div>
+    <div class="kpi"><div class="num">人审不变</div><div class="lbl">最终发不发，仍由人工审核说了算</div></div>
+  </div>
+  <p class="one">
+    今天 AI 写完文章是<span class="old">自己给自己打个分</span>就进审核库——这个分没有参照、会飘、还容易给「平平无奇但挑不出错」的文章高分。
+    我们改成<span class="new">跟真实好文比高下</span>：先从「高质量库」里挑几篇同主题的好文当标准答案，让系统判「这篇更像真实好文，还是像典型的 AI 流水账」。
+    <b>过线的才进人工审核台，不过线的留在一个新的『待质检』页里，等人来处理。</b>
+  </p>
+</div>
+
+<!-- 痛点 vs 变化 -->
+<section class="section-wrap">
+  <h2>为什么要改</h2>
+  <p class="sec-sub">老办法是「对着空气打分」，新办法是「对着好文比高下」</p>
+  <div class="ba">
+    <div class="col before">
+      <h3>🩹 今天的问题</h3>
+      <ul>
+        <li>AI 给自己打的分<b>没有参照系</b>，换个时间、换批内容就飘</li>
+        <li>容易奖励<b>「四平八稳但没亮点」</b>的平庸内容</li>
+        <li>回答不了老板最关心的：<b>「到底比不比得过好内容」</b></li>
+      </ul>
+    </div>
+    <div class="arrow">→</div>
+    <div class="col after">
+      <h3>✅ 改完之后</h3>
+      <ul>
+        <li>每篇都跟<b>真实同类好文</b>放一起比，有明确的标尺</li>
+        <li>系统还给出<b>「跟好文差在哪」</b>的诊断，方便下一轮改进</li>
+        <li>质量差的<b>进不了人工审核台</b>，减少人工白看</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 新流程 -->
+<section class="section-wrap">
+  <h2>新流程 · 一篇文章从生成到发布</h2>
+  <p class="sec-sub">中间那道紫色的「待质检 / 质量门」是这次新增的；其余环节保持不变</p>
+
+  <div class="flow-stage">
+    <svg viewBox="0 0 1120 250" preserveAspectRatio="xMidYMid meet" style="overflow:visible">
+      <defs>
+        <marker id="ar" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,4 L0,8 Z" fill="#94a3b8"/>
+        </marker>
+      </defs>
+
+      <!-- 连线 -->
+      <path d="M 176 95 H 214" stroke="#94a3b8" stroke-width="2.2" fill="none" marker-end="url(#ar)"/>
+      <path d="M 470 95 H 508" stroke="#94a3b8" stroke-width="2.2" fill="none" marker-end="url(#ar)"/>
+      <text x="489" y="86" text-anchor="middle" font-size="10.5" font-weight="700" fill="#10b981">过线</text>
+      <path d="M 700 95 H 738 " stroke="#94a3b8" stroke-width="2.2" fill="none" marker-end="url(#ar)"/>
+      <path d="M 930 95 H 968" stroke="#94a3b8" stroke-width="2.2" fill="none" marker-end="url(#ar)"/>
+
+      <!-- 不过线：回落 -->
+      <path d="M 342 138 V 200 H 342" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 4" fill="none"/>
+      <text x="352" y="192" font-size="10.5" font-weight="700" fill="#f59e0b">不过线 → 留「待质检」页等人工处理</text>
+
+      <!-- 1 生成 -->
+      <foreignObject x="16" y="52" width="160" height="86">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;border-radius:12px;background:#fff;border:1px solid var(--border);border-left:4px solid var(--ai);padding:11px 13px;display:flex;flex-direction:column;gap:5px">
+          <div style="font-size:13px;font-weight:800;color:var(--ai)">✍️ AI 写文章</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">按问题主题自动生成初稿</div>
+        </div>
+      </foreignObject>
+
+      <!-- 2 待质检 / 门（新增，突出） -->
+      <foreignObject x="214" y="30" width="256" height="130">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;border-radius:12px;background:linear-gradient(180deg,var(--gate-soft),#fff 60%);border:1.6px solid var(--gate);padding:11px 14px;display:flex;flex-direction:column;gap:6px;box-shadow:0 2px 10px rgba(99,102,241,0.14)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:13.5px;font-weight:800;color:var(--gate)">🛂 待质检 · 质量门</div>
+            <span style="font-size:9px;font-weight:800;background:var(--gate);color:#fff;padding:1px 6px;border-radius:4px">新增</span>
+          </div>
+          <div style="font-size:11px;color:var(--text);line-height:1.55">和 1~3 篇<b style="color:var(--good)">同主题真实好文</b>比，判「像不像好文」，给出分数 + 差距诊断</div>
+          <div style="font-size:10.5px;color:var(--muted);line-height:1.45">自动跑（定时 / 手动都行），不占用生成时间</div>
+        </div>
+      </foreignObject>
+
+      <!-- 3 人工审核 -->
+      <foreignObject x="508" y="52" width="192" height="86">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;border-radius:12px;background:var(--human-soft);border:1px solid var(--border);border-left:4px solid var(--human);padding:11px 13px;display:flex;flex-direction:column;gap:5px">
+          <div style="font-size:13px;font-weight:800;color:var(--human)">👤 人工审核</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">最终把关，和现在完全一样</div>
+        </div>
+      </foreignObject>
+
+      <!-- 4 通过 -->
+      <foreignObject x="738" y="52" width="192" height="86">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;border-radius:12px;background:var(--good-soft);border:1px solid var(--border);border-left:4px solid var(--good);padding:11px 13px;display:flex;flex-direction:column;gap:5px">
+          <div style="font-size:13px;font-weight:800;color:var(--good)">✅ 审核通过</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">进入可发布内容</div>
+        </div>
+      </foreignObject>
+
+      <!-- 5 发布 -->
+      <foreignObject x="968" y="52" width="136" height="86">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;border-radius:12px;background:#fff;border:1px solid var(--border);border-left:4px solid var(--good);padding:11px 13px;display:flex;flex-direction:column;gap:5px">
+          <div style="font-size:13px;font-weight:800;color:var(--good)">🚀 发布</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">分发到各平台</div>
+        </div>
+      </foreignObject>
+    </svg>
+  </div>
+
+  <div class="legend">
+    <span class="lg"><span class="dot" style="background:var(--ai)"></span>AI 生成</span>
+    <span class="lg"><span class="dot" style="background:var(--gate)"></span>新增质量门</span>
+    <span class="lg"><span class="dot" style="background:var(--human)"></span>人工审核</span>
+    <span class="lg"><span class="dot" style="background:var(--good)"></span>通过 / 发布</span>
+    <span style="margin-left:auto;color:var(--muted)">质量门只决定「能不能进人工审核台」，<b style="color:var(--gate)">不会自动发任何东西</b></span>
+  </div>
+</section>
+
+<!-- 质量门怎么判 -->
+<section class="section-wrap">
+  <h2>质量门怎么判一篇文章</h2>
+  <p class="sec-sub">三步，全自动，不需要人盯着</p>
+  <div class="steps">
+    <div class="step">
+      <div class="idx">1</div>
+      <div class="nm">找尺子</div>
+      <div class="what">从<b>高质量库</b>里挑出 1~3 篇<b>同一主题</b>的真实好文，当这次比对的「标准答案」。</div>
+    </div>
+    <div class="step">
+      <div class="idx">2</div>
+      <div class="nm">比高下</div>
+      <div class="what">让系统判：这篇<b>更像真实好文</b>，还是<b>像典型 AI 流水账</b>？给出一个分数 + 一句「差在哪」。</div>
+    </div>
+    <div class="step">
+      <div class="idx">3</div>
+      <div class="nm">分流</div>
+      <div class="what"><b>过线</b> → 送进人工审核台；<b>不过线</b> → 留在「待质检」页，等运营看诊断、决定改写或放行。</div>
+    </div>
+  </div>
+</section>
+
+<!-- 高质量库 -->
+<section class="section-wrap">
+  <h2>「高质量库」从哪来</h2>
+  <p class="sec-sub">好文的标准，就该由最好的内容来定义——包括我们自己的精品，也包括竞品爆款</p>
+  <div class="srcs">
+    <div class="src">
+      <div class="badge">来源一</div>
+      <div class="nm">🏅 自产精品</div>
+      <div class="desc">我们自己过了审的好文章，一键「加入高质量库」。产得越好、库越强，形成正向循环。</div>
+    </div>
+    <div class="src mid">
+      <div class="badge">来源二</div>
+      <div class="nm">✍️ 竞品录入</div>
+      <div class="desc">运营把竞品的爆款好文<b>手动录进来</b>（标题 / 正文 / 主题）。它们只当「参考标尺」，<b>绝不会被我们发出去</b>。</div>
+    </div>
+    <div class="src future">
+      <div class="badge">来源三 · 以后</div>
+      <div class="nm">🕸️ 自动采集</div>
+      <div class="desc">未来接竞品内容自动采集，这一版先不做，位置已经留好。</div>
+    </div>
+  </div>
+</section>
+
+<!-- 产品/运营侧变化 -->
+<section class="section-wrap">
+  <h2>产品 / 运营会看到什么变化</h2>
+  <p class="sec-sub">主要是多一个页面 + 一件上线前要配合的事</p>
+  <div class="chg-grid">
+    <div class="chg see">
+      <h3>👀 会多出来的</h3>
+      <ul>
+        <li>内容管理里<b>多一个「待质检」前置页</b>：列出正在等质量门的文章 + 各自的分数和差距诊断</li>
+        <li>在这个页上可以<b>手动触发质检</b>、直接放行、或看诊断决定改写</li>
+        <li>文章会带上<b>「问题主题分类」</b>，比对时才能「同主题对同主题」</li>
+      </ul>
+    </div>
+    <div class="chg do">
+      <h3>🙌 上线前要配合的</h3>
+      <ul>
+        <li>先<b>灌一批好文进高质量库</b>（尤其一个「通用」兜底类目），门才有尺子可比</li>
+        <li>之后持续把<b>自产精品</b>和<b>竞品爆款</b>补进库——库越丰富，判得越准</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 定心丸 -->
+<section class="section-wrap">
+  <h2>四颗定心丸</h2>
+  <p class="sec-sub">这道门是「加一层保险」，不是「把权力交给 AI」</p>
+  <div class="reassure">
+    <div class="re"><div class="ic">👤</div><div class="tx"><b>人审仍是最终关</b>：质量门只决定「进不进人工审核台」，发不发永远是人说了算。</div></div>
+    <div class="re"><div class="ic">🚫</div><div class="tx"><b>不自动发布任何东西</b>：过门的文章仍进人工审核，不会跳过任何人直接发出去。</div></div>
+    <div class="re"><div class="ic">🛟</div><div class="tx"><b>库没建好也不卡</b>：万一某主题暂时没有参考，系统会放行 + 提示「该补哪个库」，不阻塞生产。</div></div>
+    <div class="re"><div class="ic">🛡️</div><div class="tx"><b>合规单独硬管</b>：政治 / 医疗 / 违禁这类红线用硬规则一票否决，不靠「比高下」去赌。</div></div>
+  </div>
+</section>
+
+<div class="foot">
+  内容质量前置门 · 产品说明 · 2026-07-13 ｜ 技术设计详见同名 <code>-design.md</code>
+</div>
+
+</body>
+</html>
