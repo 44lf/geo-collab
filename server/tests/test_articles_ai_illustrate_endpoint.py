@@ -58,7 +58,7 @@ def test_ai_illustrate_endpoint_returns_result_when_authed(monkeypatch):
             )
 
         monkeypatch.setattr(
-            "server.app.modules.articles.router.illustrate_one", fake_illustrate_one
+            "server.app.modules.articles.routers.mcp.illustrate_one", fake_illustrate_one
         )
 
         r = test_app.client.post(
@@ -108,7 +108,7 @@ def test_ai_illustrate_endpoint_passes_format_engine(monkeypatch):
             )
 
         monkeypatch.setattr(
-            "server.app.modules.articles.router.illustrate_one", fake_illustrate_one
+            "server.app.modules.articles.routers.mcp.illustrate_one", fake_illustrate_one
         )
 
         r = test_app.client.post(

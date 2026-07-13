@@ -32,7 +32,7 @@ def test_game_positions_maps_to_game_list(monkeypatch):
             return IllustrateResult(article_id=article_id, images_inserted=1)
 
         monkeypatch.setattr(
-            "server.app.modules.articles.router.illustrate_one", fake_illustrate_one
+            "server.app.modules.articles.routers.mcp.illustrate_one", fake_illustrate_one
         )
 
         r = test_app.client.post(
@@ -69,7 +69,7 @@ def test_game_positions_defaults_to_none(monkeypatch):
             return IllustrateResult(article_id=article_id, images_inserted=0)
 
         monkeypatch.setattr(
-            "server.app.modules.articles.router.illustrate_one", fake_illustrate_one
+            "server.app.modules.articles.routers.mcp.illustrate_one", fake_illustrate_one
         )
 
         r = test_app.client.post(
