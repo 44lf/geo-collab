@@ -15,24 +15,15 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import and_, bindparam, func, literal, or_, select, text, union_all
-from sqlalchemy import delete as sa_delete
 from sqlalchemy.orm import Session, lazyload, load_only, selectinload
 
 from server.app.core.time import utcnow
 from server.app.modules.articles.models import (
     Article,
-    ArticleBodyAsset,
     ArticleGroup,
     ArticleGroupItem,
-    Asset,
-)
-from server.app.modules.articles.parser import (
-    dumps_content_json,
-    extract_body_image_nodes,
-    loads_content_json,
 )
 from server.app.modules.articles.schemas import (
-    ArticleCreate,
     ArticleFeedItem,
     ArticleFeedResponse,
     ArticleGroupCreate,
@@ -41,9 +32,22 @@ from server.app.modules.articles.schemas import (
     ArticleGroupReadWithMembers,
     ArticleGroupUpdate,
     ArticleListRead,
-    ArticleUpdate,
     FeedCounts,
     ReviewSummary,
+)
+from server.app.modules.articles.services.articles import (
+    VALID_ARTICLE_STATUSES,
+    VALID_REVIEW_STATUSES,
+    create_article,
+    delete_article,
+    get_article,
+    set_article_cover,
+    update_article,
+    validate_article_status,
+)
+from server.app.modules.articles.services.body_assets import (
+    ensure_asset_exists,
+    sync_article_body_assets,
 )
 from server.app.modules.auto_review.models import AutoReviewDecision
 from server.app.modules.tasks.models import PublishRecord, PublishTask
@@ -51,49 +55,45 @@ from server.app.shared.errors import ClientError, ConflictError
 
 _logger = logging.getLogger(__name__)
 
-VALID_ARTICLE_STATUSES = {"draft", "ready", "archived"}
-VALID_REVIEW_STATUSES = {"pending", "approved"}
+# 单篇文章 CRUD、封面、正文素材与状态常量已迁至 services/articles.py + services/body_assets.py，
+# 上面显式重导出以保持 `articles.service` / `articles` 包入口的旧导入路径兼容（见 __all__）。
 
-
-def validate_article_status(status: str) -> None:
-    if status not in VALID_ARTICLE_STATUSES:
-        raise ClientError(f"Invalid article status: {status}")
-
-
-def ensure_asset_exists(db: Session, asset_id: str | None) -> None:
-    if asset_id is None:
-        return
-    if db.get(Asset, asset_id) is None:
-        raise ClientError(f"Asset not found: {asset_id}")
-
-
-def sync_article_body_assets(db: Session, article: Article, content_json: dict) -> None:
-    """按正文 JSON 里的图片节点重建 body_assets 关联（先全清再按文档顺序重建，position 即顺序）。"""
-    image_nodes = extract_body_image_nodes(content_json)
-    for asset_id, _ in image_nodes:
-        ensure_asset_exists(db, asset_id)
-
-    article.body_assets.clear()
-    for position, (asset_id, editor_node_id) in enumerate(image_nodes):
-        article.body_assets.append(
-            ArticleBodyAsset(
-                asset_id=asset_id,
-                position=position,
-                editor_node_id=editor_node_id,
-            )
-        )
-
-
-def get_article(db: Session, article_id: int) -> Article | None:
-    stmt = (
-        select(Article)
-        .where(Article.id == article_id, Article.is_deleted == False)  # noqa: E712
-        .options(
-            selectinload(Article.body_assets).selectinload(ArticleBodyAsset.asset),
-            selectinload(Article.stock_categories),
-        )
-    )
-    return db.execute(stmt).scalar_one_or_none()
+__all__ = [
+    # 文章状态常量与校验（services/articles.py）
+    "VALID_ARTICLE_STATUSES",
+    "VALID_REVIEW_STATUSES",
+    "validate_article_status",
+    # 单篇文章 CRUD / 封面（services/articles.py）
+    "get_article",
+    "create_article",
+    "update_article",
+    "set_article_cover",
+    "delete_article",
+    # 正文素材（services/body_assets.py）
+    "ensure_asset_exists",
+    "sync_article_body_assets",
+    # 列表 / 检索 / Feed（本模块）
+    "list_articles",
+    "serialize_article_summaries",
+    "list_article_feed",
+    # 文章审核（本模块）
+    "approve_article",
+    "revoke_article_approval",
+    # 文章分组（本模块）
+    "get_group",
+    "list_groups",
+    "create_group",
+    "update_group",
+    "replace_group_items",
+    "delete_group",
+    "compute_group_review_summary",
+    "approve_group",
+    # 每日分组与流式追加（本模块）
+    "mark_pending_and_group",
+    "mark_pending_and_append_daily",
+    "resolve_or_create_daily_group",
+    "append_article_to_group_pending",
+]
 
 
 # 列表 / 检索只消费 ArticleListRead 的 summary 字段（见 articles/router.py 与 mcp_catalog/router.py
@@ -476,139 +476,6 @@ def list_article_feed(
         items=items,
         counts=FeedCounts(pending=counts["pending"], approved=counts["approved"]),
     )
-
-
-def create_article(db: Session, user_id: int, payload: ArticleCreate) -> Article:
-    """新建文章。client_request_id 做幂等：已存在同 request_id 的文章直接返回，不重复创建。"""
-    # 软幂等：先按 client_request_id 全局预查（不限 user）；并发下由 per-user 唯一约束 uq_articles_user_client_request_id 兜底（router 捕 IntegrityError 再按 user 查一次）
-    if payload.client_request_id:
-        existing = db.execute(
-            select(Article).where(
-                Article.client_request_id == payload.client_request_id,
-                Article.is_deleted == False,  # noqa: E712
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            return get_article(db, existing.id) or existing
-
-    validate_article_status(payload.status)
-    ensure_asset_exists(db, payload.cover_asset_id)
-    article = Article(
-        user_id=user_id,
-        title=payload.title,
-        author=payload.author,
-        cover_asset_id=payload.cover_asset_id,
-        content_json=dumps_content_json(payload.content_json),
-        content_html=payload.content_html,
-        plain_text=payload.plain_text,
-        word_count=payload.word_count,
-        status=payload.status,
-        client_request_id=payload.client_request_id,
-    )
-    sync_article_body_assets(db, article, payload.content_json)
-    db.add(article)
-    db.flush()
-    return get_article(db, article.id) or article
-
-
-def update_article(db: Session, article: Article, payload: ArticleUpdate) -> Article:
-    """局部更新文章（乐观锁 + None 跳过语义）。改 content_json 时同步 body_assets 并重算 version。"""
-    update_data = payload.model_dump(exclude_unset=True)
-    expected_version = update_data.pop("version", None)
-    if expected_version is not None and article.version != expected_version:
-        raise ConflictError("Article has been modified; refresh before saving")
-
-    if "status" in update_data and update_data["status"] is not None:
-        validate_article_status(update_data["status"])
-    if "cover_asset_id" in update_data:
-        ensure_asset_exists(db, update_data["cover_asset_id"])
-
-    content_json = loads_content_json(article.content_json)
-    if "content_json" in update_data and update_data["content_json"] is not None:
-        content_json = update_data["content_json"]
-
-    # 显式过滤 None：PATCH {"field": null} 不会清空字段（见 CLAUDE.md「ArticleUpdate 丢 null」）
-    for field in (
-        "title",
-        "author",
-        "cover_asset_id",
-        "content_html",
-        "plain_text",
-        "word_count",
-        "status",
-    ):
-        if field in update_data and update_data[field] is not None:
-            setattr(article, field, update_data[field])
-    # stock_category_id 允许显式置 None（移除关联）
-    if "stock_category_id" in update_data:
-        article.stock_category_id = update_data["stock_category_id"]
-
-    # 多对多栏目：如果传了 stock_category_ids，更新关联表
-    if "stock_category_ids" in update_data:
-        from server.app.modules.image_library.models import StockCategory as _StockCategory
-
-        cat_ids = update_data["stock_category_ids"] or []
-        if cat_ids:
-            cats = list(
-                db.execute(select(_StockCategory).where(_StockCategory.id.in_(cat_ids)))
-                .scalars()
-                .all()
-            )
-        else:
-            cats = []
-        article.stock_categories = cats
-    elif "stock_category_id" in update_data and update_data["stock_category_id"] is not None:
-        # 兼容旧字段：如果只传了 stock_category_id 且多对多列表为空，把旧值塞进多对多
-        from server.app.modules.image_library.models import StockCategory as _StockCategory
-
-        if not article.stock_categories:
-            cat = db.get(_StockCategory, update_data["stock_category_id"])
-            if cat is not None:
-                article.stock_categories = [cat]
-
-    if "content_json" in update_data:
-        article.content_json = dumps_content_json(content_json)
-        sync_article_body_assets(db, article, content_json)
-
-    article.version += 1
-    article.updated_at = utcnow()
-    db.flush()
-    return get_article(db, article.id) or article
-
-
-def set_article_cover(db: Session, article: Article, cover_asset_id: str | None) -> Article:
-    ensure_asset_exists(db, cover_asset_id)
-    article.cover_asset_id = cover_asset_id
-    article.version += 1
-    article.updated_at = utcnow()
-    db.flush()
-    return get_article(db, article.id) or article
-
-
-def delete_article(db: Session, article: Article) -> None:
-    """软删除文章。存在未完成发布记录则拒删；删前清掉其所有分组关联（硬删 ArticleGroupItem）。"""
-    article_id = article.id
-
-    active = (
-        db.execute(
-            select(PublishRecord.id).where(
-                PublishRecord.article_id == article_id,
-                PublishRecord.status.in_(
-                    ["pending", "running", "waiting_manual_publish", "waiting_user_input"]
-                ),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if active:
-        raise ClientError("存在未完成发布记录，无法删除文章")
-
-    db.execute(sa_delete(ArticleGroupItem).where(ArticleGroupItem.article_id == article_id))
-    article.is_deleted = True
-    article.deleted_at = utcnow()
-    article.updated_at = utcnow()
-    db.flush()
 
 
 # --- 文章审核 ---
