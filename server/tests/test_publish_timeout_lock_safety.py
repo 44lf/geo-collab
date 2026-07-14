@@ -289,3 +289,46 @@ def test_harvest_disabled_skips_harvest(monkeypatch):
     finally:
         tasks_mod._release_account_lock(account_id)
         get_settings.cache_clear()
+
+
+def test_harvest_clean_kill_but_thread_still_wedged_keeps_locks(monkeypatch):
+    """命门：chromium 干净杀掉（survived=[]）但二次 join 仍超时（线程卡在非 chromium IO）→
+    三锁一律保留、返回 False——收割不能仅凭「杀干净」就归还锁，必须等线程确认解绕。"""
+    from server.app.core.config import get_settings
+    from server.app.modules.accounts import browser as browser_mod
+    from server.app.modules.accounts import service as service_mod
+
+    monkeypatch.setenv("GEO_PUBLISH_HARVEST_ENABLED", "true")
+    get_settings.cache_clear()
+
+    gate = ObservableGate(2, name="publish")
+    assert gate.try_acquire()
+    monkeypatch.setattr(tasks_mod, "_global_publish_gate", gate)
+    account_id = 990204
+    assert tasks_mod._try_acquire_account_lock(account_id)
+    monkeypatch.setattr(tasks_mod, "_mark_record_failed", lambda *a, **k: None)
+    monkeypatch.setattr(
+        tasks_mod, "_record_crossed_commit", lambda db, rid: False
+    )  # fake_db 无 .execute
+    monkeypatch.setattr(tasks_mod, "_mark_record_zombie", lambda db, tid, rid: None, raising=False)
+    monkeypatch.setattr(tasks_mod, "_close_record_browser", lambda rid: None, raising=False)
+    monkeypatch.setattr(tasks_mod, "_release_record_profile_lock", lambda rid: None, raising=False)
+    monkeypatch.setattr(
+        browser_mod,
+        "harvest_chromium_by_profile",
+        lambda profile_dir: browser_mod.HarvestResult(killed=2, survived=[]),
+    )
+    monkeypatch.setattr(service_mod, "profile_dir_from_state_path", lambda sp: "/p/profile")
+
+    fake_db = SimpleNamespace(get=lambda model, _id: SimpleNamespace(state_path="acc/1/x.json"))
+    rr = SimpleNamespace(record_id=74, account_id=account_id)
+    stuck = _TwoPhaseFuture(ever_unwinds=False)  # 杀干净但线程仍不解绕
+
+    try:
+        terminated = tasks_mod._handle_timed_out_record(fake_db, 1, rr, stuck, result_timeout=0.05)
+        assert terminated is False
+        assert tasks_mod._try_acquire_account_lock(account_id) is False  # 账号锁保留
+        assert gate.in_use == 1  # 闸槽保留
+    finally:
+        tasks_mod._release_account_lock(account_id)
+        get_settings.cache_clear()

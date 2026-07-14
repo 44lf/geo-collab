@@ -602,13 +602,20 @@ def _harvest_wedged_record(db: Session, running_record: RunningRecord, future: F
             {"record_id": running_record.record_id, "account_id": running_record.account_id},
         )
         return False
+    rejoin_seconds = get_settings().publish_harvest_rejoin_seconds
     try:
-        future.result(timeout=get_settings().publish_harvest_rejoin_seconds)
-        return True
+        future.result(timeout=rejoin_seconds)
     except FutureTimeoutError:
         return False
     except Exception:
-        return True
+        pass  # 线程抛业务异常/被 cancel —— 已终止，视为解绕
+    _logger.warning(
+        "record %d: root-cause harvest killed %d chromium proc(s); publish thread unwound, "
+        "reclaiming gate + account + profile lock",
+        running_record.record_id,
+        result.killed,
+    )
+    return True
 
 
 def _handle_timed_out_record(
@@ -625,6 +632,9 @@ def _handle_timed_out_record(
     - 线程仍存活（卡 IO 未响应 context 关闭，`result` 抛 FutureTimeoutError）：账号锁 + profile 锁 +
       闸槽**一律不释放**——避免下一条同账号记录对同一 persistent profile 并发开 Chromium 损坏目录
       （#2）；记录标「僵尸待清」+ 告警，交下轮恢复回收。
+    - 首个 result_timeout 到点仍卡（FutureTimeoutError）且 `publish_harvest_enabled` 开：OS 级收割
+      该 profile 的 chromium + 二次 join；线程随之解绕则同「已终止」路径归还 profile 锁 + 闸槽 + 账号锁，
+      否则（survivor / 二次 join 仍超时）退回上一条的保锁行为。
 
     返回线程是否已确认终止。
     """
