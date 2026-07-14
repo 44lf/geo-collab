@@ -78,14 +78,17 @@ def _handle_signal(signum, frame) -> None:
     _shutdown = True
 
 
-def _claim_next_task(db) -> PublishTask | None:
-    """通过乐观锁抢占带待处理记录的任务，成功时返回任务，否则返回 None。"""
+def _claim_next_task(db, skip_task_ids: frozenset[int] = frozenset()) -> PublishTask | None:
+    """通过乐观锁抢占带待处理记录的任务，成功时返回任务，否则返回 None。
+
+    skip_task_ids：本 worker 冷却中的 parked 任务，本轮跳过（先跑下一个非 parked 的最旧任务）。
+    """
     from sqlalchemy import exists
 
     from server.app.modules.tasks.models import PublishRecord
 
     # 查找至少有一条待处理记录且尚未被 worker 抢占的任务
-    candidate_id = db.execute(
+    stmt = (
         select(PublishTask.id)
         .where(
             PublishTask.status.in_(["pending", "running"]),
@@ -99,9 +102,12 @@ def _claim_next_task(db) -> PublishTask | None:
                 )
             ),
         )
-        .order_by(PublishTask.created_at.asc())
+        .order_by(PublishTask.created_at.asc(), PublishTask.id.asc())
         .limit(1)
-    ).scalar_one_or_none()
+    )
+    if skip_task_ids:
+        stmt = stmt.where(PublishTask.id.notin_(skip_task_ids))
+    candidate_id = db.execute(stmt).scalar_one_or_none()
 
     if candidate_id is None:
         return None

@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     db_name: str | None = None
     jwt_secret: str = ""
     publish_max_concurrent_records: int = 5
+    publish_park_cooldown_seconds: float = 60.0
     publish_record_timeout_seconds: int = 300
     # 断网/弱网发布重试（见 docs/superpowers/specs/2026-06-23-publish-network-retry-design.md）
     publish_retry_enabled: bool = True  # GEO_PUBLISH_RETRY_ENABLED
