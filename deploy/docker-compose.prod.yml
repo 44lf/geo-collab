@@ -95,6 +95,7 @@ services:
   worker:
     image: geo-collab-server:${SERVER_VERSION:?required}
     restart: unless-stopped
+    init: true
     command: ["python", "-m", "server.worker.executor"]
     depends_on:
       mysql:
