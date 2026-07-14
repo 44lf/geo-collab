@@ -36,9 +36,11 @@
 
 结论修正：病（一个卡死线程拖垮整个 worker、只能重启）为真；药（隔离泄漏的进程内闸槽/账号锁）对症；但"DB 行锁阻塞主循环 commit / 心跳停"是错因，本修复不针对它。
 
-### 2.3 ConflictError 风暴的来源
+### 2.3 ConflictError 在单 worker 生产下不成立
 
-`_claim_next_task` 只认 `worker_id IS NULL` 的任务（`worker/executor.py:93`），单实例 worker 一旦冻在 383 行就回不到 claim、也不会自我重抢。故 `ConflictError: already being executed`（`executor.py:126`）来自**另一执行上下文**（API 后台线程 / pipeline `distribute` 重跑 / 手动 `POST /execute`）撞同一把 `_task_locks`。首要症状是"单线程 worker 冻死"，ConflictError 刷屏是次生。
+`_claim_next_task` 只认 `worker_id IS NULL` 的任务（`worker/executor.py:93`），单实例 worker 一旦冻在 383 行就回不到 claim、也不会自我重抢。首要症状是"单线程 worker 冻死"。
+
+关于 `ConflictError: already being executed`（`executor.py:126`）：它由两个并发的 `execute_task` 撞同一把 `_task_locks` 产生。**全仓 `execute_task(` 只有三个调用点**——`router.py:309` / `router.py:529`（均被 `_inline_execute_active()` 门控，`inline_execute_enabled` 默认 `False`、生产 no-op）与 `worker/executor.py:383`（单线程 worker）。故在 CLAUDE.md 既定的"单 worker + 非 inline"生产配置下，`execute_task` 只有一个调用者，ConflictError 无法触发。早前分析里的"ConflictError 刷屏"在该配置下不成立（要么当时跑了 inline-execute / 多 worker，要么是别的错误被并入统计）。**因此本 spec 不含 ConflictError 退避改动**（原候选 ④ 经核实为 YAGNI 剔除）；若将来真启用 inline/多 worker 再单立。
 
 ## 3. 非目标（刻意排除，划入后续"根因收割" spec）
 
@@ -47,7 +49,7 @@
 - 恢复层对账进程内锁 / 闸槽。
 - profile 租约到期时若僵尸仍存活的 #2 残留风险（既有隐患，不在本次扩大或收敛）。
 
-## 4. 设计（4 个改动）
+## 4. 设计（3 个改动）
 
 ### 改动 ① 归还泄漏的全局闸槽（最高收益、零 #2 风险）
 
@@ -81,16 +83,13 @@
 
 worker 是容器 PID 1，不回收 reparent 上来的 `<defunct>` chrome 子进程。给 `deploy/docker-compose.prod.yml:95` 的 `worker` 服务加 `init: true`（tini 当 PID 1 回收僵尸）；基础 `docker-compose.yml` 的 worker 一致化。纯运维改动，无单测。
 
-### 改动 ④ ConflictError 退避 + 日志去重（防御网）
-
-另一执行上下文撞 `_task_locks` 抛 `ConflictError: already being executed` 的调用点（API `POST /execute` 后台线程、pipeline `distribute`）做退避 + 日志去重，避免风暴刷屏。定位与既有 ConflictError 处理路径一致，不改抛出语义。
+> 已剔除的候选 ④（ConflictError 退避）：经 2.3 核实，单 worker + 非 inline 生产配置下 `execute_task` 只有一个调用者、ConflictError 无法触发，YAGNI 剔除。
 
 ## 5. 测试策略（TDD，先红后绿）
 
 - 改动 ①：复用 `server/tests/test_publish_timeout_lock_safety.py` 的注入式假卡死 future（`result_timeout=0.05`）——断言超时 `terminated=False` 后全局闸槽计数回到满、账号锁与 profile 锁仍持有。
 - 改动 ②a：单测 `_run_pending_records` 在"无 running + 零启动 + 有 pending"下于有界轮数内返回并登记 parked，且账号锁未被释放。
 - 改动 ②c：单测 worker skip-map — `_claim_next_task` 在冷却窗内跳过 parked task、选下一个非 parked；冷却到期后可再次被 claim。
-- 改动 ④：单测 ConflictError 退避路径 + 日志去重。
 - 改动 ③：无单测，部署后核对 `<defunct>` 不再累积。
 - 全套需 `GEO_TEST_DATABASE_URL`（MySQL）；涉及 DB 的用例带 `@pytest.mark.mysql`。
 
@@ -98,7 +97,7 @@ worker 是容器 PID 1，不回收 reparent 上来的 `<defunct>` chrome 子进�
 
 - 非例行（改动 worker 并发/调度语义）——走正常 MR→CI（`backend-lint` + `frontend`），**部署前停下等确认**，不自动上线。
 - 无 DB 迁移、无 base 镜像变化。
-- 回滚：①②④ 随镜像回滚；③ 去掉 `init: true` 即回滚。
+- 回滚：①② 随镜像回滚；③ 去掉 `init: true` 即回滚。
 
 ## 7. 遗留 / 后续
 
