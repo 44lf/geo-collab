@@ -2,373 +2,315 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让一条卡死的发布线程不再拖垮整个单线程 worker——超时归还全局闸槽、主循环有界化后让 worker 跳过卡死任务先跑别的、容器回收 chrome 僵尸。
+**Goal:** 让一条卡死的发布线程不再冻死整个单线程 worker——主循环无前进 K 轮即 park+return，worker 冷却跳过该任务先跑别的；容器回收 chrome 僵尸。
 
-**Architecture:** 三个改动，全部在 `server/app/modules/tasks/executor.py`、`server/worker/executor.py`、compose 文件内。① watchdog 超时的 `terminated=False` 分支只归还全局闸槽（`_global_publish_gate`），账号锁 + profile 锁按 #2 继续保留。② 主循环连续 K 轮无前进即判 parked 并 return（记录留 pending），通过模块级侧信道告诉 worker；worker 用内存冷却 skip-map + `_claim_next_task` 的 `notin_` 跳过该任务、先跑下一个非 parked 的最旧任务。③ worker 服务加 `init: true`（tini 回收 `<defunct>` chrome）。
+**Architecture:** 两个改动。① `_run_pending_records` 连续 `PARK_STALL_THRESHOLD` 轮"无 running + 零启动 + 有 pending"即判 parked 并 return（记录留 pending），parked 经 `execute_task_with_parked` 透给 worker（公开 `execute_task` 签名不变）；worker 用可配冷却 skip-map + `_claim_next_task` 的 `notin_` 跳过卡死任务、先跑下一个非 parked 的最旧任务。② worker 服务加 `init: true` 收 `<defunct>` chrome。**不回收**卡死记录占用的闸槽/账号锁（保持 ≤`MAX_CONCURRENT_RECORDS` 硬上限，回收留后续 SIGKILL 收割 spec）。
 
-**Tech Stack:** Python 3.12 / FastAPI / SQLAlchemy / pytest（MySQL，`@pytest.mark.mysql`）/ Docker Compose。设计稿见 `docs/superpowers/specs/2026-07-14-worker-wedged-task-recovery-design.md`。
+**Tech Stack:** Python 3.12 / SQLAlchemy / pytest（MySQL，`@pytest.mark.mysql`）/ Docker Compose。设计稿 `docs/superpowers/specs/2026-07-14-worker-wedged-task-recovery-design.md`。
 
 ## Global Constraints
 
-- **#2 不变式**：线程卡死（`terminated=False`）时**绝不释放账号锁 + profile 锁**——否则下一条同账号记录对同一 persistent profile 并发开 Chromium 损坏目录。本次只归还与 profile 安全无关的全局闸槽。
-- **不破坏 `execute_task(db, task) -> PublishTask` 签名**：现有调用方（`router.py:309/529`、`worker/executor.py:383`）不变；parked 信号走模块级侧信道，不改返回类型。
+- **#2 不变式**：卡死（`terminated=False`）时绝不释放账号锁 + profile 锁。本次也**不释放全局闸槽**（评审否决：会破坏并发上限、需真杀 chrome 才安全）——`_handle_timed_out_record` 不动。
+- **不破坏 `execute_task(db, task) -> PublishTask` 签名**：现有调用方（`router.py:309/529`、worker）不变；parked 经新 `execute_task_with_parked` 透出，不加模块级 side-channel。
+- **测试 lazy import 纪律**：`server/worker/executor.py` 顶层 import 拉 `db.session`（非 collection-safe）→ 测试**一律函数内 import worker.executor**。`server/app/modules/tasks/executor.py` 顶层 import 是 collection-safe（`db.session` 仅在 `_make_commit_guard` 内 lazy import），可顶层 import。
+- **MySQL only**：涉 DB 用例标 `@pytest.mark.mysql`、需 `GEO_TEST_DATABASE_URL`（库名含 `test`）。
 - **无 DB 迁移、无 base 镜像变化**。
-- **MySQL only**：涉及 DB 的测试需 `GEO_TEST_DATABASE_URL`（库名含 `test`），标 `@pytest.mark.mysql`；纯逻辑测试沿用现有 collection-safe 写法（顶层 import executor 不拉 `db.session`）。
-- **测试命令**：`GEO_TEST_DATABASE_URL=... pytest server/tests/<file>::<test> -q`。
-- **不含 ConflictError 退避**（原候选 ④ 经核实单 worker 生产无法触发，已剔除）。
 - **上线非例行**：走正常 MR→CI，**部署前停下等确认**。
 
 ---
 
-### Task 1: 改动① — watchdog 超时归还全局闸槽（保留账号/profile 锁）
+### Task 1: 改动①b — `_run_pending_records` 有界 park + `execute_task_with_parked` 透出
 
 **Files:**
-- Modify: `server/app/modules/tasks/executor.py`（`_retire_running_slot` 抽出 gate 归还 helper；`_handle_timed_out_record` 的 `terminated=False` 分支调用它）
-- Test: `server/tests/test_publish_timeout_lock_safety.py`（更新既有 stuck 用例断言：闸槽归还、账号/profile 锁保留）
-
-**Interfaces:**
-- Produces: `_return_publish_gate_slot(record_id: int) -> None` — 归还该记录持有的 1 个全局发布闸槽，over-release 吞掉并告警。供 `_retire_running_slot` 与 `_handle_timed_out_record` 共用。
-- Consumes: 现有 `_global_publish_gate: ObservableGate`（`.release()` / `.in_use`）、`_release_account_lock`、`_mark_record_zombie`、`emit_resource_alert`。
-
-- [ ] **Step 1: 更新既有 stuck 测试为新期望（先红）**
-
-把 `server/tests/test_publish_timeout_lock_safety.py` 的 `test_stuck_publish_thread_keeps_account_and_profile_locks` 改名并改断言——闸槽现在**归还**（`in_use == 0`），账号锁 + profile 锁仍**保留**：
-
-```python
-def test_stuck_publish_thread_returns_gate_but_keeps_account_and_profile_locks(monkeypatch):
-    """线程超时仍存活：全局闸槽归还（#2 无关），但账号锁 + profile 锁保留、记录标僵尸 + 告警、返回 False。"""
-    from server.app.shared import resource_metrics as rm
-
-    gate = ObservableGate(2, name="publish")
-    assert gate.try_acquire()
-    monkeypatch.setattr(tasks_mod, "_global_publish_gate", gate)
-
-    account_id = 990001
-    assert tasks_mod._try_acquire_account_lock(account_id)
-
-    monkeypatch.setattr(tasks_mod, "_mark_record_failed", lambda *a, **k: None)
-    zombie: list = []
-    monkeypatch.setattr(
-        tasks_mod, "_mark_record_zombie", lambda db, tid, rid: zombie.append(rid), raising=False
-    )
-    monkeypatch.setattr(tasks_mod, "_close_record_browser", lambda rid: None, raising=False)
-    released_profiles: list = []
-    monkeypatch.setattr(
-        tasks_mod,
-        "_release_record_profile_lock",
-        lambda rid: released_profiles.append(rid),
-        raising=False,
-    )
-    alerts: list = []
-    monkeypatch.setattr(rm, "_alert_hook", lambda msg, ctx=None: alerts.append((msg, ctx)))
-
-    rr = SimpleNamespace(record_id=7, account_id=account_id)
-    stuck = _running_future()
-
-    try:
-        terminated = tasks_mod._handle_timed_out_record(None, 1, rr, stuck, result_timeout=0.05)
-
-        assert terminated is False
-        # 账号锁未释放：重拿应失败（#2 保留）
-        assert tasks_mod._try_acquire_account_lock(account_id) is False
-        # profile 锁未释放（#2 保留）
-        assert released_profiles == []
-        # 全局闸槽已归还（与 profile 安全无关）
-        assert gate.in_use == 0
-        # 记录标僵尸 + 告警
-        assert zombie == [7]
-        assert len(alerts) == 1
-    finally:
-        tasks_mod._release_account_lock(account_id)
-        stuck.set_result(None)
-```
-
-同时把文件顶部 docstring 里「账号锁 + profile 锁 + 全局闸槽**均不释放**」一行改为「账号锁 + profile 锁保留（#2），全局闸槽归还」。
-
-- [ ] **Step 2: 运行测试，确认先红**
-
-Run: `pytest server/tests/test_publish_timeout_lock_safety.py::test_stuck_publish_thread_returns_gate_but_keeps_account_and_profile_locks -q`
-Expected: FAIL —— 断言 `gate.in_use == 0` 失败（当前代码超时不归还闸槽，实际为 1）。
-
-- [ ] **Step 3: 抽出 gate 归还 helper 并在超时分支调用（实现）**
-
-在 `server/app/modules/tasks/executor.py` 里，把 `_retire_running_slot` 的闸槽归还逻辑抽成 helper，并在 `_handle_timed_out_record` 的 `terminated=False` 分支加一行归还闸槽。
-
-新增 helper（放在 `_retire_running_slot` 上方）：
-
-```python
-def _return_publish_gate_slot(record_id: int) -> None:
-    """归还该记录持有的 1 个全局发布闸槽。over-release 会被 ObservableGate 抛 ValueError——
-    这里吞掉并告警（执行循环不应因释放漏口崩溃），异常本身写进日志供排查。"""
-    try:
-        _global_publish_gate.release()
-    except ValueError:
-        _logger.warning(
-            "publish gate over-release for record %d (slot accounting bug?)",
-            record_id,
-            exc_info=True,
-        )
-```
-
-把 `_retire_running_slot` 改为复用它（行为不变、DRY）：
-
-```python
-def _retire_running_slot(running_record: RunningRecord) -> None:
-    """记录退场：归还移交给运行生命周期的全局发布槽 + 账号锁（Task 4 Step 5）。"""
-    _return_publish_gate_slot(running_record.record_id)
-    _release_account_lock(running_record.account_id)
-```
-
-在 `_handle_timed_out_record` 的 `else`（`terminated=False`）分支归还闸槽（账号锁 / profile 锁不动），并把告警文案改成反映闸槽已归还：
-
-```python
-    if terminated:
-        _release_record_profile_lock(running_record.record_id)
-        _retire_running_slot(running_record)
-    else:
-        # 线程卡死：账号锁 + profile 锁按 #2 保留；但全局闸槽与 profile 安全无关，归还它以免
-        # 每卡死一次永久扣一格全局并发、拖垮整个 worker 的吞吐（见 2026-07-14 spec 改动①）。
-        _return_publish_gate_slot(running_record.record_id)
-        _mark_record_zombie(db, task_id, running_record.record_id)
-        emit_resource_alert(
-            f"record {running_record.record_id} publish thread still alive after "
-            f"{result_timeout:g}s; account/profile locks held, gate slot returned, "
-            f"leaving for recovery",
-            {"record_id": running_record.record_id, "account_id": running_record.account_id},
-        )
-    return terminated
-```
-
-- [ ] **Step 4: 运行测试，确认转绿（含对照用例不回归）**
-
-Run: `pytest server/tests/test_publish_timeout_lock_safety.py -q`
-Expected: PASS —— 新 stuck 用例通过；对照用例 `test_terminated_publish_thread_releases_locks`（走 `_retire_running_slot`，`in_use == 0`）仍通过。
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add server/app/modules/tasks/executor.py server/tests/test_publish_timeout_lock_safety.py
-git commit -m "fix(worker): watchdog 超时归还全局闸槽，账号/profile 锁按#2保留
-
-卡死线程漏掉全局闸槽会每卡死一次永久扣一格并发、拖垮整个 worker 吞吐。
-抽 _return_publish_gate_slot helper，在 _handle_timed_out_record 的
-terminated=False 分支归还闸槽（与 profile 安全无关），账号锁+profile 锁不动。
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-```
-
----
-
-### Task 2: 改动②a+②b — 主循环有界化 + parked 侧信道
-
-**Files:**
-- Modify: `server/app/modules/tasks/executor.py`（新增 parked 侧信道 + `PARK_STALL_THRESHOLD`；改 `_run_pending_records` 的 no-progress 分支）
+- Modify: `server/app/modules/tasks/executor.py`
 - Test: `server/tests/test_run_pending_records_park.py`（新建，mysql）
 
 **Interfaces:**
 - Produces:
-  - `PARK_STALL_THRESHOLD: int`（模块常量，默认 5；连续 N 轮无前进即 park）
-  - `_register_task_parked(task_id: int) -> None` — 登记本次 run 被 park。
-  - `consume_task_parked(task_id: int) -> bool` — worker 消费并清除 parked 标记；本次被 park 返回 `True`。
-- Consumes: 现有 `_run_pending_records(db, task)` 内部的 `running` / `records` / `_start_runnable_records` / `_task_cancel` / `_try_acquire_account_lock`（Task 3 的 worker 侧消费 `consume_task_parked`）。
+  - `PARK_STALL_THRESHOLD: int`（默认 5；连续 N 轮无前进即 park）
+  - `_run_pending_records(db, task) -> bool`（返回本次是否 park；原返回 None）
+  - `execute_task_with_parked(db, task) -> tuple[PublishTask, bool]`（worker 专用）
+  - `execute_task(db, task) -> PublishTask`（签名不变，内部丢弃 parked）
+- Consumes: 现有 `_start_runnable_records` / `running` / `_task_cancel` / `_try_acquire_account_lock`。
 
 - [ ] **Step 1: 写失败测试（先红）**
 
-新建 `server/tests/test_run_pending_records_park.py`——预占卡死账号的进程内账号锁（模拟泄漏），断言 `_run_pending_records` 在有界轮数内返回（不挂）、记录仍 pending、parked 信号已登记：
+新建 `server/tests/test_run_pending_records_park.py`：
 
 ```python
-"""改动②a：主循环遇到泄漏的进程内账号锁时有界返回（park），不再无限空转拖死单线程 worker。"""
+"""改动①b：卡死线程占着进程内账号锁时，主循环有界 park+return，不再无限空转冻死单线程 worker。"""
 
 from __future__ import annotations
 
-import threading
-
 import pytest
 
-from server.app.modules.tasks import executor as ex
 from server.app.modules.tasks.models import PublishRecord, PublishTask
 from server.tests.utils import build_test_app
-from server.tests.test_worker_executor import _create_publishable_task
 
 
 @pytest.mark.mysql
-def test_run_pending_records_parks_when_account_lock_leaked(monkeypatch):
+def test_execute_task_reports_park_when_account_lock_leaked(monkeypatch):
     test_app = build_test_app(monkeypatch)
     try:
-        # 缩短阈值让 park 快（默认 5 × 0.2s，测试降到 2）
-        monkeypatch.setattr(ex, "PARK_STALL_THRESHOLD", 2)
+        from server.app.modules.tasks import executor as ex
+        from server.tests.test_worker_executor import _create_publishable_task
 
+        monkeypatch.setattr(ex, "PARK_STALL_THRESHOLD", 2)  # 2 × 0.2s，快
         task_id = _create_publishable_task(test_app)
         with test_app.session_factory() as db:
-            task = db.get(PublishTask, task_id)
-            task.status = "running"  # 视为已 claim
             rec = db.query(PublishRecord).filter_by(task_id=task_id).first()
-            rec_id = rec.id
-            account_id = rec.account_id
-            db.commit()
+            rec_id, account_id = rec.id, rec.account_id
 
-        # 模拟卡死线程泄漏的进程内账号锁：预占它，_start_runnable_records 永远拿不到
-        assert ex._try_acquire_account_lock(account_id)
-        ex._task_cancel[task_id] = threading.Event()
+        assert ex._try_acquire_account_lock(account_id)  # 模拟卡死线程占着的账号锁
         try:
             with test_app.session_factory() as db:
                 task = db.get(PublishTask, task_id)
-                ex._run_pending_records(db, task)  # 必须有界返回，不能挂
-
-            # 记录仍 pending（park 不改终态）
+                result, parked = ex.execute_task_with_parked(db, task)
+            assert parked is True
+            assert result.id == task_id
             with test_app.session_factory() as db:
-                assert db.get(PublishRecord, rec_id).status == "pending"
-
-            # parked 信号已登记，worker 可消费
-            assert ex.consume_task_parked(task_id) is True
+                assert db.get(PublishRecord, rec_id).status == "pending"  # park 不改终态
+            assert ex._try_acquire_account_lock(account_id) is False  # 账号锁仍被占（未误放）
         finally:
             ex._release_account_lock(account_id)
-            ex._task_cancel.pop(task_id, None)
     finally:
         test_app.cleanup()
 
 
 @pytest.mark.mysql
-def test_consume_task_parked_is_false_without_park(monkeypatch):
-    """判别性对照：没 park 过的 task，consume 返回 False。"""
-    assert ex.consume_task_parked(20260714) is False
+def test_execute_task_public_signature_returns_publishtask(monkeypatch):
+    """execute_task 对外仍只返回 PublishTask（不返回 tuple）——现有 API/pipeline 调用方不破。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.tasks import executor as ex
+        from server.tests.test_worker_executor import _create_publishable_task
+
+        monkeypatch.setattr(ex, "PARK_STALL_THRESHOLD", 2)
+        task_id = _create_publishable_task(test_app)
+        with test_app.session_factory() as db:
+            account_id = db.query(PublishRecord).filter_by(task_id=task_id).first().account_id
+
+        assert ex._try_acquire_account_lock(account_id)
+        try:
+            with test_app.session_factory() as db:
+                task = db.get(PublishTask, task_id)
+                result = ex.execute_task(db, task)
+            assert isinstance(result, PublishTask)
+        finally:
+            ex._release_account_lock(account_id)
+    finally:
+        test_app.cleanup()
 ```
 
 - [ ] **Step 2: 运行测试，确认先红**
 
 Run: `pytest server/tests/test_run_pending_records_park.py -q`
-Expected: FAIL —— `PARK_STALL_THRESHOLD` / `consume_task_parked` 未定义（AttributeError），或 `_run_pending_records` 在当前代码里无限空转导致用例超时挂起。
+Expected: FAIL —— `execute_task_with_parked` / `PARK_STALL_THRESHOLD` 未定义（AttributeError）。
 
-- [ ] **Step 3: 加 parked 侧信道 + 常量（实现其一）**
+- [ ] **Step 3: 加 `PARK_STALL_THRESHOLD` 常量（实现其一）**
 
-在 `server/app/modules/tasks/executor.py` 常量区（`MAX_CONCURRENT_RECORDS` 附近）加：
+在 `server/app/modules/tasks/executor.py` 的 `MAX_CONCURRENT_RECORDS = 5` 附近加：
 
 ```python
-# 主循环连续 N 轮"无 running + 本轮零启动 + 仍有 pending"→ 判定无前进可能（多为卡死线程
-# 泄漏的进程内账号锁挡住），park 并 return，交 worker 冷却跳过。5 × 0.2s ≈ 1s 容忍窗。
+# 主循环连续 N 轮"无 running + 本轮零启动 + 仍有 pending"→ 判无前进可能（多为卡死线程占着
+# 进程内账号锁/闸槽），park 并 return，交 worker 冷却跳过。5 × 0.2s ≈ 1s 容忍窗。
 PARK_STALL_THRESHOLD = 5
 ```
 
-在 `_task_locks` 等模块级状态附近加侧信道（worker 单线程消费，进程内安全；inline/test 模式无消费者时最多按 task 数留存、有界）：
+- [ ] **Step 4: 拆 `execute_task` 为 `_execute_task_impl` + 加 `execute_task_with_parked`（实现其二）**
+
+把现有 `execute_task`（`executor.py:117-179`）改为薄壳 + 内部实现（claim / 锁 / finally 逻辑原样搬进 `_execute_task_impl`，只把 `_run_pending_records` 返回值捕获为 `parked` 并随 task 一起返回）：
 
 ```python
-# execute_task 内的 _run_pending_records 判 parked 时登记；worker 主循环 execute_task 返回后消费。
-# 不改 execute_task 返回签名（现有 API/pipeline 调用方无需感知）。
-_parked_signals: dict[int, float] = {}
+def execute_task(db: Session, task: PublishTask) -> PublishTask:
+    """执行一个任务：把 pending 记录跑成发布，阻塞到本批次记录全部收口或暂停后返回。
+
+    进程内 per-task 锁串行化（同任务并发执行抛 ConflictError）。pending→running 用条件 UPDATE
+    抢占（rowcount==0 说明被别的执行者/worker 抢走，按其状态收尾），非 pending 则只续 worker 心跳。
+    """
+    result, _parked = _execute_task_impl(db, task)
+    return result
 
 
-def _register_task_parked(task_id: int) -> None:
-    _parked_signals[task_id] = time.monotonic()
+def execute_task_with_parked(db: Session, task: PublishTask) -> tuple[PublishTask, bool]:
+    """worker 专用：额外返回本次是否 parked（无前进、记录留 pending、需冷却后重试）。
+    公开的 execute_task 保持只返回 PublishTask，现有 API/pipeline 调用方无需感知。"""
+    return _execute_task_impl(db, task)
 
 
-def consume_task_parked(task_id: int) -> bool:
-    """worker 消费 parked 信号：本次被 park 则返回 True 并清除标记。"""
-    return _parked_signals.pop(task_id, None) is not None
+def _execute_task_impl(db: Session, task: PublishTask) -> tuple[PublishTask, bool]:
+    lock = _task_locks.setdefault(task.id, threading.Lock())
+    locked = lock.acquire(blocking=False)
+    if not locked:
+        raise ConflictError(f"Task {task.id} is already being executed")
+
+    cancel_event = threading.Event()
+    _task_cancel[task.id] = cancel_event
+
+    parked = False
+    try:
+        if task.is_deleted:
+            raise ConflictError(f"Task {task.id} has been deleted")
+        if task.status in TERMINAL_TASK_STATUSES:
+            raise ConflictError(f"Task is already terminal: {task.status}")
+
+        now = utcnow()
+        if task.status == "pending":
+            stmt = (
+                sa_update(PublishTask)
+                .where(
+                    PublishTask.id == task.id,
+                    PublishTask.status == "pending",
+                    PublishTask.is_deleted == False,  # noqa: E712
+                )
+                .values(
+                    status="running",
+                    started_at=now,
+                    cancel_requested=False,
+                    worker_heartbeat_at=now,
+                )
+            )
+            if db.execute(stmt).rowcount == 0:  # type: ignore[attr-defined]
+                db.flush()
+                refreshed = get_task(db, task.id)
+                if refreshed is None or refreshed.status in TERMINAL_TASK_STATUSES:
+                    return refreshed or task, False
+                task = refreshed
+            else:
+                task.status = "running"
+                task.started_at = now
+                task.cancel_requested = False
+                task.worker_heartbeat_at = now
+            add_log(db, task.id, None, "info", "Task started")
+            _logger.info("Task %d started", task.id)
+        else:
+            _heartbeat_task_worker(db, task.id)
+
+        parked = _run_pending_records(db, task)
+        db.flush()
+        result = get_task(db, task.id) or task
+        _logger.info("Task %d finished with status %s", task.id, result.status)
+        return result, parked
+    finally:
+        _task_locks.pop(task.id, None)
+        _task_cancel.pop(task.id, None)
+        if locked:
+            lock.release()
 ```
 
-- [ ] **Step 4: 改 `_run_pending_records` 的 no-progress 分支（实现其二）**
+> 注意早退分支也要返回 tuple：`return refreshed or task, False`。
 
-在 `_run_pending_records` 进入 `while True` 前加计数器：
+- [ ] **Step 5: `_run_pending_records` 改返回 bool + 有界 park（实现其三）**
+
+改签名 `def _run_pending_records(db: Session, task: PublishTask) -> bool:`，在 `while True` 前加计数器：
 
 ```python
     cancel_evt = _task_cancel.get(task.id)
     running: dict[Future, RunningRecord] = {}
-    stalled_passes = 0  # 连续"无 running + 零启动 + 有 pending"的轮数
+    stalled_passes = 0  # 连续"无 running + 零启动 + 有 pending"轮数
     executor = ThreadPoolExecutor(
         max_workers=_max_concurrent_records(), thread_name_prefix="publish"
     )
 ```
 
-把现有 `if not running:` 分支（原 `db.commit(); time.sleep(0.2); continue`）改为累计 stall + 到阈值 park：
+把三个 `return`（cancel 收尾、paused 收尾、no-pending 收尾）改成 `return False`：
+
+- `executor.py:286`（cancel 分支 `aggregate_task_status` 后）→ `return False`
+- `executor.py:297`（paused 分支 `db.commit()` 后）→ `return False`
+- `executor.py:305-306`（`if not running:` → `if not any pending:` → `aggregate_task_status`）→ `return False`
+
+把 `if not running:` 的 has-pending 分支（原 `db.commit(); time.sleep(0.2); continue`）改为累计 stall + 到阈值 park，并在其后加清零：
 
 ```python
             if not running:
                 if not any(record.status == "pending" for record in records):
                     aggregate_task_status(db, task, records)
                     db.commit()
-                    return
-                # 有 pending 却无 running、且本轮 _start_runnable_records 零启动（否则 running 非空）
-                # → 无前进可能（多为卡死线程泄漏的进程内账号锁）。累计到阈值即 park：留 pending、
-                # 不聚合终态、不改 worker_id，登记 parked 信号让 worker 冷却跳过、先跑别的任务。
+                    return False
+                # 有 pending 却无 running、且本轮零启动（否则 running 非空）→ 无前进可能
+                # （多为卡死线程占着进程内账号锁/闸槽）。累计到阈值即 park：留 pending、不聚合
+                # 终态、不改 worker_id，返回 True 让 worker 冷却跳过、先跑别的任务。
                 stalled_passes += 1
                 if stalled_passes >= PARK_STALL_THRESHOLD:
-                    _register_task_parked(task.id)
                     db.commit()
-                    return
+                    return True
                 db.commit()
                 time.sleep(0.2)
                 continue
 
             stalled_passes = 0  # 有 running＝有前进，清零
+            done, _ = wait(running.keys(), timeout=1, return_when=FIRST_COMPLETED)
 ```
 
-> 注：`stalled_passes = 0` 放在上面 `if not running:` 整块**之后**、`done, _ = wait(...)` 之前，确保只要有 running 就清零。
-
-- [ ] **Step 5: 运行测试，确认转绿**
+- [ ] **Step 6: 运行测试，确认转绿**
 
 Run: `pytest server/tests/test_run_pending_records_park.py -q`
-Expected: PASS —— `_run_pending_records` 在 ~0.4s（2×0.2s）内返回、记录仍 pending、`consume_task_parked` 返回 True；对照用例返回 False。
+Expected: PASS —— `execute_task_with_parked` 返回 `(task, True)`、记录仍 pending、账号锁仍被占；`execute_task` 返回 `PublishTask` 实例。
 
-- [ ] **Step 6: 回归既有 executor 状态机测试（不回归正常路径）**
+- [ ] **Step 7: 回归既有 executor 状态机测试**
 
-Run: `pytest server/tests/test_tasks_state_machine.py -q`
-Expected: PASS —— 正常执行路径下账号锁可拿、record 进入 running、`stalled_passes` 永不到阈值，行为不变。
+Run: `pytest server/tests/test_tasks_state_machine.py server/tests/test_publish_timeout_lock_safety.py -q`
+Expected: PASS —— 正常执行路径账号锁可拿、record 进 running、`stalled_passes` 永不到阈值，行为不变；超时锁安全测试不受影响（`_handle_timed_out_record` 未改）。
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add server/app/modules/tasks/executor.py server/tests/test_run_pending_records_park.py
-git commit -m "fix(worker): 主循环无前进 K 轮即 park+return，加 parked 侧信道
+git commit -m "fix(worker): 主循环无前进 K 轮即 park+return，execute_task_with_parked 透出
 
-卡死线程泄漏的进程内账号锁会让 _run_pending_records 在无 running+有 pending
-时无限 sleep(0.2) 空转→单线程 worker 冻死。改为连续 PARK_STALL_THRESHOLD 轮
-无前进即登记 parked 并 return（记录留 pending），worker 侧据此冷却跳过。
-execute_task 返回签名不变。
+卡死线程占着进程内账号锁会让 _run_pending_records 在无 running+有 pending 时
+无限 sleep(0.2) 空转→单线程 worker 冻死。改为连续 PARK_STALL_THRESHOLD 轮无前进
+即返回 parked，记录留 pending。拆 _execute_task_impl，公开 execute_task 签名不变，
+worker 专用 execute_task_with_parked 透出 parked。
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 3: 改动②c — worker 冷却 skip-map + `_claim_next_task` 跳过 parked
+### Task 2: 改动①c-1 — 可配冷却 + worker skip-map + `_claim_next_task` 跳过
 
 **Files:**
-- Modify: `server/worker/executor.py`（`PARK_COOLDOWN_SECONDS` + `_parked_until` + `_active_parked_task_ids`；`_claim_next_task` 加 `skip_task_ids` 参数；主循环消费 parked 信号并传 skip 集）
-- Test: `server/tests/test_worker_park_cooldown.py`（新建：纯逻辑冷却 + mysql claim 跳过）
+- Modify: `server/app/core/config.py`（加 `publish_park_cooldown_seconds`）
+- Modify: `server/worker/executor.py`（`_parked_until` / `_active_parked_task_ids` / `_park_cooldown_seconds` / `_claim_next_task` 加 `skip_task_ids` + id 次序）
+- Test: `server/tests/test_worker_park_cooldown.py`（新建）
 
 **Interfaces:**
-- Consumes: `server.app.modules.tasks.executor.consume_task_parked`（Task 2）。
 - Produces:
-  - `PARK_COOLDOWN_SECONDS: float`（默认 60.0）
-  - `_parked_until: dict[int, float]`（task_id → monotonic 到期）
-  - `_active_parked_task_ids(now: float) -> set[int]` — 返回仍在冷却窗内的 task_id，顺带清理到期项。
-  - `_claim_next_task(db, skip_task_ids: frozenset[int] = frozenset()) -> PublishTask | None` — 候选查询排除 skip 集。
+  - `settings.publish_park_cooldown_seconds: float`（env `GEO_PUBLISH_PARK_COOLDOWN_SECONDS`，默认 60.0）
+  - `_parked_until: dict[int, float]`（worker 模块级，task_id → monotonic 到期）
+  - `_active_parked_task_ids(now: float) -> set[int]`
+  - `_park_cooldown_seconds() -> float`
+  - `_claim_next_task(db, skip_task_ids: frozenset[int] = frozenset()) -> PublishTask | None`
+- Consumes: 现有 `select` / `PublishTask` / `PublishRecord`。
 
 - [ ] **Step 1: 写失败测试（先红）**
 
-新建 `server/tests/test_worker_park_cooldown.py`：
+新建 `server/tests/test_worker_park_cooldown.py`（顶层**不** import worker.executor）：
 
 ```python
-"""改动②c：worker 冷却 skip-map + _claim_next_task 跳过 parked task。"""
+"""改动①c：worker 可配冷却 skip-map + _claim_next_task 跳过 parked task。"""
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
-from server.worker import executor as wex
+from server.app.core.time import utcnow
 from server.app.modules.tasks.models import PublishTask
 from server.tests.utils import build_test_app
-from server.tests.test_worker_executor import _create_publishable_task
 
 
 def test_active_parked_filters_by_cooldown_and_prunes(monkeypatch):
     """纯逻辑：冷却窗内的 task_id 返回，已到期的被清出 map。"""
+    from server.worker import executor as wex  # 函数内 import，避免 collection 期拉 db.session
+
     wex._parked_until.clear()
-    wex._parked_until[101] = 1000.0  # 到期时刻
+    wex._parked_until[101] = 1000.0
     wex._parked_until[202] = 2000.0
     try:
-        # now=1500：101 已过期被清、202 仍在冷却
-        active = wex._active_parked_task_ids(now=1500.0)
+        active = wex._active_parked_task_ids(now=1500.0)  # 101 过期、202 在冷却
         assert active == {202}
         assert 101 not in wex._parked_until  # 到期项被 prune
     finally:
@@ -380,17 +322,23 @@ def test_claim_skips_parked_task_and_picks_next(monkeypatch):
     """_claim_next_task(skip_task_ids={old}) 跳过 parked 的最旧任务、返回下一个可跑任务。"""
     test_app = build_test_app(monkeypatch)
     try:
+        from server.worker import executor as wex
+        from server.tests.test_worker_executor import _create_publishable_task
+
         old_id = _create_publishable_task(test_app, suffix="old")
         new_id = _create_publishable_task(test_app, suffix="new")
+        # 显式拉开 created_at，避免同秒 tie（MySQL DATETIME 无小数秒）
+        with test_app.session_factory() as db:
+            db.get(PublishTask, old_id).created_at = utcnow() - timedelta(minutes=2)
+            db.get(PublishTask, new_id).created_at = utcnow() - timedelta(minutes=1)
+            db.commit()
 
         with test_app.session_factory() as db:
-            # 不 skip：order_by(created_at.asc) 先返回 old
-            claimed = wex._claim_next_task(db)
+            claimed = wex._claim_next_task(db)  # 不 skip → 最旧的 old
             assert claimed is not None and claimed.id == old_id
             wex._release_task_claim(db, old_id)
 
         with test_app.session_factory() as db:
-            # skip old → 返回 new
             claimed = wex._claim_next_task(db, skip_task_ids=frozenset({old_id}))
             assert claimed is not None and claimed.id == new_id
             wex._release_task_claim(db, new_id)
@@ -398,7 +346,7 @@ def test_claim_skips_parked_task_and_picks_next(monkeypatch):
         test_app.cleanup()
 ```
 
-同时把 `server/tests/test_worker_executor.py` 的 `_create_publishable_task` 加一个可选 `suffix` 形参（默认空，保持既有调用不变），让两个任务用不同 account_key / state_dir：
+同时给 `server/tests/test_worker_executor.py` 的 `_create_publishable_task` 加可选 `suffix`（默认空、既有无参调用不变），让两任务用不同 account_key / state_dir / article：
 
 ```python
 def _create_publishable_task(test_app, suffix: str = "") -> int:
@@ -421,7 +369,11 @@ def _create_publishable_task(test_app, suffix: str = "") -> int:
     (state_dir / "storage_state.json").write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
     account = client.post(
         "/api/accounts/toutiao/login",
-        json={"display_name": f"Worker Claim {suffix}".strip(), "account_key": tag, "use_browser": False},
+        json={
+            "display_name": f"Worker Claim {suffix}".strip(),
+            "account_key": tag,
+            "use_browser": False,
+        },
     ).json()
     task = client.post(
         "/api/tasks",
@@ -440,19 +392,27 @@ def _create_publishable_task(test_app, suffix: str = "") -> int:
 Run: `pytest server/tests/test_worker_park_cooldown.py -q`
 Expected: FAIL —— `_active_parked_task_ids` 未定义（AttributeError）；`_claim_next_task` 不接受 `skip_task_ids`（TypeError）。
 
-- [ ] **Step 3: 加冷却常量 + skip-map + helper（实现其一）**
+- [ ] **Step 3: config 加可配冷却（实现其一）**
 
-在 `server/worker/executor.py` 常量区（`LOGIN_SESSION_*` 附近）加：
+在 `server/app/core/config.py` 的 `publish_max_concurrent_records: int = 5` 后加：
 
 ```python
-PARK_COOLDOWN_SECONDS = 60.0  # 被 park 的任务在此冷却窗内不被本 worker 重抢，先跑别的任务
+    publish_park_cooldown_seconds: float = 60.0
 ```
 
-在 `_shutdown` 等模块级状态附近加：
+- [ ] **Step 4: worker skip-map + helper（实现其二）**
+
+在 `server/worker/executor.py` 的 `_shutdown = False` 附近加模块级状态与 helper：
 
 ```python
-# 被 execute_task 判 parked 的任务 → 冷却到期（monotonic）。_claim_next_task 冷却窗内跳过它。
+# 被 execute_task_with_parked 判 parked 的任务 → 冷却到期（monotonic）。_claim_next_task 冷却窗内跳过它。
 _parked_until: dict[int, float] = {}
+
+
+def _park_cooldown_seconds() -> float:
+    from server.app.core.config import get_settings
+
+    return float(get_settings().publish_park_cooldown_seconds)
 
 
 def _active_parked_task_ids(now: float) -> set[int]:
@@ -462,9 +422,9 @@ def _active_parked_task_ids(now: float) -> set[int]:
     return {tid for tid, until in _parked_until.items() if now < until}
 ```
 
-- [ ] **Step 4: `_claim_next_task` 加 `skip_task_ids` 参数（实现其二）**
+- [ ] **Step 5: `_claim_next_task` 加 `skip_task_ids` + id 次序（实现其三）**
 
-改签名与候选查询（非空才加过滤；空集不加，避免 `notin_([])` 边角）：
+改 `_claim_next_task`（`worker/executor.py:81`）：签名加参数、排序加 `id.asc()` 稳定次序、非空 skip 时追加 `notin_`。认领段（`now`/`lease_until`/`sa_update`/`rowcount`/`db.commit()`/`get_task`）原样保留：
 
 ```python
 def _claim_next_task(db, skip_task_ids: frozenset[int] = frozenset()) -> PublishTask | None:
@@ -490,7 +450,7 @@ def _claim_next_task(db, skip_task_ids: frozenset[int] = frozenset()) -> Publish
                 )
             ),
         )
-        .order_by(PublishTask.created_at.asc())
+        .order_by(PublishTask.created_at.asc(), PublishTask.id.asc())
         .limit(1)
     )
     if skip_task_ids:
@@ -499,89 +459,246 @@ def _claim_next_task(db, skip_task_ids: frozenset[int] = frozenset()) -> Publish
 
     if candidate_id is None:
         return None
-    # ... 其余（认领 UPDATE / rowcount 校验 / commit / get_task）保持不变
-```
 
-> 只改 `select(...)` 组装成 `stmt` 并在非空时追加 `.where(notin_)`，认领段（`now` / `lease_until` / `sa_update` / `rowcount==0` / `db.commit()` / `return get_task`）原样保留。
+    now = utcnow()
+    lease_until = now + timedelta(minutes=CLAIM_LEASE_MINUTES)
+    rows = db.execute(
+        sa_update(PublishTask)
+        .where(
+            PublishTask.id == candidate_id,
+            PublishTask.worker_id.is_(None),
+            PublishTask.is_deleted == False,  # noqa: E712
+        )
+        .values(worker_id=WORKER_ID, worker_lease_until=lease_until, worker_heartbeat_at=now)
+    ).rowcount
 
-- [ ] **Step 5: 主循环消费 parked 信号 + 传 skip 集（实现其三）**
+    if rows == 0:
+        return None
 
-在 `server/worker/executor.py` 顶部 import 区加：
-
-```python
-from server.app.modules.tasks.executor import consume_task_parked
-```
-
-改主循环 claim 段（原 `task = _claim_next_task(db)` 及 execute 后）：
-
-```python
-            skip = _active_parked_task_ids(time.monotonic())
-            task = _claim_next_task(db, skip_task_ids=frozenset(skip))
-            if task is None:
-                db.close()
-                time.sleep(1)
-                continue
-
-            task_id = task.id
-            _logger.info("Worker %s claimed task %d", WORKER_ID, task_id)
-            execute_task(db, task)
-            db.commit()
-            if consume_task_parked(task_id):
-                _parked_until[task_id] = time.monotonic() + PARK_COOLDOWN_SECONDS
-                _logger.info(
-                    "Worker %s parked task %d for %.0fs (no forward progress)",
-                    WORKER_ID, task_id, PARK_COOLDOWN_SECONDS,
-                )
-            _logger.info("Worker %s finished task %d", WORKER_ID, task_id)
+    db.commit()
+    return get_task(db, candidate_id)
 ```
 
 - [ ] **Step 6: 运行测试，确认转绿**
 
 Run: `pytest server/tests/test_worker_park_cooldown.py server/tests/test_worker_executor.py -q`
-Expected: PASS —— 冷却过滤 + prune 正确；claim 跳过 parked 返回 new；`_create_publishable_task` 既有调用（无 suffix）不回归。
+Expected: PASS —— 冷却过滤 + prune 正确；claim 跳过 parked 返回 new；`_create_publishable_task` 既有无参调用不回归。
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add server/worker/executor.py server/tests/test_worker_park_cooldown.py server/tests/test_worker_executor.py
-git commit -m "fix(worker): parked 任务冷却 skip-map，_claim_next_task 跳过先跑别的
+git add server/app/core/config.py server/worker/executor.py server/tests/test_worker_park_cooldown.py server/tests/test_worker_executor.py
+git commit -m "fix(worker): 可配冷却 skip-map + _claim_next_task 跳过 parked
 
-execute_task 判 parked 后 worker 把该 task 加进内存冷却 map（60s），
-_claim_next_task 冷却窗内经 notin_ 跳过它——避免 order_by(created_at.asc)
-永远先抢卡死老任务把 worker 卡在同一任务上。冷却到期自动清理，
-积压记录待 worker 重启（进程内账号锁清空）后自然重跑。
+execute_task 判 parked 后 worker 把该 task 加进内存冷却 map（可配
+GEO_PUBLISH_PARK_COOLDOWN_SECONDS 默认 60s），_claim_next_task 冷却窗内经
+notin_ 跳过它、先跑下一个非 parked 的最旧任务；排序加 id.asc() 稳定次序
+（created_at 无小数秒同秒会 tie）。
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 4: 改动③ — worker 容器 `init: true` 收 chrome 僵尸
+### Task 3: 改动①c-2 — 抽 `_run_worker_iteration` 接线 + 端到端 glue 测试
 
 **Files:**
-- Modify: `deploy/docker-compose.prod.yml`（`worker` 服务加 `init: true`）
-- Modify: `docker-compose.yml`（`worker` 服务加 `init: true`，与 prod 一致化）
+- Modify: `server/worker/executor.py`（`_recovery_cycle` 上移模块级；抽 `_run_worker_iteration(db)`；主循环 while 改调它；接 `execute_task_with_parked` + 写冷却）
+- Test: `server/tests/test_worker_park_cooldown.py`（追加端到端 glue 用例）
 
-**Interfaces:** 无代码接口；纯 compose 配置。
+**Interfaces:**
+- Consumes: `server.app.modules.tasks.executor.execute_task_with_parked`（Task 1）、`_active_parked_task_ids` / `_parked_until` / `_park_cooldown_seconds`（Task 2）、`_claim_next_task(skip_task_ids=...)`（Task 2）。
+- Produces: `_run_worker_iteration(db) -> None`（一轮主循环体）；模块级 `_recovery_cycle: int`。
 
-- [ ] **Step 1: prod compose worker 加 `init: true`**
+- [ ] **Step 1: 写失败测试（先红）**
 
-在 `deploy/docker-compose.prod.yml` 的 `worker:` 服务块内（`command: ["python", "-m", "server.worker.executor"]` 同级）加一行：
+在 `server/tests/test_worker_park_cooldown.py` 追加：
+
+```python
+@pytest.mark.mysql
+def test_worker_iteration_parks_then_next_claim_skips(monkeypatch):
+    """端到端 glue：一轮 _run_worker_iteration 让卡死老任务 park 并写冷却，
+    下一次 claim 跳过冷却中的老任务、选中新任务。"""
+    import time as _t
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.worker import executor as wex
+        from server.app.modules.tasks import executor as ex
+        from server.tests.test_worker_executor import _create_publishable_task
+
+        monkeypatch.setattr(ex, "PARK_STALL_THRESHOLD", 2)
+        monkeypatch.setattr(wex, "_periodic_recovery", lambda db: None)  # 隔离周期恢复
+        wex._parked_until.clear()
+
+        old_id = _create_publishable_task(test_app, suffix="old")
+        new_id = _create_publishable_task(test_app, suffix="new")
+        with test_app.session_factory() as db:
+            db.get(PublishTask, old_id).created_at = utcnow() - timedelta(minutes=2)
+            db.get(PublishTask, new_id).created_at = utcnow() - timedelta(minutes=1)
+            from server.app.modules.tasks.models import PublishRecord
+            old_account = db.query(PublishRecord).filter_by(task_id=old_id).first().account_id
+            db.commit()
+
+        assert ex._try_acquire_account_lock(old_account)  # 老任务账号锁被占→会 park
+        try:
+            wex._run_worker_iteration(test_app.session_factory())  # 一轮：claim old→park→写冷却→释放认领
+            assert old_id in wex._active_parked_task_ids(_t.monotonic())
+
+            skip = frozenset(wex._active_parked_task_ids(_t.monotonic()))
+            with test_app.session_factory() as db:
+                claimed = wex._claim_next_task(db, skip_task_ids=skip)
+                assert claimed is not None and claimed.id == new_id
+                wex._release_task_claim(db, new_id)
+        finally:
+            ex._release_account_lock(old_account)
+            wex._parked_until.clear()
+    finally:
+        test_app.cleanup()
+```
+
+- [ ] **Step 2: 运行测试，确认先红**
+
+Run: `pytest server/tests/test_worker_park_cooldown.py::test_worker_iteration_parks_then_next_claim_skips -q`
+Expected: FAIL —— `_run_worker_iteration` 未定义（AttributeError）。
+
+- [ ] **Step 3: `_recovery_cycle` 上移模块级 + import（实现其一）**
+
+在 `server/worker/executor.py` 顶部 import 区加：
+
+```python
+from server.app.modules.tasks.executor import execute_task_with_parked
+```
+
+在 `_shutdown = False` 附近加：
+
+```python
+_recovery_cycle = 0
+```
+
+- [ ] **Step 4: 抽 `_run_worker_iteration` 并改写主循环（实现其二）**
+
+把主循环块（`worker/executor.py` 现 `_recovery_cycle = 0` 到 while 结束，约 364-402 行）替换为：
+
+```python
+    while not _shutdown:
+        _run_worker_iteration(SessionLocal())
+```
+
+并新增函数（放在主循环函数上方或模块内合适处）：
+
+```python
+def _run_worker_iteration(db) -> None:
+    """一轮 worker 主循环体：心跳 → 周期恢复 → claim（跳过冷却中的 parked）→ 执行 →
+    按 parked 写冷却 → 释放认领。抽出以便端到端测试整条 park→冷却→skip→下一任务链路。"""
+    global _recovery_cycle
+    task_id: int | None = None
+    try:
+        _write_worker_heartbeat(db)
+        if _recovery_cycle % 60 == 0:
+            _periodic_recovery(db)
+        _recovery_cycle += 1
+
+        skip = frozenset(_active_parked_task_ids(time.monotonic()))
+        task = _claim_next_task(db, skip_task_ids=skip)
+        if task is None:
+            time.sleep(1)
+            return
+
+        task_id = task.id
+        _logger.info("Worker %s claimed task %d", WORKER_ID, task_id)
+        _result, parked = execute_task_with_parked(db, task)
+        db.commit()
+        if parked:
+            _parked_until[task_id] = time.monotonic() + _park_cooldown_seconds()
+            _logger.info(
+                "Worker %s parked task %d for %.0fs (no forward progress)",
+                WORKER_ID, task_id, _park_cooldown_seconds(),
+            )
+        else:
+            _logger.info("Worker %s finished task %d", WORKER_ID, task_id)
+    except Exception:
+        _logger.exception("Worker %s: error executing task %s", WORKER_ID, task_id)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        time.sleep(5)
+    finally:
+        if task_id is not None:
+            try:
+                _release_task_claim(db, task_id)
+            except Exception:
+                pass
+        try:
+            db.close()
+        except Exception:
+            pass
+```
+
+> 行为等价原循环：唯一差别是 task-None 分支由"先 `db.close()` 再 `sleep(1)`"变为"`sleep(1)` 后由 finally 关"——功能等价（sleep 期间 db 空闲），且去掉了双 close。
+
+- [ ] **Step 5: 运行测试，确认转绿**
+
+Run: `pytest server/tests/test_worker_park_cooldown.py -q`
+Expected: PASS —— 一轮迭代后 old 进冷却、下一次 claim 跳过 old 选 new；前两个用例仍绿。
+
+- [ ] **Step 6: 回归 worker 测试**
+
+Run: `pytest server/tests/test_worker_executor.py server/tests/test_account_keepalive.py -q`
+Expected: PASS —— `_claim_next_task` / `_release_task_claim` / 恢复 / 心跳等既有用例不回归。
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add server/worker/executor.py server/tests/test_worker_park_cooldown.py
+git commit -m "fix(worker): 抽 _run_worker_iteration 接 parked→冷却→skip，端到端覆盖
+
+主循环体抽成 _run_worker_iteration(db)：claim 带 skip、execute_task_with_parked
+判 parked 后写冷却、释放认领；_recovery_cycle 上移模块级。加端到端 glue 测试
+覆盖 park→冷却→下一次 claim 跳过整条链路。
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 4: 改动② — worker 容器 `init: true` 收 chrome 僵尸
+
+**Files:**
+- Modify: `deploy/docker-compose.prod.yml`（worker 加 `init: true`）
+- Modify: `docker-compose.yml`（worker 加 `init: true` + 命令改 `exec python`）
+
+- [ ] **Step 1: prod worker 加 `init: true`**
+
+在 `deploy/docker-compose.prod.yml` 的 `worker:`（第 95 行）块内，`restart: unless-stopped` 下一行加：
 
 ```yaml
   worker:
-    # ... 现有键（image / command / environment / depends_on / restart 等）不变
+    image: geo-collab-server:${SERVER_VERSION:?required}
+    restart: unless-stopped
     init: true   # tini 当 PID 1 回收 reparent 上来的 <defunct> chrome 子进程
+    command: ["python", "-m", "server.worker.executor"]
 ```
 
-- [ ] **Step 2: 基础 compose worker 一致化**
+（命令已是 exec-form array，Python 已是 tini 直接子进程，无需改。）
 
-在 `docker-compose.yml` 的 `worker:` 服务块同样加 `init: true`。
+- [ ] **Step 2: base worker 加 `init: true` + `exec`**
+
+在 `docker-compose.yml` 的 `worker:`（第 62 行）块内加 `init: true`，并把 `sh -c` 命令末尾的 `python` 改成 `exec python`（让 Python 取代 sh 成为 tini 直接子进程、正确收信号）：
+
+```yaml
+  worker:
+    build: .
+    restart: unless-stopped
+    init: true
+    command: sh -c "alembic upgrade head && exec python -m server.worker.executor"
+```
 
 - [ ] **Step 3: 校验 compose 语法**
 
 Run: `docker compose -f deploy/docker-compose.prod.yml config -q && docker compose -f docker-compose.yml config -q`
-Expected: 无输出、退出码 0（YAML 合法、`init` 键被识别）。若本机无 docker，跳过并在 MR 说明里标注"待 CI/部署机校验"。
+Expected: 退出码 0、无输出（`init` 键被识别、YAML 合法）。若本机无 docker，跳过并在 MR 描述标注"待 CI/部署机校验"。
 
 - [ ] **Step 4: Commit**
 
@@ -589,61 +706,62 @@ Expected: 无输出、退出码 0（YAML 合法、`init` 键被识别）。若�
 git add deploy/docker-compose.prod.yml docker-compose.yml
 git commit -m "fix(worker): 容器加 init:true 回收 chrome 僵尸
 
-worker 是容器 PID 1，不回收 reparent 上来的 <defunct> chrome 子进程
-（卡死超时关会话后累积）。加 init:true 让 tini 当 PID 1 回收僵尸。
+worker 是容器 PID 1，不回收 reparent 上来的 <defunct> chrome 子进程。
+加 init:true 让 tini 当 PID 1 回收；base compose sh -c 命令改 exec python
+让 Python 成为 tini 直接子进程正确收信号。仅回收已 reparent 的僵尸，
+'部署后 <defunct> 不再累积'为验证目标。
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 5: 全量回归 + lint/format/typecheck 门禁
+### Task 5: 门禁 — lint / format / mypy / 回归
 
-**Files:** 无改动（仅运行门禁；若 ruff 报格式问题，`ruff format` 改写后并入相邻任务的 commit 或单独 commit）
-
-- [ ] **Step 1: ruff check + format 校验**
+- [ ] **Step 1: ruff check + format**
 
 Run: `ruff check server/ && ruff format --check server/`
-Expected: PASS。若 format 失败，运行 `ruff format server/` 后 `git add -A && git commit -m "style: ruff format"`。
+Expected: PASS。失败则 `ruff format server/` 后 `git add -A && git commit -m "style: ruff format"`。
 
-- [ ] **Step 2: mypy（宽松）**
+- [ ] **Step 2: mypy**
 
 Run: `mypy server/app`
 Expected: 不新增错误（新增函数带类型注解）。
 
-- [ ] **Step 3: 相关测试全绿**
+- [ ] **Step 3: 全相关测试绿**
 
-Run: `pytest server/tests/test_publish_timeout_lock_safety.py server/tests/test_run_pending_records_park.py server/tests/test_worker_park_cooldown.py server/tests/test_worker_executor.py server/tests/test_tasks_state_machine.py -q`
+Run: `pytest server/tests/test_run_pending_records_park.py server/tests/test_worker_park_cooldown.py server/tests/test_worker_executor.py server/tests/test_tasks_state_machine.py server/tests/test_publish_timeout_lock_safety.py server/tests/test_account_keepalive.py -q`
 Expected: PASS（全部）。
 
-- [ ] **Step 4: 更大范围 worker/tasks 回归（可选，时间允许）**
+- [ ] **Step 4: 更大范围回归（时间允许）**
 
 Run: `pytest server/tests/ -q -k "publish or worker or task"`
-Expected: PASS（无与本改动相关的新红）。
+Expected: PASS（无本改动相关新红）。
 
 ---
 
 ## Self-Review
 
-**1. Spec coverage**（对照 `docs/superpowers/specs/2026-07-14-worker-wedged-task-recovery-design.md` §4）：
-- 改动① 归还闸槽 → Task 1 ✅
-- 改动②a 主循环有界化 → Task 2 Step 4 ✅
-- 改动②b parked 侧信道 → Task 2 Step 3 ✅
-- 改动②c worker 冷却 skip-map + `_claim_next_task` 跳过 → Task 3 ✅
-- 改动③ init:true → Task 4 ✅
-- 测试策略 §5 全部有对应 TDD 任务 ✅
-- 上线/回滚 §6 → 计划末尾"部署前停"，Task 均无迁移/base 变化 ✅
-- 剔除的候选④ → 计划 Global Constraints 明确不含 ✅
+**1. Spec coverage**（对照 spec §4）：
+- 改动①a 主循环有界化 → Task 1 Step 5 ✅
+- 改动①b parked 透出（无 side-channel，`execute_task` 签名不变）→ Task 1 Step 4 ✅
+- 改动①c 可配冷却 + skip-map + `_claim_next_task` 跳过 + id 次序 + `_run_worker_iteration` → Task 2 + Task 3 ✅
+- 改动② init:true + base compose exec → Task 4 ✅
+- 测试策略 §5：①b park/wrapper（Task 1）、①c 纯冷却/claim-skip/端到端 glue（Task 2+3，全 lazy import worker.executor）、② compose config -q（Task 4）✅
+- 非目标（不回收闸槽、不 SIGKILL、无 ConflictError 退避）→ Global Constraints 明确，`_handle_timed_out_record` 全程不动 ✅
+- 上线/回滚 §6 → 计划末尾"部署前停"，无迁移/base 变化 ✅
 
-**2. Placeholder scan**：无 TBD/TODO；所有代码步给出完整实码；compose 步给出确切 YAML 键。Task 4 Step 3 的"本机无 docker 则跳过"是明确降级路径、非占位。
+**2. Placeholder scan**：无 TBD/TODO；代码步给完整实码；compose 步给确切 YAML。Task 4 Step 3"本机无 docker 则跳过"是明确降级路径。
 
 **3. Type consistency**：
-- `_return_publish_gate_slot(record_id: int)` — Task 1 定义、Task 1 两处调用一致。
-- `_register_task_parked` / `consume_task_parked` — Task 2 定义（`tasks/executor.py`），Task 3 Step 5 worker import 并调用 `consume_task_parked(task_id) -> bool` 一致。
-- `PARK_STALL_THRESHOLD`（tasks/executor.py）vs `PARK_COOLDOWN_SECONDS`（worker/executor.py）— 两个不同常量、不同文件，无混用。
-- `_claim_next_task(db, skip_task_ids=frozenset())` — Task 3 定义，Task 3 Step 5 以 `frozenset(skip)` 调用一致；既有无参调用（test_worker_executor.py）因默认值不回归。
-- `_active_parked_task_ids(now: float) -> set[int]` — Task 3 定义并在主循环以 `time.monotonic()` 调用一致。
+- `_run_pending_records(...) -> bool`（Task 1 Step 5）↔ `_execute_task_impl` 中 `parked = _run_pending_records(...)`（Task 1 Step 4）一致。
+- `execute_task_with_parked(...) -> tuple[PublishTask, bool]`（Task 1）↔ Task 3 `_result, parked = execute_task_with_parked(db, task)` 一致。
+- `execute_task(...) -> PublishTask`（Task 1）↔ Task 1 Step 1 `isinstance(result, PublishTask)` 一致。
+- `_claim_next_task(db, skip_task_ids=frozenset())`（Task 2）↔ Task 3 `_claim_next_task(db, skip_task_ids=skip)` + 既有无参调用一致。
+- `_active_parked_task_ids(now: float) -> set[int]`（Task 2）↔ Task 3 `frozenset(_active_parked_task_ids(time.monotonic()))` 一致。
+- `_park_cooldown_seconds() -> float`（Task 2）↔ Task 3 `time.monotonic() + _park_cooldown_seconds()` 一致。
+- `PARK_STALL_THRESHOLD`（tasks/executor.py）与 `publish_park_cooldown_seconds`（config）/ `_parked_until`（worker）分属不同文件、无混用。
 
 ## 上线 Handoff（部署前停）
 
-三个代码改动 + compose 改动完成、全绿后：推分支 → 建 MR → 等 CI（`backend-lint` + `frontend`）绿。**因动 worker 并发/调度语义（非例行），合并 / 部署前停下等用户确认**，不自动上线。
+两个改动完成、全绿 + 门禁过后：推分支 → 建 MR → 等 CI（`backend-lint` + `frontend`）绿。**因动 worker 并发/调度语义（非例行），合并 / 部署前停下等用户确认**，不自动上线。
