@@ -61,7 +61,8 @@ services:
   worker:
     build: .
     restart: unless-stopped
-    command: sh -c "alembic upgrade head && python -m server.worker.executor"
+    init: true
+    command: sh -c "alembic upgrade head && exec python -m server.worker.executor"
     # ports:  # noVNC now proxied through nginx, no direct port exposure needed
     #   - "127.0.0.1:6080-6090:6080-6090"
     depends_on:
