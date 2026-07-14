@@ -45,13 +45,14 @@ from server.app.modules.accounts.models import (
 from server.app.modules.accounts.service import profile_key_from_state_path
 from server.app.modules.system.models import WorkerHeartbeat
 from server.app.modules.tasks import (
-    execute_task,
     get_task,
     recover_stuck_records,
     recover_stuck_task_claims,
     reopen_orphaned_terminal_tasks,
 )
+from server.app.modules.tasks.executor import execute_task_with_parked
 from server.app.modules.tasks.models import PublishRecord, PublishTask
+from server.worker import park_cooldown
 
 _logger = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ LOGIN_SESSION_STALE_CHECK_SECONDS = 60
 _shutdown = False
 _profile_lock_heartbeat_at = 0.0
 _profile_lock_heartbeat_lock = threading.Lock()
+_recovery_cycle = 0
 
 
 def _handle_signal(signum, frame) -> None:
@@ -338,6 +340,58 @@ def _periodic_recovery(db) -> None:
         _logger.exception("Worker %s: stuck task recovery check failed", WORKER_ID)
 
 
+def _run_worker_iteration(db) -> float:
+    """跑一轮 worker 主循环体：心跳 → 周期恢复 → claim（跳过冷却中的 parked）→ 执行 →
+    按 parked 写冷却 → 释放认领。返回建议空闲 sleep 秒数（0=有活立即下一轮）；session 在
+    返回前于 finally 关闭——外层据返回值 sleep，空闲时不占着 DB 连接。抽出以便端到端测试
+    整条 park→冷却→skip→下一任务链路。"""
+    global _recovery_cycle
+    task_id: int | None = None
+    try:
+        _write_worker_heartbeat(db)
+        if _recovery_cycle % 60 == 0:
+            _periodic_recovery(db)
+        _recovery_cycle += 1
+
+        skip = frozenset(park_cooldown.active_parked_task_ids(time.monotonic()))
+        task = _claim_next_task(db, skip_task_ids=skip)
+        if task is None:
+            return 1.0  # finally 先关 session，外层再 sleep
+
+        task_id = task.id
+        _logger.info("Worker %s claimed task %d", WORKER_ID, task_id)
+        _result, parked = execute_task_with_parked(db, task)
+        db.commit()
+        if parked:
+            park_cooldown.mark_parked(task_id, time.monotonic())
+            _logger.info(
+                "Worker %s parked task %d for %.0fs (no forward progress)",
+                WORKER_ID,
+                task_id,
+                park_cooldown.park_cooldown_seconds(),
+            )
+        else:
+            _logger.info("Worker %s finished task %d", WORKER_ID, task_id)
+        return 0.0
+    except Exception:
+        _logger.exception("Worker %s: error executing task %s", WORKER_ID, task_id)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 5.0
+    finally:
+        if task_id is not None:
+            try:
+                _release_task_claim(db, task_id)
+            except Exception:
+                pass
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 def main() -> None:
     # 注册为 GEO_WORKER_ID，供 browser_sessions.py 标记数据库行
     os.environ["GEO_WORKER_ID"] = WORKER_ID
@@ -367,46 +421,10 @@ def main() -> None:
     if start_keepalive(SessionLocal):
         _logger.info("Worker %s: account keep-alive thread started", WORKER_ID)
 
-    _recovery_cycle = 0
-
     while not _shutdown:
-        db = SessionLocal()
-        task_id: int | None = None
-        try:
-            _write_worker_heartbeat(db)
-            # 周期性恢复：复位过期 lease 的卡死记录/认领 + 收口记录均终态却仍 running 的任务。
-            if _recovery_cycle % 60 == 0:
-                _periodic_recovery(db)
-            _recovery_cycle += 1
-            task = _claim_next_task(db)
-            if task is None:
-                db.close()
-                time.sleep(1)
-                continue
-
-            task_id = task.id
-            _logger.info("Worker %s claimed task %d", WORKER_ID, task_id)
-            execute_task(db, task)
-            db.commit()
-            _logger.info("Worker %s finished task %d", WORKER_ID, task_id)
-
-        except Exception:
-            _logger.exception("Worker %s: error executing task %s", WORKER_ID, task_id)
-            try:
-                db.rollback()
-            except Exception:
-                pass
-            time.sleep(5)
-        finally:
-            if task_id is not None:
-                try:
-                    _release_task_claim(db, task_id)
-                except Exception:
-                    pass
-            try:
-                db.close()
-            except Exception:
-                pass
+        idle_sleep = _run_worker_iteration(SessionLocal())
+        if idle_sleep:
+            time.sleep(idle_sleep)
 
     try:
         from server.app.modules.accounts.login_broker import login_broker
