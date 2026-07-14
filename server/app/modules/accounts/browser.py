@@ -1079,7 +1079,7 @@ def harvest_chromium_by_profile(
     survived 非空＝SIGKILL 都没杀死，交调用方决定不归还锁。非 Linux（无 /proc）no-op。
     """
     scan = proc_scan or _read_proc_table
-    do_kill = kill or (lambda pid: os.kill(pid, signal.SIGKILL))
+    do_kill = kill or (lambda pid: os.kill(pid, signal.SIGKILL))  # type: ignore[attr-defined]
     alive = is_alive or (lambda pid: Path(f"/proc/{pid}").exists())
 
     rows = scan()
