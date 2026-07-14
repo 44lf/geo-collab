@@ -594,7 +594,8 @@ def _harvest_wedged_record(db: Session, running_record: RunningRecord, future: F
     account = db.get(Account, running_record.account_id)
     if account is None or account.state_path is None:
         return False
-    result = harvest_chromium_by_profile(profile_dir_from_state_path(account.state_path))
+    profile_dir = profile_dir_from_state_path(account.state_path)
+    result = harvest_chromium_by_profile(profile_dir)
     if result.survived:
         emit_resource_alert(
             f"record {running_record.record_id}: {len(result.survived)} chromium proc(s) survived "
@@ -606,6 +607,15 @@ def _harvest_wedged_record(db: Session, running_record: RunningRecord, future: F
     try:
         future.result(timeout=rejoin_seconds)
     except FutureTimeoutError:
+        _logger.warning(
+            "record %d: root-cause harvest killed %d chromium proc(s) on profile %s but publish "
+            "thread still wedged after %.1fs rejoin; locks held for recovery "
+            "(killed=0 ⇒ no chromium matched — already exited or --user-data-dir cmdline mismatch)",
+            running_record.record_id,
+            result.killed,
+            profile_dir,
+            rejoin_seconds,
+        )
         return False
     except Exception:
         pass  # 线程抛业务异常/被 cancel —— 已终止，视为解绕
