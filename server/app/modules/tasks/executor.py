@@ -580,6 +580,37 @@ def _mark_record_zombie(db: Session, task_id: int, record_id: int) -> None:
     add_log(db, task_id, record_id, "warning", _ZOMBIE_QUEUE_REASON)
 
 
+def _harvest_wedged_record(db: Session, running_record: RunningRecord, future: Future) -> bool:
+    """根因收割：OS 级 SIGKILL 卡死记录的 chromium(profile 维度) → 二次 join 确认线程解绕。
+
+    仅由 _handle_timed_out_record 的 terminated=False 分支调用。返回线程是否确认终止——
+    True 才可由调用方安全归还 profile 锁 + 闸槽 + 账号锁；False 退回今天的保锁行为。
+    纯 OS 收割，不碰 Playwright 句柄，可从 watchdog 线程安全跑。
+    """
+    # lazy import：accounts.service 反向 import 了 tasks.models，避免模块级循环 import
+    from server.app.modules.accounts.browser import harvest_chromium_by_profile
+    from server.app.modules.accounts.service import profile_dir_from_state_path
+
+    account = db.get(Account, running_record.account_id)
+    if account is None or account.state_path is None:
+        return False
+    result = harvest_chromium_by_profile(profile_dir_from_state_path(account.state_path))
+    if result.survived:
+        emit_resource_alert(
+            f"record {running_record.record_id}: {len(result.survived)} chromium proc(s) survived "
+            f"SIGKILL; account/profile locks held, leaving for recovery",
+            {"record_id": running_record.record_id, "account_id": running_record.account_id},
+        )
+        return False
+    try:
+        future.result(timeout=get_settings().publish_harvest_rejoin_seconds)
+        return True
+    except FutureTimeoutError:
+        return False
+    except Exception:
+        return True
+
+
 def _handle_timed_out_record(
     db: Session,
     task_id: int,
@@ -627,6 +658,9 @@ def _handle_timed_out_record(
     except Exception:
         # 线程已终止（抛业务异常 / 被 cancel）——视为已退场
         terminated = True
+
+    if not terminated and get_settings().publish_harvest_enabled:
+        terminated = _harvest_wedged_record(db, running_record, future)
 
     if terminated:
         _release_record_profile_lock(running_record.record_id)
