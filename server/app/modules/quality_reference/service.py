@@ -140,24 +140,53 @@ def adopt_article(
 
 
 def import_external(
-    db, *, user_id, title, markdown, category, source_url, platform, question_texts=None
+    db,
+    *,
+    user_id,
+    title,
+    category,
+    source_url,
+    platform,
+    question_texts=None,
+    markdown=None,
+    content_json=None,
+    content_html=None,
+    plain_text=None,
 ):
+    """录入站外参考，两条正文路径二选一：
+
+    - 新（Tiptap 编辑器）：传 content_json（序列化 doc，含图片节点）+ content_html + plain_text，
+      正文直接采用（content_html 仍过 nh3 防存储型 XSS）；图片作为节点保真。
+    - 旧（markdown 兼容）：传 markdown，后端 markdown→tiptap/html 转换（不含图片）。
+    查重 / 相似统一按 plain_text；content_hash = sha256(title + plain_text)。
+    """
     import nh3
 
     from server.app.modules.ai_generation.converter import markdown_to_html, markdown_to_tiptap
     from server.app.modules.ai_generation.markdown_sanitizer import normalize_markdown_content
     from server.app.modules.articles.parser import dumps_content_json
 
-    md = normalize_markdown_content(markdown)
-    similar = find_similar(db, plain_text=md, limit=5)  # near-dup 软提示（不硬挡）
+    if content_json is not None:
+        cj = content_json
+        html = nh3.clean(content_html or "")  # 防存储型 XSS（查看器渲染 content_json，html 仅存档）
+        text = plain_text or ""
+    elif markdown is not None:
+        md = normalize_markdown_content(markdown)
+        cj = dumps_content_json(markdown_to_tiptap(md))  # dict→str
+        html = nh3.clean(markdown_to_html(md))
+        text = md
+    else:
+        raise ValidationError("需提供 content_json 或 markdown 之一")
+
+    similar = find_similar(db, plain_text=text, limit=5)  # near-dup 软提示（不硬挡）
     ref = QualityReference(
         origin="external",
         article_id=None,
         title=title,
-        content_json=dumps_content_json(markdown_to_tiptap(md)),  # dict→str
-        content_html=nh3.clean(markdown_to_html(md)),  # 防存储型 XSS
-        plain_text=md,
-        content_hash=compute_content_hash(title, md),
+        content_json=cj,
+        content_html=html,
+        plain_text=text,
+        content_hash=compute_content_hash(title, text),
         source_url=source_url,
         platform=platform,
         added_by_user_id=user_id,

@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import {
   AlertTriangle,
+  Bold,
   Download,
   ExternalLink,
   Eye,
+  Heading2,
+  Image as ImageIcon,
+  Italic,
+  List,
   Pencil,
   Plus,
   RefreshCw,
@@ -15,7 +20,8 @@ import {
 import { useToast } from "../../components/Toast";
 import { Modal } from "../../components/Modal";
 import { ReviewBadge } from "../../components/ArticleListItem";
-import { emptyDoc } from "../../api/core";
+import { emptyDoc, withAssetToken } from "../../api/core";
+import { uploadAsset } from "../../api/assets";
 import { getArticle, listArticles } from "../../api/articles";
 import { buildReadonlyExtensions } from "../content/readonlyExtensions";
 import {
@@ -953,29 +959,127 @@ function ImportModal({
   const { toast } = useToast();
   const [title, setTitle] = useState("");
   const [catRows, setCatRows] = useState<CatRow[]>([]);
-  const [markdown, setMarkdown] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [platform, setPlatform] = useState("");
   const [saving, setSaving] = useState(false);
+  const [imageUploading, setImageUploading] = useState(0); // >0 = 有正文图在上传，提交前拦一下
   // 提交后若查重命中，展示疑似重复列表（不阻断——参考已入库），用户确认后关闭。
   const [similar, setSimilar] = useState<QualitySimilar[] | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadImageRef = useRef<(file: File) => void>(() => {}); // 破 editorProps↔editor 循环依赖
+  const pendingBlobsRef = useRef<Set<string>>(new Set());
+
+  // 富文本编辑器：与文章编辑器 / 只读查看器共用同一套扩展（含 CustomImage）。粘贴网页整篇 →
+  // 富文本 + 外链图节点自动带入；粘贴截图 / 拖拽 / 「插入图片」→ 上传到 /api/assets 存稳定 URL。
+  const editor = useEditor({
+    extensions: buildReadonlyExtensions(),
+    content: emptyDoc,
+    editorProps: {
+      attributes: { class: "editorSurface" },
+      transformPastedHTML: (html) => html.replace(/ style="[^"]*"/gi, ""),
+      handlePaste(_view, event) {
+        const item = Array.from(event.clipboardData?.items ?? []).find((it) =>
+          it.type.startsWith("image/"),
+        );
+        const file = item?.getAsFile();
+        if (!file) return false; // 非图片粘贴走 Tiptap 默认（网页 HTML → 富文本 + 外链图）
+        uploadImageRef.current(file);
+        return true;
+      },
+      handleDrop(_view, event) {
+        const files = Array.from((event as DragEvent).dataTransfer?.files ?? []).filter((f) =>
+          f.type.startsWith("image/"),
+        );
+        if (!files.length) return false;
+        event.preventDefault();
+        files.forEach((f) => uploadImageRef.current(f));
+        return true;
+      },
+    },
+  });
+
+  async function uploadBodyImage(file: File) {
+    if (!editor) return;
+    const blobUrl = URL.createObjectURL(file);
+    const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pendingBlobsRef.current.add(blobUrl);
+    editor
+      .chain()
+      .focus()
+      .insertContent({
+        type: "image",
+        attrs: { src: blobUrl, alt: file.name, title: file.name, assetId: tempId },
+      })
+      .run();
+    setImageUploading((n) => n + 1);
+    const patchNode = (patch: Record<string, unknown>) => {
+      const { state, view } = editor;
+      let tr = state.tr;
+      state.doc.descendants((node, pos) => {
+        if (node.type.name === "image" && node.attrs.assetId === tempId) {
+          tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...patch });
+          return false;
+        }
+      });
+      if (tr.docChanged) view.dispatch(tr);
+    };
+    try {
+      const asset = await uploadAsset(file, (percent) => patchNode({ progress: percent }));
+      patchNode({ src: withAssetToken(asset.url), assetId: asset.id, progress: null });
+      pendingBlobsRef.current.delete(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      // 上传失败 → 删掉占位图节点，避免留一张坏图
+      const { state, view } = editor;
+      let posFound = -1;
+      let sizeFound = 0;
+      state.doc.descendants((node, pos) => {
+        if (node.type.name === "image" && node.attrs.assetId === tempId) {
+          posFound = pos;
+          sizeFound = node.nodeSize;
+          return false;
+        }
+      });
+      if (posFound >= 0) view.dispatch(state.tr.delete(posFound, posFound + sizeFound));
+      pendingBlobsRef.current.delete(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+      toast(err instanceof Error ? err.message : "图片上传失败", "error");
+    } finally {
+      setImageUploading((n) => n - 1);
+    }
+  }
+  uploadImageRef.current = uploadBodyImage;
+
+  // 卸载时清掉未回收的 blob URL（上传中途关弹窗等）
+  useEffect(() => {
+    const blobs = pendingBlobsRef.current;
+    return () => blobs.forEach((u) => URL.revokeObjectURL(u));
+  }, []);
 
   async function submit() {
     if (!title.trim()) {
       toast("标题不能为空", "error");
       return;
     }
-    if (!markdown.trim()) {
+    const plain = editor?.getText().trim() ?? "";
+    if (!plain) {
       toast("正文不能为空", "error");
+      return;
+    }
+    if (imageUploading > 0) {
+      toast("还有图片在上传，请稍候", "error");
       return;
     }
     setSaving(true);
     try {
       const cats = rowsToCategories(catRows);
-      // 首个类目走 import 参数；多于一条时再 replace-all patch 补齐全部（plan §22）。
+      // 首个类目走 import 参数；多于一条时再 replace-all patch 补齐全部。
       const res = await importReference({
         title: title.trim(),
-        markdown,
+        content_json: JSON.stringify(editor!.getJSON()),
+        content_html: editor!.getHTML(),
+        plain_text: plain,
         category: cats[0]?.category ?? null,
         question_texts: cats[0]?.question_texts ?? null,
         source_url: sourceUrl.trim() || null,
@@ -1064,15 +1168,72 @@ function ImportModal({
             <input style={fieldStyle} value={platform} onChange={(e) => setPlatform(e.target.value)} placeholder="如 知乎 / 公众号" />
           </label>
         </div>
-        <label style={fieldColumn}>
-          <span style={fieldLabelText}>正文（Markdown）</span>
-          <textarea
-            style={{ ...fieldStyle, height: 240, padding: 10, resize: "vertical", lineHeight: 1.6 }}
-            value={markdown}
-            onChange={(e) => setMarkdown(e.target.value)}
-            placeholder="粘贴 Markdown 正文…"
+        <div style={fieldColumn}>
+          <span style={fieldLabelText}>
+            正文（可直接从网页复制整篇粘贴；截图 / 拖拽 / 「插入图片」上传本地图）
+          </span>
+          <div
+            style={{
+              border: "1px solid var(--hair-2, var(--hair))",
+              borderRadius: 10,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                gap: 4,
+                alignItems: "center",
+                padding: "6px 8px",
+                borderBottom: "1px solid var(--hair)",
+                background: "var(--surface-2, transparent)",
+                flexWrap: "wrap",
+              }}
+            >
+              <button
+                type="button"
+                className="secondaryButton"
+                style={pillBtn}
+                disabled={!editor}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImageIcon size={13} /> 插入图片
+              </button>
+              <span style={{ width: 1, height: 18, background: "var(--hair)", margin: "0 2px" }} />
+              <button type="button" className="secondaryButton" style={pillBtn} disabled={!editor} title="加粗" onClick={() => editor?.chain().focus().toggleBold().run()}>
+                <Bold size={13} />
+              </button>
+              <button type="button" className="secondaryButton" style={pillBtn} disabled={!editor} title="斜体" onClick={() => editor?.chain().focus().toggleItalic().run()}>
+                <Italic size={13} />
+              </button>
+              <button type="button" className="secondaryButton" style={pillBtn} disabled={!editor} title="二级标题" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}>
+                <Heading2 size={13} />
+              </button>
+              <button type="button" className="secondaryButton" style={pillBtn} disabled={!editor} title="无序列表" onClick={() => editor?.chain().focus().toggleBulletList().run()}>
+                <List size={13} />
+              </button>
+              {imageUploading > 0 && (
+                <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--fg-3)" }}>
+                  图片上传中…
+                </span>
+              )}
+            </div>
+            <div className="paper-scope" style={{ maxHeight: 300, overflow: "auto", padding: 12 }}>
+              <EditorContent editor={editor} />
+            </div>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              Array.from(e.target.files ?? []).forEach((f) => uploadImageRef.current(f));
+              e.currentTarget.value = "";
+            }}
           />
-        </label>
+        </div>
       </div>
     </Modal>
   );

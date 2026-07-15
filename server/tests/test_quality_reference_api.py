@@ -227,6 +227,55 @@ def test_adopt_then_patch_multi_category_and_list_filter(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_import_from_content_json_preserves_body_and_dedups(monkeypatch):
+    """新路径：Tiptap 编辑器直出 content_json/html/plain_text 直接入库；查重按 plain_text。"""
+    app_ctx = build_test_app(monkeypatch)
+    try:
+        c = app_ctx.client
+        content_json = (
+            '{"type":"doc","content":['
+            '{"type":"paragraph","content":[{"type":"text","text":"外部好文正文"}]},'
+            '{"type":"image","attrs":{"src":"https://img.example.com/a.png","alt":"图"}}]}'
+        )
+        body = {
+            "title": "带图外部文章",
+            "content_json": content_json,
+            "content_html": '<p>外部好文正文</p><img src="https://img.example.com/a.png">',
+            "plain_text": "外部好文正文",
+            "category": "通用",
+        }
+        r = c.post("/api/quality-reference/import", json=body)
+        assert r.status_code == 200, r.text
+        rid = r.json()["reference"]["id"]
+
+        d = c.get(f"/api/quality-reference/{rid}")
+        assert d.status_code == 200
+        # content_json 原样保留（含 image 节点），plain_text 用编辑器直出
+        assert '"type":"image"' in d.json()["content_json"]
+        assert d.json()["plain_text"] == "外部好文正文"
+
+        # 同 title+plain_text 再录一次 → content_hash 幂等命中已有那条
+        r2 = c.post("/api/quality-reference/import", json=body)
+        assert r2.status_code == 200
+        assert r2.json()["reference"]["id"] == rid
+    finally:
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
+def test_import_requires_content_json_or_markdown(monkeypatch):
+    """两条正文路径都不给 → 400（命名异常，非 500）。"""
+    app_ctx = build_test_app(monkeypatch)
+    try:
+        r = app_ctx.client.post(
+            "/api/quality-reference/import", json={"title": "空正文", "category": "通用"}
+        )
+        assert r.status_code == 400
+    finally:
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
 def test_category_questions_maps_active_pool_questions(monkeypatch):
     """category → 活跃问题词映射：去重、排除 source_active=False、按类型分组。"""
     app_ctx = build_test_app(monkeypatch)

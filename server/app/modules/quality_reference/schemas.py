@@ -22,7 +22,15 @@ class AdoptRequest(BaseModel):
 
 class ImportRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
-    markdown: str = Field(min_length=1)
+    # 正文两条路径（二选一）：
+    # - 新：content_json（Tiptap 编辑器直出，含图片节点）+ content_html + plain_text
+    # - 旧：markdown（向后兼容，后端 markdown→tiptap 转换，不含图片）
+    content_json: str | None = (
+        None  # 序列化后的 Tiptap doc（前端 JSON.stringify(editor.getJSON())）
+    )
+    content_html: str | None = None
+    plain_text: str | None = None
+    markdown: str | None = Field(default=None, min_length=1)
     category: str | None = Field(default=None, max_length=200)
     question_texts: list | None = None  # 单值 category 下的问题词（多类型走后续 patch replace-all）
     source_url: str | None = Field(default=None, max_length=1000)

@@ -45,7 +45,10 @@ export const adoptReference = (b: { article_id: number; category?: string | null
 
 export const importReference = (b: {
   title: string;
-  markdown: string;
+  // Tiptap 编辑器直出三份并行正文（含图片节点）。
+  content_json: string; // JSON.stringify(editor.getJSON())
+  content_html: string;
+  plain_text: string;
   category?: string | null;
   question_texts?: string[] | null; // 单值 category 下的问题词（多类型走后续 patch replace-all）
   source_url?: string | null;
