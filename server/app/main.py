@@ -80,6 +80,7 @@ from server.app.modules.mcp_catalog.router import router as mcp_catalog_router
 from server.app.modules.performance.router import router as performance_router
 from server.app.modules.pipelines.router import router as pipelines_router
 from server.app.modules.prompt_templates.router import router as prompt_templates_router
+from server.app.modules.quality_reference.mcp_router import quality_reference_mcp_router
 from server.app.modules.quality_reference.router import quality_reference_router
 from server.app.modules.report.router import report_mcp_router
 from server.app.modules.report.router import router as report_router
@@ -293,6 +294,13 @@ def create_app() -> FastAPI:
         performance_router,
         prefix="/api",
         tags=["performance"],
+    )
+    # quality_reference MCP 端点：GET /pick + POST /articles/{id}/adversarial-score
+    # （与用户 JWT 的 quality_reference_router 是两个独立 router 实例，同挂 /api，路径不重叠）
+    app.include_router(
+        quality_reference_mcp_router,
+        prefix="/api",
+        tags=["quality-reference-mcp"],
     )
 
     # 注册 API 路由模块（全部需要 JWT cookie 鉴权）

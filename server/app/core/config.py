@@ -205,6 +205,10 @@ class Settings(BaseSettings):
     secret_key: str = ""  # GEO_SECRET_KEY，单密钥
     secret_keys: str = ""  # GEO_SECRET_KEYS，逗号分隔多密钥（轮换；非空时优先于 secret_key）
 
+    # 对抗评审质量门：quality-reference pick 默认挑几条参考 + 单条正文截断长度
+    adversarial_topk: int = 3  # GEO_ADVERSARIAL_TOPK
+    adversarial_ref_truncate_chars: int = 4000  # GEO_ADVERSARIAL_REF_TRUNCATE_CHARS
+
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env", extra="ignore")
 
 
