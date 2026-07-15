@@ -5,9 +5,11 @@ import {
   Download,
   ExternalLink,
   Eye,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
+  Trash2,
 } from "lucide-react";
 import { useToast } from "../../components/Toast";
 import { Modal } from "../../components/Modal";
@@ -23,6 +25,7 @@ import {
   patchReference,
   qualityReferenceStats,
   referenceCategories,
+  type CategoryAssoc,
   type CategoryOriginStat,
   type QualityReference,
   type QualitySimilar,
@@ -34,6 +37,124 @@ type ActiveFilter = "active" | "inactive" | "all";
 
 function originLabel(origin: string): string {
   return origin === "external" ? "站外" : "站内";
+}
+
+// ── 多类型编辑：UI 行 <-> 后端 categories replace-all 载荷 ─────────────────────────
+// 一行 = 一个问题类型 + 该类型下的问题词（单行输入，多个用逗号/顿号分隔）。
+interface CatRow {
+  category: string;
+  questionTexts: string;
+}
+
+function splitTexts(s: string): string[] {
+  return s
+    .split(/[,，、\n]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+// UI 行 → PATCH/import 载荷（跳过空类目；问题词空数组归一为 null）。
+function rowsToCategories(rows: CatRow[]): CategoryAssoc[] {
+  const out: CategoryAssoc[] = [];
+  for (const r of rows) {
+    const category = r.category.trim();
+    if (!category) continue;
+    const texts = splitTexts(r.questionTexts);
+    out.push({ category, question_texts: texts.length ? texts : null });
+  }
+  return out;
+}
+
+// 后端 categories → UI 行（问题词用顿号回显，与 splitTexts 往返一致）。
+function categoriesToRows(cats: CategoryAssoc[]): CatRow[] {
+  return cats.map((c) => ({ category: c.category, questionTexts: (c.question_texts ?? []).join("、") }));
+}
+
+// 只读展示：类型标签集（问题词挂 title 悬浮 + ·N 计数徽标）。
+function CategoryTags({ items }: { items: CategoryAssoc[] }) {
+  if (!items || items.length === 0) return <span style={mutedStyle}>（通用）</span>;
+  return (
+    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4 }}>
+      {items.map((c) => {
+        const n = c.question_texts?.length ?? 0;
+        return (
+          <span
+            key={c.category}
+            className="badge"
+            title={n > 0 ? (c.question_texts as string[]).join("、") : undefined}
+            style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+          >
+            {c.category}
+            {n > 0 && <span style={{ opacity: 0.6, fontSize: 10.5 }}>·{n}</span>}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// 可增删的多类型行编辑器（采纳 / 录入 / 详情编辑共用）。onChange 会把整份 rows 交回上层。
+function CategoryRowsEditor({
+  rows,
+  setRows,
+  categories,
+}: {
+  rows: CatRow[];
+  setRows: (rows: CatRow[]) => void;
+  categories: string[];
+}) {
+  const update = (i: number, patch: Partial<CatRow>) =>
+    setRows(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const remove = (i: number) => setRows(rows.filter((_, idx) => idx !== i));
+  const add = () => setRows([...rows, { category: "", questionTexts: "" }]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {rows.length === 0 && (
+        <p style={{ fontSize: 11.5, color: "var(--fg-3)", margin: 0 }}>
+          未添加任何类型 = 通用兜底池（判分选参考时作通用参考）。
+        </p>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select
+            style={{ ...fieldStyle, flex: "0 0 180px", height: 34 }}
+            value={r.category}
+            onChange={(e) => update(i, { category: e.target.value })}
+          >
+            <option value="">（选择类型）</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+            {/* 当前值不在下拉候选（历史/自由值）时补一个 option 保住选中不丢 */}
+            {r.category && !categories.includes(r.category) && (
+              <option value={r.category}>{r.category}</option>
+            )}
+          </select>
+          <input
+            style={{ ...fieldStyle, flex: 1, height: 34 }}
+            value={r.questionTexts}
+            placeholder="问题词（可空，多个用逗号分隔）"
+            onChange={(e) => update(i, { questionTexts: e.target.value })}
+          />
+          <button
+            type="button"
+            className="secondaryButton"
+            style={pillBtn}
+            onClick={() => remove(i)}
+            aria-label="删除该类型"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      ))}
+      <button type="button" className="secondaryButton" style={{ ...pillBtn, alignSelf: "flex-start" }} onClick={add}>
+        <Plus size={13} /> 添加类型
+      </button>
+    </div>
+  );
 }
 
 // ── 只读渲染器：详情抽屉里用不可编辑的 Tiptap 渲染三份正文之一（content_json）──────────
@@ -256,7 +377,7 @@ export function QualityReferenceWorkspace() {
                       </span>
                     </td>
                     <td style={tdStyle}>
-                      <span style={r.category ? undefined : mutedStyle}>{r.category ?? "（通用）"}</span>
+                      <CategoryTags items={r.categories} />
                     </td>
                     <td style={tdStyle}>
                       {r.source_url ? (
@@ -300,7 +421,14 @@ export function QualityReferenceWorkspace() {
         )}
       </div>
 
-      {detailId != null && <ReferenceDetailModal refId={detailId} onClose={() => setDetailId(null)} />}
+      {detailId != null && (
+        <ReferenceDetailModal
+          refId={detailId}
+          categories={categories}
+          onClose={() => setDetailId(null)}
+          onSaved={() => void load()}
+        />
+      )}
       {adoptOpen && (
         <AdoptModal
           categories={categories}
@@ -325,11 +453,24 @@ export function QualityReferenceWorkspace() {
   );
 }
 
-// ── 详情抽屉（只读 Tiptap）────────────────────────────────────────────────────
-function ReferenceDetailModal({ refId, onClose }: { refId: number; onClose: () => void }) {
+// ── 详情抽屉（只读 Tiptap）+ 类型关联编辑（replace-all patch）─────────────────────
+function ReferenceDetailModal({
+  refId,
+  categories,
+  onClose,
+  onSaved,
+}: {
+  refId: number;
+  categories: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const { toast } = useToast();
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof getReference>> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [rows, setRows] = useState<CatRow[]>([]);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -351,6 +492,29 @@ function ReferenceDetailModal({ refId, onClose }: { refId: number; onClose: () =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refId]);
 
+  function beginEdit() {
+    if (!detail) return;
+    setRows(categoriesToRows(detail.categories));
+    setEditing(true);
+  }
+
+  async function saveCategories() {
+    setSaving(true);
+    try {
+      // 整体 replace-all：编辑器里的行就是最终关联（空列表 = 清空 = 通用）。
+      await patchReference(refId, { categories: rowsToCategories(rows) });
+      const fresh = await getReference(refId);
+      setDetail(fresh);
+      setEditing(false);
+      toast("已更新类型关联", "success");
+      onSaved();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "保存失败", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Modal
       title={detail?.title ?? "参考详情"}
@@ -369,7 +533,14 @@ function ReferenceDetailModal({ refId, onClose }: { refId: number; onClose: () =
         <>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 12, fontSize: 12.5 }}>
             <span className={`badge ${detail.origin === "external" ? "running" : "succeeded"}`}>{originLabel(detail.origin)}</span>
-            <span style={{ color: "var(--fg-3)" }}>类目：{detail.category ?? "（通用）"}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--fg-3)" }}>
+              类目：<CategoryTags items={detail.categories} />
+              {!editing && (
+                <button type="button" className="secondaryButton" style={pillBtn} onClick={beginEdit}>
+                  <Pencil size={12} /> 编辑
+                </button>
+              )}
+            </span>
             {detail.origin === "external" ? (
               detail.source_url ? (
                 <a
@@ -394,6 +565,30 @@ function ReferenceDetailModal({ refId, onClose }: { refId: number; onClose: () =
               </a>
             ) : null}
           </div>
+          {editing && (
+            <div
+              style={{
+                border: "1px solid var(--hair)",
+                borderRadius: 10,
+                padding: 12,
+                marginBottom: 12,
+                background: "var(--surface-2, transparent)",
+              }}
+            >
+              <div style={{ fontSize: 12.5, color: "var(--fg-2)", marginBottom: 8 }}>
+                编辑问题类型关联（整体替换；清空 = 通用兜底池）：
+              </div>
+              <CategoryRowsEditor rows={rows} setRows={setRows} categories={categories} />
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button type="button" className="primaryButton" style={pillBtn} disabled={saving} onClick={() => void saveCategories()}>
+                  {saving ? "保存中…" : "保存"}
+                </button>
+                <button type="button" className="secondaryButton" style={pillBtn} disabled={saving} onClick={() => setEditing(false)}>
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
           <ReferenceReaderBody contentJson={detail.content_json} />
         </>
       )}
@@ -417,8 +612,13 @@ function AdoptModal({
   const [results, setResults] = useState<ArticleSummary[]>([]);
   const [searched, setSearched] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
-  // 文章无溯源类目时的补选：{articleId, category}
-  const [pick, setPick] = useState<{ articleId: number; title: string; category: string } | null>(null);
+  // 采纳前的类型关联编辑：预填文章溯源类目（有则一行），可加多条；edited 决定是否发 replace-all patch。
+  const [pick, setPick] = useState<{
+    articleId: number;
+    title: string;
+    rows: CatRow[];
+    edited: boolean;
+  } | null>(null);
 
   async function runSearch() {
     const q = query.trim();
@@ -444,13 +644,12 @@ function AdoptModal({
   async function beginAdopt(articleId: number) {
     setBusyId(articleId);
     try {
-      const full = await getArticle(articleId); // 采纳前取详情读 source_question_category
+      const full = await getArticle(articleId); // 采纳前取详情读溯源类目 / 问题词预填编辑器
       const cat = full.source_question_category?.trim();
-      if (cat) {
-        await finishAdopt(articleId, null); // 有溯源类目 → 后端自动用文章类目
-      } else {
-        setPick({ articleId, title: full.title, category: "" }); // 无 → 弹补选
-      }
+      const initialRows: CatRow[] = cat
+        ? [{ category: cat, questionTexts: (full.source_question_texts ?? []).join("、") }]
+        : [];
+      setPick({ articleId, title: full.title, rows: initialRows, edited: false });
     } catch (err) {
       toast(err instanceof Error ? err.message : "采纳失败", "error");
     } finally {
@@ -458,9 +657,17 @@ function AdoptModal({
     }
   }
 
-  async function finishAdopt(articleId: number, category: string | null) {
+  async function confirmAdopt() {
+    if (!pick) return;
+    const { articleId, rows, edited } = pick;
+    const cats = rowsToCategories(rows);
+    // 单值 fallback 交后端在「新插入且无溯源类目」时兜底关联；有溯源类目时后端忽略它。
+    const fallback = cats[0]?.category ?? null;
+    setPick(null);
     try {
-      await adoptReference({ article_id: articleId, category: category || null });
+      const ref = await adoptReference({ article_id: articleId, category: fallback });
+      // 仅当用户动过编辑器才 replace-all：未动 = 尊重后端自动关联（含 dup 复活不动关联）。
+      if (edited) await patchReference(ref.id, { categories: cats });
       toast("已采纳到高质量库", "success");
       onDone();
     } catch (err) {
@@ -509,33 +716,18 @@ function AdoptModal({
           }}
         >
           <div style={{ fontSize: 12.5, color: "var(--fg)", marginBottom: 8 }}>
-            「{pick.title}」无溯源类目，可选填一个类目（留空 = 通用兜底池）：
+            为「{pick.title}」设置问题类型关联（可加多条；不填 = 通用兜底池）：
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <select
-              style={{ ...fieldStyle, flex: 1 }}
-              value={pick.category}
-              onChange={(e) => setPick({ ...pick, category: e.target.value })}
-            >
-              <option value="">（不填 / 通用）</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="primaryButton"
-              onClick={() => {
-                const { articleId, category } = pick;
-                setPick(null);
-                void finishAdopt(articleId, category || null);
-              }}
-            >
+          <CategoryRowsEditor
+            rows={pick.rows}
+            setRows={(rows) => setPick({ ...pick, rows, edited: true })}
+            categories={categories}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button type="button" className="primaryButton" style={pillBtn} onClick={() => void confirmAdopt()}>
               确认采纳
             </button>
-            <button type="button" className="secondaryButton" onClick={() => setPick(null)}>
+            <button type="button" className="secondaryButton" style={pillBtn} onClick={() => setPick(null)}>
               取消
             </button>
           </div>
@@ -597,7 +789,7 @@ function ImportModal({
 }) {
   const { toast } = useToast();
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("");
+  const [catRows, setCatRows] = useState<CatRow[]>([]);
   const [markdown, setMarkdown] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [platform, setPlatform] = useState("");
@@ -616,13 +808,19 @@ function ImportModal({
     }
     setSaving(true);
     try {
+      const cats = rowsToCategories(catRows);
+      // 首个类目走 import 参数；多于一条时再 replace-all patch 补齐全部（plan §22）。
       const res = await importReference({
         title: title.trim(),
         markdown,
-        category: category || null,
+        category: cats[0]?.category ?? null,
+        question_texts: cats[0]?.question_texts ?? null,
         source_url: sourceUrl.trim() || null,
         platform: platform.trim() || null,
       });
+      if (cats.length > 1) {
+        await patchReference(res.reference.id, { categories: cats });
+      }
       if (res.similar.length > 0) {
         setSimilar(res.similar); // 已入库，仅软提示
       } else {
@@ -684,17 +882,10 @@ function ImportModal({
           <span style={fieldLabelText}>标题</span>
           <input style={fieldStyle} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="外部文章标题" />
         </label>
-        <label style={fieldColumn}>
-          <span style={fieldLabelText}>类目（可空 = 通用兜底池）</span>
-          <select style={fieldStyle} value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="">（不填 / 通用）</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div style={fieldColumn}>
+          <span style={fieldLabelText}>问题类型关联（可加多条；不填 = 通用兜底池）</span>
+          <CategoryRowsEditor rows={catRows} setRows={setCatRows} categories={categories} />
+        </div>
         <div style={{ display: "flex", gap: 12 }}>
           <label style={{ ...fieldColumn, flex: 1 }}>
             <span style={fieldLabelText}>来源链接（可空）</span>
