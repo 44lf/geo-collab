@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from server.app.core import config as core_config
+from server.app.modules.mcp_catalog.connect_router import MCP_TOOLS_COUNT
 from server.tests.utils import build_test_app
 
 pytestmark = pytest.mark.mysql
@@ -23,7 +24,9 @@ def test_status_returns_configured_true_when_token_set(monkeypatch):
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["configured"] is True
-        assert body["tools_count"] == 27
+        # 实时内省数（len(tools)）应与 MCP_TOOLS_COUNT 常量同步；绑定常量避免此前
+        # 硬编码 27 那样的 stale drift（工具增到 29/30 后该断言一直静默红、CI 又禁跑）。
+        assert body["tools_count"] == MCP_TOOLS_COUNT
         assert body["suggested_base_url"].startswith("http")
         assert not body["suggested_base_url"].endswith("/")
     finally:

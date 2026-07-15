@@ -275,6 +275,10 @@ def save_article_from_mcp(
         article.source_agent_name = "loop"
         article.source_template_name = tpl.name
         article.source_template_id = tpl.id
+        # 对抗评审质量门 Task 7（spec §13.1 决策）：本期只存单题溯源，不加
+        # question_item_ids 参数、不改 orchestrator——直接快照所查得的 QuestionItem。
+        article.source_question_category = item.category
+        article.source_question_texts = [item.question_text] if item.question_text else None
         if payload.model_label:
             existing = dict(article.metrics or {})
             existing["writer_model"] = payload.model_label

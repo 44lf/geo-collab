@@ -114,6 +114,8 @@ class ArticleListRead(BaseModel):
     # 过线 / 老数据 = 纯数字 "84"；没过线（score_total < pass_line）= "65 _ 80"（前端拆成 65 / 80 标红）。
     # 仅内容列表卡片展示用，不做查询过滤。
     auto_review_score: str | None = None
+    # 对抗判分（N 次平均，verifier skill 后置写；纯 advisory，不做闸）。手动/scheme/pipeline 文章为 None。
+    adversarial_score: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -139,6 +141,10 @@ class ArticleRead(BaseModel):
     source_agent_name: str | None = None
     source_template_name: str | None = None
     source_template_id: int | None = None
+    # 生文溯源（仅 /goal MCP save 填；scheme/pipeline 留 None）：verifier 的 get_article 读
+    # source_question_category 去调 pick_quality_references。
+    source_question_category: str | None = None
+    source_question_texts: list | None = None
     can_edit: bool = True  # 属主/admin 为 True；他人只读分享时 False（驱动前端只读降级）
     created_at: datetime
     updated_at: datetime
@@ -259,6 +265,8 @@ def to_article_read(
         source_agent_name=article.source_agent_name,
         source_template_name=article.source_template_name,
         source_template_id=article.source_template_id,
+        source_question_category=article.source_question_category,
+        source_question_texts=article.source_question_texts,
         can_edit=can_edit,
     )
 

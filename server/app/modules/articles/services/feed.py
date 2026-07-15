@@ -50,6 +50,7 @@ def _list_summary_load_options():
             Article.source_agent_name,
             Article.source_template_name,
             Article.source_template_id,
+            Article.adversarial_score,
             Article.created_at,
             Article.updated_at,
         ),
@@ -201,6 +202,7 @@ def serialize_article_summaries(db: Session, articles: list[Article]) -> dict[in
             source_template_name=a.source_template_name,
             source_template_id=a.source_template_id,
             auto_review_score=score_map.get(a.id),
+            adversarial_score=a.adversarial_score,
             created_at=a.created_at,
             updated_at=a.updated_at,
         )

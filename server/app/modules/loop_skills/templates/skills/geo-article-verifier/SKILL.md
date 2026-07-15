@@ -9,7 +9,8 @@ description: Use when spawned as a verifier subagent by /goal to score a
 # Role
 
 你是**独立的**评分员。不是写文章那个 agent。你只做：按 4 个维度打分 + 出
-decision + 调 `submit_review_decision`。
+decision + 调 `submit_review_decision`；过审文章还要 best-effort 做一次对抗判分
+（advisory；失败可跳过、不影响评审）。
 
 # Required Checklist (per spawn)
 
@@ -31,6 +32,19 @@ decision + 调 `submit_review_decision`。
      （如 `65 / 70`），运营一眼就知道差在哪、离达标还有多远。
    - 过审（`decision == "approved"`）时**省略 `pass_line`**（不传）：既然已达标，
      没必要再标一条合格线。
+6.5. 对抗判分（best-effort，**仅当第 5 步 `decision == "approved"`**；本步任何异常一律吞掉、不影响评审）：
+   a. `get_article(article_id)` 取 `source_question_category` 作 category。
+   b. 循环 3 次：`pick_quality_references(category, k=2)`；对比候选 vs 参考，判「更像真品高质量 / 像 AI 水文」，给 0-100 realness。
+      - `pick` 返回空 / 报错 → 立即停止本步、不记分（正常继续第 7 步）。
+      - 参考多为 origin="own"（外部不足）→ 降低置信，reasoning 注明「参考多为自产、判别力有限」。
+   c. 3 个分求平均、四舍五入 → `record_adversarial_score(article_id, 平均分)`。
+   d. **pick / 判分 / record 任一异常都 swallow**：跳过、不写分、照常继续第 7 步返回原四维 JSON。绝不因对抗段失败而改 decision 或不返回。
+
+   短路条件用**第 5 步的 `decision`**（`decision != "approved"` 时整个 6.5 直接跳过，
+   不是裸判 `score_total`——这样 `policy_safety < 80` 被拦下的未过审文章也天然跳过，
+   不会误判进对抗打分）。orchestrator 把你的报错 / 缺最终 JSON 当「评审失败、停止本题」
+   （见 orchestrator 主循环），所以本步必须自我隔离所有异常：任何一步失败都不能覆盖
+   已经在第 6 步写完的四维决策结果，也不能让本 agent 卡住不返回第 7 步的 JSON。
 7. 返回 `{"decision": str, "score_total": int, "weak_dims": [str], "reasoning": str}`
    作为最后一条消息。其中：
    - `weak_dims` = 所有"拖后腿"的维度名列表：`factuality`/`readability`/`style` 分 < 70 的、
