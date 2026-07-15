@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { useToast } from "../../components/Toast";
 import { Modal } from "../../components/Modal";
@@ -25,6 +26,7 @@ import {
   patchReference,
   qualityReferenceStats,
   referenceCategories,
+  referenceCategoryQuestions,
   type CategoryAssoc,
   type CategoryOriginStat,
   type QualityReference,
@@ -45,14 +47,7 @@ function originLabel(origin: string): string {
 // 一行 = 一个问题类型 + 该类型下的问题词（单行输入，多个用逗号/顿号分隔）。
 interface CatRow {
   category: string;
-  questionTexts: string;
-}
-
-function splitTexts(s: string): string[] {
-  return s
-    .split(/[,，、\n]/)
-    .map((t) => t.trim())
-    .filter(Boolean);
+  questionTexts: string[]; // 该类型下已选的问题词（多选，可空）
 }
 
 // UI 行 → PATCH/import 载荷（跳过空类目；问题词空数组归一为 null）。
@@ -61,15 +56,14 @@ function rowsToCategories(rows: CatRow[]): CategoryAssoc[] {
   for (const r of rows) {
     const category = r.category.trim();
     if (!category) continue;
-    const texts = splitTexts(r.questionTexts);
-    out.push({ category, question_texts: texts.length ? texts : null });
+    out.push({ category, question_texts: r.questionTexts.length ? r.questionTexts : null });
   }
   return out;
 }
 
-// 后端 categories → UI 行（问题词用顿号回显，与 splitTexts 往返一致）。
+// 后端 categories → UI 行。
 function categoriesToRows(cats: CategoryAssoc[]): CatRow[] {
-  return cats.map((c) => ({ category: c.category, questionTexts: (c.question_texts ?? []).join("、") }));
+  return cats.map((c) => ({ category: c.category, questionTexts: c.question_texts ?? [] }));
 }
 
 // 只读展示：类型标签集（问题词挂 title 悬浮 + ·N 计数徽标）。
@@ -96,19 +90,28 @@ function CategoryTags({ items }: { items: CategoryAssoc[] }) {
 }
 
 // 可增删的多类型行编辑器（采纳 / 录入 / 详情编辑共用）。onChange 会把整份 rows 交回上层。
+// 问题词：选完类型后按该类型问题池的问题词填充下拉，选中即追加标签，可空、可多选。
 function CategoryRowsEditor({
   rows,
   setRows,
   categories,
+  categoryQuestions,
 }: {
   rows: CatRow[];
   setRows: (rows: CatRow[]) => void;
   categories: string[];
+  categoryQuestions: Record<string, string[]>;
 }) {
   const update = (i: number, patch: Partial<CatRow>) =>
     setRows(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const remove = (i: number) => setRows(rows.filter((_, idx) => idx !== i));
-  const add = () => setRows([...rows, { category: "", questionTexts: "" }]);
+  const add = () => setRows([...rows, { category: "", questionTexts: [] }]);
+  // 改类型 → 清空该行已选问题词（问题词是按类型给的，跨类型残留会语义错乱）。
+  const changeCategory = (i: number, category: string) => update(i, { category, questionTexts: [] });
+  const addQuestion = (i: number, q: string) =>
+    update(i, { questionTexts: [...rows[i].questionTexts, q] });
+  const removeQuestion = (i: number, q: string) =>
+    update(i, { questionTexts: rows[i].questionTexts.filter((x) => x !== q) });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -117,41 +120,103 @@ function CategoryRowsEditor({
           未添加任何类型 = 通用兜底池（判分选参考时作通用参考）。
         </p>
       )}
-      {rows.map((r, i) => (
-        <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <select
-            style={{ ...fieldStyle, flex: "0 0 180px", height: 34 }}
-            value={r.category}
-            onChange={(e) => update(i, { category: e.target.value })}
+      {rows.map((r, i) => {
+        // 下拉候选 = 该类型问题词池减去已选；空类型时禁用下拉。
+        const remaining = (categoryQuestions[r.category] ?? []).filter(
+          (q) => !r.questionTexts.includes(q),
+        );
+        return (
+          <div
+            key={i}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              border: "1px solid var(--hair)",
+              borderRadius: 8,
+              padding: 8,
+            }}
           >
-            <option value="">（选择类型）</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-            {/* 当前值不在下拉候选（历史/自由值）时补一个 option 保住选中不丢 */}
-            {r.category && !categories.includes(r.category) && (
-              <option value={r.category}>{r.category}</option>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <select
+                style={{ ...fieldStyle, flex: "0 0 180px", height: 34 }}
+                value={r.category}
+                onChange={(e) => changeCategory(i, e.target.value)}
+              >
+                <option value="">（选择类型）</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+                {/* 当前值不在下拉候选（历史/自由值）时补一个 option 保住选中不丢 */}
+                {r.category && !categories.includes(r.category) && (
+                  <option value={r.category}>{r.category}</option>
+                )}
+              </select>
+              <select
+                style={{ ...fieldStyle, flex: 1, height: 34 }}
+                value=""
+                disabled={!r.category}
+                onChange={(e) => {
+                  if (e.target.value) addQuestion(i, e.target.value);
+                }}
+              >
+                <option value="">
+                  {!r.category
+                    ? "先选类型"
+                    : remaining.length === 0
+                      ? "（无更多问题词，可空）"
+                      : "＋ 添加问题词（可空）"}
+                </option>
+                {remaining.map((q) => (
+                  <option key={q} value={q}>
+                    {q}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="secondaryButton"
+                style={pillBtn}
+                onClick={() => remove(i)}
+                aria-label="删除该类型"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+            {r.questionTexts.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {r.questionTexts.map((q) => (
+                  <span
+                    key={q}
+                    className="badge"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                  >
+                    {q}
+                    <button
+                      type="button"
+                      onClick={() => removeQuestion(i, q)}
+                      aria-label={`移除问题词 ${q}`}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "inherit",
+                        cursor: "pointer",
+                        padding: 0,
+                        display: "inline-flex",
+                        opacity: 0.6,
+                      }}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
             )}
-          </select>
-          <input
-            style={{ ...fieldStyle, flex: 1, height: 34 }}
-            value={r.questionTexts}
-            placeholder="问题词（可空，多个用逗号分隔）"
-            onChange={(e) => update(i, { questionTexts: e.target.value })}
-          />
-          <button
-            type="button"
-            className="secondaryButton"
-            style={pillBtn}
-            onClick={() => remove(i)}
-            aria-label="删除该类型"
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
-      ))}
+          </div>
+        );
+      })}
       <button type="button" className="secondaryButton" style={{ ...pillBtn, alignSelf: "flex-start" }} onClick={add}>
         <Plus size={13} /> 添加类型
       </button>
@@ -191,6 +256,7 @@ export function QualityReferenceWorkspace() {
   const [refs, setRefs] = useState<QualityReference[]>([]);
   const [stats, setStats] = useState<CategoryOriginStat[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
+  const [categoryQuestions, setCategoryQuestions] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(false);
 
   const [originFilter, setOriginFilter] = useState<OriginFilter>("all");
@@ -219,14 +285,16 @@ export function QualityReferenceWorkspace() {
       if (categoryFilter !== "all") q.category = categoryFilter;
       if (activeFilter !== "all") q.is_active = activeFilter === "active";
       if (search) q.q = search;
-      const [list, s, cats] = await Promise.all([
+      const [list, s, cats, catQs] = await Promise.all([
         listReferences(q),
         qualityReferenceStats(),
         referenceCategories(),
+        referenceCategoryQuestions(),
       ]);
       setRefs(list);
       setStats(s);
       setCategories(cats);
+      setCategoryQuestions(catQs);
     } catch (err) {
       toast(err instanceof Error ? err.message : "加载失败", "error");
     } finally {
@@ -505,6 +573,7 @@ export function QualityReferenceWorkspace() {
         <ReferenceDetailModal
           refId={detailId}
           categories={categories}
+          categoryQuestions={categoryQuestions}
           onClose={() => setDetailId(null)}
           onSaved={() => void load()}
         />
@@ -512,6 +581,7 @@ export function QualityReferenceWorkspace() {
       {adoptOpen && (
         <AdoptModal
           categories={categories}
+          categoryQuestions={categoryQuestions}
           onClose={() => setAdoptOpen(false)}
           onDone={() => {
             setAdoptOpen(false);
@@ -522,6 +592,7 @@ export function QualityReferenceWorkspace() {
       {importOpen && (
         <ImportModal
           categories={categories}
+          categoryQuestions={categoryQuestions}
           onClose={() => setImportOpen(false)}
           onDone={() => {
             setImportOpen(false);
@@ -537,11 +608,13 @@ export function QualityReferenceWorkspace() {
 function ReferenceDetailModal({
   refId,
   categories,
+  categoryQuestions,
   onClose,
   onSaved,
 }: {
   refId: number;
   categories: string[];
+  categoryQuestions: Record<string, string[]>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -658,7 +731,12 @@ function ReferenceDetailModal({
               <div style={{ fontSize: 12.5, color: "var(--fg-2)", marginBottom: 8 }}>
                 编辑问题类型关联（整体替换；清空 = 通用兜底池）：
               </div>
-              <CategoryRowsEditor rows={rows} setRows={setRows} categories={categories} />
+              <CategoryRowsEditor
+                rows={rows}
+                setRows={setRows}
+                categories={categories}
+                categoryQuestions={categoryQuestions}
+              />
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <button type="button" className="primaryButton" style={pillBtn} disabled={saving} onClick={() => void saveCategories()}>
                   {saving ? "保存中…" : "保存"}
@@ -679,10 +757,12 @@ function ReferenceDetailModal({
 // ── 采纳站内文章 ──────────────────────────────────────────────────────────────
 function AdoptModal({
   categories,
+  categoryQuestions,
   onClose,
   onDone,
 }: {
   categories: string[];
+  categoryQuestions: Record<string, string[]>;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -727,7 +807,7 @@ function AdoptModal({
       const full = await getArticle(articleId); // 采纳前取详情读溯源类目 / 问题词预填编辑器
       const cat = full.source_question_category?.trim();
       const initialRows: CatRow[] = cat
-        ? [{ category: cat, questionTexts: (full.source_question_texts ?? []).join("、") }]
+        ? [{ category: cat, questionTexts: full.source_question_texts ?? [] }]
         : [];
       setPick({ articleId, title: full.title, rows: initialRows, edited: false });
     } catch (err) {
@@ -802,6 +882,7 @@ function AdoptModal({
             rows={pick.rows}
             setRows={(rows) => setPick({ ...pick, rows, edited: true })}
             categories={categories}
+            categoryQuestions={categoryQuestions}
           />
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
             <button type="button" className="primaryButton" style={pillBtn} onClick={() => void confirmAdopt()}>
@@ -860,10 +941,12 @@ function AdoptModal({
 // ── 录入外部文章 ──────────────────────────────────────────────────────────────
 function ImportModal({
   categories,
+  categoryQuestions,
   onClose,
   onDone,
 }: {
   categories: string[];
+  categoryQuestions: Record<string, string[]>;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -964,7 +1047,12 @@ function ImportModal({
         </label>
         <div style={fieldColumn}>
           <span style={fieldLabelText}>问题类型关联（可加多条；不填 = 通用兜底池）</span>
-          <CategoryRowsEditor rows={catRows} setRows={setCatRows} categories={categories} />
+          <CategoryRowsEditor
+            rows={catRows}
+            setRows={setCatRows}
+            categories={categories}
+            categoryQuestions={categoryQuestions}
+          />
         </div>
         <div style={{ display: "flex", gap: 12 }}>
           <label style={{ ...fieldColumn, flex: 1 }}>

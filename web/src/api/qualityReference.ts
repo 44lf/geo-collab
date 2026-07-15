@@ -88,6 +88,10 @@ export const patchReference = (
 
 export const referenceCategories = () => api<string[]>("/api/quality-reference/categories");
 
+// category → 该类型在问题池里的问题词列表（问题词下拉按类型填充）。
+export const referenceCategoryQuestions = () =>
+  api<Record<string, string[]>>("/api/quality-reference/category-questions");
+
 // 配比告警：按类目聚合 external/own 计数（不用列表数组长度算——列表默认只回 50 条会失真）。
 export const qualityReferenceStats = () =>
   api<CategoryOriginStat[]>("/api/quality-reference/stats");

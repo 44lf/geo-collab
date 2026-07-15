@@ -227,6 +227,48 @@ def test_adopt_then_patch_multi_category_and_list_filter(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_category_questions_maps_active_pool_questions(monkeypatch):
+    """category → 活跃问题词映射：去重、排除 source_active=False、按类型分组。"""
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        pool = QuestionPool(user_id=1, name="池")
+        db.add(pool)
+        db.flush()
+        db.add_all(
+            [
+                QuestionItem(
+                    pool_id=pool.id, record_id="r1", category="餐厅", question_text="怎么开餐厅"
+                ),
+                QuestionItem(
+                    pool_id=pool.id, record_id="r2", category="餐厅", question_text="餐厅选址"
+                ),
+                QuestionItem(
+                    pool_id=pool.id, record_id="r3", category="酒店", question_text="酒店攻略"
+                ),
+                QuestionItem(
+                    pool_id=pool.id,
+                    record_id="r4",
+                    category="餐厅",
+                    question_text="已下架问题",
+                    source_active=False,  # 飞书已删 → 不该出现在下拉
+                ),
+            ]
+        )
+        db.commit()
+
+        r = app_ctx.client.get("/api/quality-reference/category-questions")
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body["餐厅"]) == {"怎么开餐厅", "餐厅选址"}
+        assert body["酒店"] == ["酒店攻略"]
+        assert "已下架问题" not in body.get("餐厅", [])
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
 def test_list_title_search_and_pagination(monkeypatch):
     """标题关键词 q 只命中含该子串的标题；skip/limit 偏移分页不重叠、按 created_at desc。"""
     app_ctx = build_test_app(monkeypatch)

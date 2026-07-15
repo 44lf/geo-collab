@@ -87,6 +87,31 @@ def categories(db: Session = Depends(get_db), user=Depends(get_current_user)):
     return sorted({*q, *r})
 
 
+@quality_reference_router.get("/category-questions", response_model=dict[str, list[str]])
+def category_questions(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """category → 该类型在问题池里的问题词列表（去重排序），供前端「问题词」下拉按类型填充。
+
+    源 = QuestionItem（question_text 非空 + source_active=True 即飞书现存），跨全部问题池聚合，
+    与 /categories 同源。某类型无活跃问题词则不出现在返回 map 里（前端该类型下拉为空、问题词可留空）。
+    """
+    rows = db.execute(
+        select(QuestionItem.category, QuestionItem.question_text).where(
+            QuestionItem.category.isnot(None),
+            QuestionItem.question_text.isnot(None),
+            QuestionItem.source_active == True,  # noqa: E712
+        )
+    ).all()
+    mapping: dict[str, list[str]] = {}
+    for cat, qt in rows:
+        text = (qt or "").strip()
+        if not text:
+            continue
+        bucket = mapping.setdefault(cat, [])
+        if text not in bucket:
+            bucket.append(text)
+    return {c: sorted(v) for c, v in mapping.items()}
+
+
 @quality_reference_router.get("/stats", response_model=list[dict])
 def stats(db: Session = Depends(get_db), user=Depends(get_current_user)):
     # 按类目聚合 external/own 计数 → 前端显配比 + 「某类目无 external」告警（命门风险的可见化缓解）
