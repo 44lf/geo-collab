@@ -57,13 +57,14 @@ def list_refs(
     origin: str | None = None,
     category: str | None = None,
     is_active: bool | None = None,
+    q: str | None = None,  # 标题关键词搜索
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
     return svc.list_references(
-        db, origin=origin, category=category, is_active=is_active, skip=skip, limit=limit
+        db, origin=origin, category=category, is_active=is_active, q=q, skip=skip, limit=limit
     )
 
 

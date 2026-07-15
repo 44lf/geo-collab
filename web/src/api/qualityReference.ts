@@ -56,9 +56,16 @@ export const importReference = (b: {
     body: JSON.stringify(b),
   });
 
-export const listReferences = (q: { origin?: string; category?: string; is_active?: boolean }) => {
+export const listReferences = (params: {
+  origin?: string;
+  category?: string;
+  is_active?: boolean;
+  q?: string; // 标题关键词搜索
+  skip?: number; // 偏移分页
+  limit?: number;
+}) => {
   const s = new URLSearchParams(
-    Object.entries(q)
+    Object.entries(params)
       .filter(([, v]) => v != null && v !== "")
       .map(([k, v]) => [k, String(v)]),
   );

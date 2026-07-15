@@ -35,6 +35,8 @@ import type { ArticleSummary } from "../../types";
 type OriginFilter = "all" | "own" | "external";
 type ActiveFilter = "active" | "inactive" | "all";
 
+const PAGE_SIZE = 20; // 偏移分页每页条数；返回 < PAGE_SIZE 即末页（后端不回 total）
+
 function originLabel(origin: string): string {
   return origin === "external" ? "站外" : "站内";
 }
@@ -194,6 +196,9 @@ export function QualityReferenceWorkspace() {
   const [originFilter, setOriginFilter] = useState<OriginFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [activeFilter, setActiveFilter] = useState<ActiveFilter>("active");
+  const [searchInput, setSearchInput] = useState(""); // 搜索框实时输入
+  const [search, setSearch] = useState(""); // 已提交生效的标题关键词
+  const [page, setPage] = useState(0); // 0-based 当前页
 
   const [detailId, setDetailId] = useState<number | null>(null);
   const [adoptOpen, setAdoptOpen] = useState(false);
@@ -202,10 +207,18 @@ export function QualityReferenceWorkspace() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const q: { origin?: string; category?: string; is_active?: boolean } = {};
+      const q: {
+        origin?: string;
+        category?: string;
+        is_active?: boolean;
+        q?: string;
+        skip?: number;
+        limit?: number;
+      } = { skip: page * PAGE_SIZE, limit: PAGE_SIZE };
       if (originFilter !== "all") q.origin = originFilter;
       if (categoryFilter !== "all") q.category = categoryFilter;
       if (activeFilter !== "all") q.is_active = activeFilter === "active";
+      if (search) q.q = search;
       const [list, s, cats] = await Promise.all([
         listReferences(q),
         qualityReferenceStats(),
@@ -219,11 +232,34 @@ export function QualityReferenceWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [originFilter, categoryFilter, activeFilter, toast]);
+  }, [originFilter, categoryFilter, activeFilter, search, page, toast]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 改过滤器 / 提交搜索都回到第 1 页（page 是 load 的依赖，setPage(0) 会触发重载）。
+  function changeOrigin(v: OriginFilter) {
+    setOriginFilter(v);
+    setPage(0);
+  }
+  function changeCategory(v: string) {
+    setCategoryFilter(v);
+    setPage(0);
+  }
+  function changeActive(v: ActiveFilter) {
+    setActiveFilter(v);
+    setPage(0);
+  }
+  function applySearch() {
+    setSearch(searchInput.trim());
+    setPage(0);
+  }
+  function clearSearch() {
+    setSearchInput("");
+    setSearch("");
+    setPage(0);
+  }
 
   async function takeDown(ref: QualityReference) {
     if (!window.confirm(`下架参考「${ref.title}」？下架后不再参与对抗判分选参考。`)) return;
@@ -311,11 +347,11 @@ export function QualityReferenceWorkspace() {
         )}
       </div>
 
-      {/* 过滤器 */}
+      {/* 过滤器 + 标题搜索 */}
       <div className="panel" style={{ marginBottom: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <label style={filterLabel}>
           来源
-          <select style={filterSelect} value={originFilter} onChange={(e) => setOriginFilter(e.target.value as OriginFilter)}>
+          <select style={filterSelect} value={originFilter} onChange={(e) => changeOrigin(e.target.value as OriginFilter)}>
             <option value="all">全部</option>
             <option value="own">站内（own）</option>
             <option value="external">站外（external）</option>
@@ -323,7 +359,7 @@ export function QualityReferenceWorkspace() {
         </label>
         <label style={filterLabel}>
           类目
-          <select style={filterSelect} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+          <select style={filterSelect} value={categoryFilter} onChange={(e) => changeCategory(e.target.value)}>
             <option value="all">全部</option>
             {categories.map((c) => (
               <option key={c} value={c}>
@@ -334,14 +370,33 @@ export function QualityReferenceWorkspace() {
         </label>
         <label style={filterLabel}>
           状态
-          <select style={filterSelect} value={activeFilter} onChange={(e) => setActiveFilter(e.target.value as ActiveFilter)}>
+          <select style={filterSelect} value={activeFilter} onChange={(e) => changeActive(e.target.value as ActiveFilter)}>
             <option value="active">启用中</option>
             <option value="inactive">已下架</option>
             <option value="all">全部</option>
           </select>
         </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            style={{ ...filterSelect, width: 180 }}
+            value={searchInput}
+            placeholder="搜索标题…"
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applySearch();
+            }}
+          />
+          <button type="button" className="secondaryButton" style={pillBtn} onClick={applySearch}>
+            <Search size={13} /> 搜索
+          </button>
+          {search && (
+            <button type="button" className="secondaryButton" style={pillBtn} onClick={clearSearch}>
+              清除
+            </button>
+          )}
+        </div>
         <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--fg-3)" }}>
-          共 {refs.length} 条{refs.length >= 50 ? "（列表最多 50 条，请用过滤缩小范围）" : ""}
+          第 {page + 1} 页 · 本页 {refs.length} 条{search ? `（搜索「${search}」）` : ""}
         </span>
       </div>
 
@@ -420,6 +475,31 @@ export function QualityReferenceWorkspace() {
           </div>
         )}
       </div>
+
+      {/* 翻页：无 total，返回 < PAGE_SIZE 即末页 → 下一页禁用 */}
+      {(refs.length > 0 || page > 0) && (
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, marginTop: 12 }}>
+          <button
+            type="button"
+            className="secondaryButton"
+            style={pillBtn}
+            disabled={page === 0 || loading}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            上一页
+          </button>
+          <span style={{ fontSize: 12.5, color: "var(--fg-2)" }}>第 {page + 1} 页</span>
+          <button
+            type="button"
+            className="secondaryButton"
+            style={pillBtn}
+            disabled={refs.length < PAGE_SIZE || loading}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            下一页
+          </button>
+        </div>
+      )}
 
       {detailId != null && (
         <ReferenceDetailModal

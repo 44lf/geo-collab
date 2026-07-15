@@ -170,16 +170,31 @@ def import_external(
     return ref, similar
 
 
-def list_references(db, *, origin=None, category=None, is_active=None, skip=0, limit=50):
-    q = db.query(QualityReference)
+def list_references(db, *, origin=None, category=None, is_active=None, q=None, skip=0, limit=50):
+    """列表 + 标题关键词搜索（q）+ 偏移分页（skip/limit）。
+
+    q：标题子串匹配（LIKE，转义 % _ 避免用户输入被当通配符）。分页无 total——前端用
+    「返回条数 < limit 即末页」判尾页（curated 库规模有限，offset 分页足够，不引入计数开销）。
+    """
+    query = db.query(QualityReference)
     if origin is not None:
-        q = q.filter(QualityReference.origin == origin)
+        query = query.filter(QualityReference.origin == origin)
     if category is not None:
         # join 子表按 category 过滤（UNIQUE(reference_id,category) 保证至多一行、不产生重复）
-        q = q.join(QualityReferenceCategory).filter(QualityReferenceCategory.category == category)
+        query = query.join(QualityReferenceCategory).filter(
+            QualityReferenceCategory.category == category
+        )
     if is_active is not None:
-        q = q.filter(QualityReference.is_active == is_active)
-    return q.order_by(QualityReference.created_at.desc()).offset(skip).limit(min(limit, 200)).all()
+        query = query.filter(QualityReference.is_active == is_active)
+    if q and q.strip():
+        kw = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.filter(QualityReference.title.like(f"%{kw}%"))
+    return (
+        query.order_by(QualityReference.created_at.desc())
+        .offset(max(0, skip))
+        .limit(max(1, min(limit, 200)))
+        .all()
+    )
 
 
 def get_reference(db, ref_id):

@@ -227,6 +227,39 @@ def test_adopt_then_patch_multi_category_and_list_filter(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_list_title_search_and_pagination(monkeypatch):
+    """标题关键词 q 只命中含该子串的标题；skip/limit 偏移分页不重叠、按 created_at desc。"""
+    app_ctx = build_test_app(monkeypatch)
+    try:
+        c = app_ctx.client
+        for t in ("阿尔法指南", "贝塔攻略", "阿尔法进阶"):
+            r = c.post(
+                "/api/quality-reference/import",
+                json={"title": t, "markdown": f"{t}正文正文", "category": "通用"},
+            )
+            assert r.status_code == 200
+
+        # 标题搜索：只命中含「阿尔法」的两条，排除「贝塔攻略」
+        r = c.get("/api/quality-reference", params={"q": "阿尔法"})
+        assert r.status_code == 200
+        assert {row["title"] for row in r.json()} == {"阿尔法指南", "阿尔法进阶"}
+
+        # 分页：每页 1 条，skip 递增翻页，两页不重叠（共 3 条 → 第 3 页仍有 1 条）
+        p0 = c.get("/api/quality-reference", params={"limit": 1, "skip": 0})
+        p1 = c.get("/api/quality-reference", params={"limit": 1, "skip": 1})
+        assert len(p0.json()) == 1 and len(p1.json()) == 1
+        assert p0.json()[0]["id"] != p1.json()[0]["id"]
+
+        # 搜索 + 分页叠加：阿尔法两条里翻页仍只在命中集合内
+        s0 = c.get("/api/quality-reference", params={"q": "阿尔法", "limit": 1, "skip": 0})
+        s1 = c.get("/api/quality-reference", params={"q": "阿尔法", "limit": 1, "skip": 1})
+        got = {s0.json()[0]["title"], s1.json()[0]["title"]}
+        assert got == {"阿尔法指南", "阿尔法进阶"}
+    finally:
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
 def test_detail_source_article_deleted_flag(monkeypatch):
     app_ctx = build_test_app(monkeypatch)
     db = app_ctx.session_factory()
