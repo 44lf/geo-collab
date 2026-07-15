@@ -434,3 +434,10 @@ async def notify_review_card(
     if decision is not None:
         body["decision"] = decision
     return await _apost(f"/api/articles/{article_id}/review-card", json=body)
+
+
+@mcp.tool()
+async def record_adversarial_score(article_id: int, score: int) -> dict:
+    """把对抗判分（N 次求平均后的 0-100 整数）记到文章上。"""
+    r = await _apost(f"/api/articles/{article_id}/adversarial-score", json={"score": score})
+    return r.get("data", r)
