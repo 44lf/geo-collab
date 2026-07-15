@@ -47,6 +47,54 @@ def pick(
     return {"references": refs}
 
 
+class AdoptFromMcpPayload(BaseModel):
+    article_id: int
+    category: str | None = Field(default=None, max_length=200)  # 无溯源类目时回落关联
+    user_id: int = 1  # operator（Loop 身份）；tool 传 _OPERATOR_USER_ID，缺省回落 admin(1)
+
+
+@quality_reference_mcp_router.post(
+    "/quality-reference/adopt-from-mcp",
+    dependencies=[Depends(require_mcp_token)],
+)
+def adopt_from_mcp(
+    payload: AdoptFromMcpPayload,
+    db: Session = Depends(get_db),
+) -> dict:
+    """[MCP] 采纳一篇【已过人审(approved)】站内文章进高质量库当对抗判分参考。
+
+    复用 svc.adopt_article 的审核门禁：非 approved / 不存在文章抛命名异常（ClientError/
+    ValidationError → 全局 handler 映射 400，与 record_score 一致）。同篇幂等（article_id
+    UNIQUE，dup 复活不重复建）。**只接受站内已审文章、注入不了外部内容**——外部真品录入
+    是前端人工动作，MCP 不开这条路，防 AI 自灌毒化参考池。
+    """
+    try:
+        ref = svc.adopt_article(
+            db,
+            user_id=payload.user_id,
+            article_id=payload.article_id,
+            fallback_category=payload.category,
+        )
+        db.commit()
+        db.refresh(ref)
+    except (ClientError, ValidationError):
+        db.rollback()
+        raise  # 命名异常交全局 handler → 400，Loop 可读
+    except Exception as exc:
+        db.rollback()
+        raise mcp_exception_response(
+            exc, context=f"adopt_from_mcp article={payload.article_id}"
+        ) from exc
+    return {
+        "id": ref.id,
+        "origin": ref.origin,
+        "article_id": ref.article_id,
+        "title": ref.title,
+        "is_active": ref.is_active,
+        "categories": [c.category for c in ref.categories],
+    }
+
+
 class ScorePayload(BaseModel):
     score: int = Field(ge=0, le=100)
 

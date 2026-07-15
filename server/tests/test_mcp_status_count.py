@@ -1,6 +1,6 @@
 """MCP tool 数守卫 + notify_review_card 注册验证。
 
-test_mcp_tools_count_is_29：无 DB 依赖，只 import 常量。
+test_mcp_tools_count_is_30：无 DB 依赖，只 import 常量。
 test_notify_review_card_tool_registered：内省 FastMCP 真实注册表
 `mcp._tool_manager._tools`（`server/mcp/server.py` 的启动断言、
 `connect_router.py` 的 `tools_count` 都读同一个属性——已确认是这个
@@ -11,10 +11,10 @@ FastMCP 版本的真实内部结构，不是猜测），断言工具确实注册
 from __future__ import annotations
 
 
-def test_mcp_tools_count_is_29():
+def test_mcp_tools_count_is_30():
     from server.app.modules.mcp_catalog.connect_router import MCP_TOOLS_COUNT
 
-    assert MCP_TOOLS_COUNT == 29
+    assert MCP_TOOLS_COUNT == 30
 
 
 def test_notify_review_card_tool_registered():

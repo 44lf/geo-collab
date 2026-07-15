@@ -440,3 +440,28 @@ async def notify_review_card(
 async def record_adversarial_score(article_id: int, score: int) -> dict[str, Any]:
     """把对抗判分（N 次求平均后的 0-100 整数）记到文章上。"""
     return await _apost(f"/api/articles/{article_id}/adversarial-score", json={"score": score})
+
+
+@mcp.tool()
+async def adopt_quality_reference(article_id: int, category: str | None = None) -> dict[str, Any]:
+    """采纳一篇【已过人审(approved)】站内文章进高质量库，作对抗判分的参考真品。
+
+    - 只接受 review_status="approved" 的站内文章（复用平台审核门禁）；未审 / 软删 / 不存在
+      → 报错（400）。
+    - 幂等：同一篇重复采纳返回已有那条，不重复建。
+    - **不能录入站外内容**：外部真品录入是前端人工动作（防 AI 把自产内容伪装成外部真品、
+      毒化参考池、架空对抗判分）。想要外部参考请让人在 Web「高质量库 → 录入外部文章」加。
+
+    Args:
+        article_id: 目标文章（须已 approved）。
+        category: 可选。文章无溯源类目(source_question_category)时，用它作回落关联类目；
+            文章有溯源类目时后端忽略本参数。
+
+    Returns:
+        {"ok": True, "data": {"id": int, "origin": "own", "article_id": int, "title": str,
+         "is_active": bool, "categories": [str]}, "error": None}
+    """
+    body: dict[str, Any] = {"article_id": article_id, "user_id": _OPERATOR_USER_ID}
+    if category:
+        body["category"] = category
+    return await _apost("/api/quality-reference/adopt-from-mcp", json=body)

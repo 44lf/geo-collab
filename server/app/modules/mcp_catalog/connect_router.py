@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # 仅给 server/mcp/server.py 的启动断言当「下限」用（注册数必须 ≥ 此值）。
 # 页面展示的工具数走 status.tools_count = len(tools)（实时内省），不再读这个常量。
 # 增减 MCP tool 时同步这里，避免断言把正常启动误判成双实例 bug。
-MCP_TOOLS_COUNT = 29
+MCP_TOOLS_COUNT = 30
 
 # 手写中文「用处」覆盖表：命中则优先用（质量比机翻好），未命中的工具走机翻兜底。
 # 加了新工具不必动这里——机翻会自动补；想给某工具更准的中文再来加一行。
@@ -51,6 +51,7 @@ _CURATED_ZH: dict[str, str] = {
     "install_loop_skills": "按 slug 拉取 Skill 库整包供本地安装（默认 goal）",
     "ai_illustrate_article": "AI 智能配图 + 自动封面（对齐 Web UI「AI 配图」）",
     "notify_review_card": "发送飞书待审交互卡（标题/自评分/选题 + 查看文章链接）",
+    "adopt_quality_reference": "采纳已审站内文章进高质量库当对抗判分参考（不接受外部注入）",
     # meta（评估 / 回流）
     "score_recent_articles": "用 ai_format 模型给文章批量 LLM 评分",
     "get_template_performance": "聚合某提示词模板产出文章的表现指标",

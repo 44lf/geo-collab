@@ -63,6 +63,63 @@ def test_record_score_writes_and_rejects_deleted(monkeypatch):
         app_ctx.cleanup()
 
 
+def test_adopt_from_mcp_requires_token(monkeypatch):
+    app_ctx = build_test_app(monkeypatch)
+    try:
+        r = app_ctx.client.post("/api/quality-reference/adopt-from-mcp", json={"article_id": 1})
+        assert r.status_code == 401
+    finally:
+        app_ctx.cleanup()
+
+
+def test_adopt_from_mcp_approved_and_idempotent(monkeypatch):
+    """已审文章可采纳（origin=own + 回落类目），同篇重复采纳幂等返回同一条。"""
+    monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _make_article(db, review_status="approved")
+        db.commit()
+        h = {"X-MCP-Token": "secret"}
+        r = app_ctx.client.post(
+            "/api/quality-reference/adopt-from-mcp",
+            json={"article_id": a.id, "category": "通用"},
+            headers=h,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["origin"] == "own" and body["article_id"] == a.id
+        assert body["categories"] == ["通用"]  # 无溯源类目 → 回落入参 category
+        first_id = body["id"]
+
+        r2 = app_ctx.client.post(
+            "/api/quality-reference/adopt-from-mcp", json={"article_id": a.id}, headers=h
+        )
+        assert r2.status_code == 200 and r2.json()["id"] == first_id  # article_id UNIQUE 幂等
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+def test_adopt_from_mcp_rejects_unapproved(monkeypatch):
+    """未审文章（pending）被 adopt_article 门禁拦下 → 400（命名异常交全局 handler，非 500）。"""
+    monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _make_article(db, review_status="pending")
+        db.commit()
+        r = app_ctx.client.post(
+            "/api/quality-reference/adopt-from-mcp",
+            json={"article_id": a.id},
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 400
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
 def test_pick_truncates_plain_text(monkeypatch):
     """pick 用配置的 truncate_chars 截断 plain_text；k 默认取 GEO_ADVERSARIAL_TOPK。"""
     monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
