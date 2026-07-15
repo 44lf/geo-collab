@@ -1,7 +1,7 @@
-import { Bot, FileText, Film, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
+import { Bot, FileText, Film, Gem, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "agents" | "ai" | "content" | "prompts" | "image-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
+export type NavKey = "agents" | "ai" | "content" | "prompts" | "quality-reference" | "image-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -221,6 +221,8 @@ export type ArticleSummary = {
    * 过线/老数据 = 纯数字 "84"；没过线 = "65 _ 80"（真实分 _ 合格线，前端拆成 65 / 80 标红）。
    */
   auto_review_score: string | null;
+  /** 对抗判分（N 次平均，verifier skill 后置写；纯 advisory）。手动/scheme/pipeline 文章为 null。 */
+  adversarial_score: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -230,6 +232,10 @@ export type Article = ArticleSummary & {
   content_html: string;
   plain_text: string;
   body_assets: ArticleBodyAsset[];
+  /** 生文溯源类目（仅 /goal MCP save 填；采纳站内文章时读它决定是否需补选类目）。scheme/pipeline 为 null。 */
+  source_question_category: string | null;
+  /** 生文溯源问题原文列表（仅 /goal MCP save 填）。scheme/pipeline 为 null。 */
+  source_question_texts: string[] | null;
   /** @deprecated 使用 stock_category_ids */
   stock_category_id: number | null;
   stock_category_ids: number[];
@@ -610,6 +616,7 @@ export const navItems: {
       { key: "prompts:image_companion", label: "陪衬配图提示词", value: "image_companion" },
     ],
   },
+  { key: "quality-reference", label: "高质量库", icon: Gem },
   { key: "image-library", label: "图片库", icon: Images },
   { key: "videos", label: "视频库", icon: Film },
   { key: "media", label: "媒体矩阵", icon: RadioTower },

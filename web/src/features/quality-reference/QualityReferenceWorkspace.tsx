@@ -1,0 +1,773 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import {
+  AlertTriangle,
+  Download,
+  ExternalLink,
+  Eye,
+  Plus,
+  RefreshCw,
+  Search,
+} from "lucide-react";
+import { useToast } from "../../components/Toast";
+import { Modal } from "../../components/Modal";
+import { ReviewBadge } from "../../components/ArticleListItem";
+import { emptyDoc } from "../../api/core";
+import { getArticle, listArticles } from "../../api/articles";
+import { buildReadonlyExtensions } from "../content/readonlyExtensions";
+import {
+  adoptReference,
+  getReference,
+  importReference,
+  listReferences,
+  patchReference,
+  qualityReferenceStats,
+  referenceCategories,
+  type CategoryOriginStat,
+  type QualityReference,
+  type QualitySimilar,
+} from "../../api/qualityReference";
+import type { ArticleSummary } from "../../types";
+
+type OriginFilter = "all" | "own" | "external";
+type ActiveFilter = "active" | "inactive" | "all";
+
+function originLabel(origin: string): string {
+  return origin === "external" ? "站外" : "站内";
+}
+
+// ── 只读渲染器：详情抽屉里用不可编辑的 Tiptap 渲染三份正文之一（content_json）──────────
+function ReferenceReaderBody({ contentJson }: { contentJson: string }) {
+  const editor = useEditor({
+    editable: false,
+    extensions: buildReadonlyExtensions(),
+    editorProps: { attributes: { class: "editorSurface" } },
+  });
+
+  useEffect(() => {
+    if (!editor) return;
+    let doc: Record<string, unknown>;
+    try {
+      doc = JSON.parse(contentJson);
+    } catch {
+      doc = emptyDoc;
+    }
+    // 只写初始 content 不会随 contentJson 变化更新，必须显式 setContent（切换不同参考时重灌）。
+    editor.commands.setContent(doc);
+  }, [editor, contentJson]);
+
+  return (
+    <div className="editorWrap paper-scope">
+      <EditorContent editor={editor} />
+    </div>
+  );
+}
+
+export function QualityReferenceWorkspace() {
+  const { toast } = useToast();
+  const [refs, setRefs] = useState<QualityReference[]>([]);
+  const [stats, setStats] = useState<CategoryOriginStat[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const [originFilter, setOriginFilter] = useState<OriginFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("active");
+
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const [adoptOpen, setAdoptOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const q: { origin?: string; category?: string; is_active?: boolean } = {};
+      if (originFilter !== "all") q.origin = originFilter;
+      if (categoryFilter !== "all") q.category = categoryFilter;
+      if (activeFilter !== "all") q.is_active = activeFilter === "active";
+      const [list, s, cats] = await Promise.all([
+        listReferences(q),
+        qualityReferenceStats(),
+        referenceCategories(),
+      ]);
+      setRefs(list);
+      setStats(s);
+      setCategories(cats);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "加载失败", "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [originFilter, categoryFilter, activeFilter, toast]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function takeDown(ref: QualityReference) {
+    if (!window.confirm(`下架参考「${ref.title}」？下架后不再参与对抗判分选参考。`)) return;
+    try {
+      await patchReference(ref.id, { is_active: false });
+      toast("已下架", "success");
+      await load();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "下架失败", "error");
+    }
+  }
+
+  const emptyExternalCats = useMemo(
+    () => stats.filter((s) => s.external === 0),
+    [stats],
+  );
+
+  return (
+    <>
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">对抗评审质量门</p>
+          <h1>高质量库</h1>
+        </div>
+        <div className="topActions">
+          <button className="secondaryButton" type="button" disabled={loading} onClick={() => void load()}>
+            <RefreshCw size={15} /> 刷新
+          </button>
+          <button className="secondaryButton" type="button" onClick={() => setAdoptOpen(true)}>
+            <Download size={15} /> 采纳站内文章
+          </button>
+          <button className="primaryButton" type="button" onClick={() => setImportOpen(true)}>
+            <Plus size={15} /> 录入外部文章
+          </button>
+        </div>
+      </header>
+
+      {/* 配比告警：external / own 配比来自 stats 端点（非列表长度，列表默认只回 50 条会失真）。
+          命门＝参考必须真比候选强（多为外部人写的高质量文），故某类目「external=0」标红提醒。 */}
+      <div className="panel" style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <strong style={{ fontSize: 13 }}>各类目参考配比（仅统计启用中）</strong>
+          {emptyExternalCats.length > 0 && (
+            <span className="badge" style={{ color: "var(--red, #f85149)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <AlertTriangle size={12} /> {emptyExternalCats.length} 个类目无外部参考
+            </span>
+          )}
+        </div>
+        {stats.length === 0 ? (
+          <p style={{ color: "var(--fg-3)", fontSize: 12, margin: 0 }}>暂无启用中的参考。</p>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {stats.map((s) => {
+              const noExt = s.external === 0;
+              return (
+                <div
+                  key={s.category ?? "__null__"}
+                  style={{
+                    border: `1px solid ${noExt ? "var(--red, #f85149)" : "var(--hair)"}`,
+                    borderRadius: 10,
+                    padding: "8px 12px",
+                    minWidth: 150,
+                    background: "var(--glass, transparent)",
+                  }}
+                >
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--fg)" }}>
+                    {s.category ?? "（通用 / 未分类）"}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--fg-3)", marginTop: 3 }}>
+                    外部{" "}
+                    <span style={{ color: noExt ? "var(--red, #f85149)" : "var(--green, #3fb950)", fontWeight: 600 }}>
+                      {s.external}
+                    </span>{" "}
+                    / 站内 {s.own}（共 {s.total}）
+                  </div>
+                  {noExt && (
+                    <div style={{ fontSize: 11, color: "var(--red, #f85149)", marginTop: 3 }}>
+                      无外部参考，判分可能失真
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 过滤器 */}
+      <div className="panel" style={{ marginBottom: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <label style={filterLabel}>
+          来源
+          <select style={filterSelect} value={originFilter} onChange={(e) => setOriginFilter(e.target.value as OriginFilter)}>
+            <option value="all">全部</option>
+            <option value="own">站内（own）</option>
+            <option value="external">站外（external）</option>
+          </select>
+        </label>
+        <label style={filterLabel}>
+          类目
+          <select style={filterSelect} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+            <option value="all">全部</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={filterLabel}>
+          状态
+          <select style={filterSelect} value={activeFilter} onChange={(e) => setActiveFilter(e.target.value as ActiveFilter)}>
+            <option value="active">启用中</option>
+            <option value="inactive">已下架</option>
+            <option value="all">全部</option>
+          </select>
+        </label>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--fg-3)" }}>
+          共 {refs.length} 条{refs.length >= 50 ? "（列表最多 50 条，请用过滤缩小范围）" : ""}
+        </span>
+      </div>
+
+      {/* 列表 */}
+      <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
+        {loading && refs.length === 0 ? (
+          <p style={{ padding: 24, color: "var(--fg-3)" }}>加载中…</p>
+        ) : refs.length === 0 ? (
+          <p style={{ padding: 24, color: "var(--fg-3)" }}>暂无参考，试试「采纳站内文章」或「录入外部文章」。</p>
+        ) : (
+          <div style={{ overflow: "auto", maxHeight: "56vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>标题</th>
+                  <th style={thStyle}>来源</th>
+                  <th style={thStyle}>类目</th>
+                  <th style={thStyle}>平台 / 链接</th>
+                  <th style={thStyle}>状态</th>
+                  <th style={thStyle}>创建时间</th>
+                  <th style={thStyle}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {refs.map((r) => (
+                  <tr key={r.id} style={{ borderBottom: "1px solid var(--hair)" }}>
+                    <td style={tdStyle}>
+                      <span style={{ fontWeight: 600 }}>{r.title}</span>
+                    </td>
+                    <td style={tdStyle}>
+                      <span className={`badge ${r.origin === "external" ? "running" : "succeeded"}`}>
+                        {originLabel(r.origin)}
+                      </span>
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={r.category ? undefined : mutedStyle}>{r.category ?? "（通用）"}</span>
+                    </td>
+                    <td style={tdStyle}>
+                      {r.source_url ? (
+                        <a
+                          href={r.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "var(--accent, #6d6bf6)", display: "inline-flex", alignItems: "center", gap: 4 }}
+                        >
+                          {r.platform || "原文"} <ExternalLink size={12} />
+                        </a>
+                      ) : (
+                        <span style={mutedStyle}>{r.platform || "—"}</span>
+                      )}
+                    </td>
+                    <td style={tdStyle}>
+                      <span className={`badge ${r.is_active ? "succeeded" : "failed"}`}>
+                        {r.is_active ? "启用中" : "已下架"}
+                      </span>
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={mutedStyle}>{new Date(r.created_at).toLocaleString()}</span>
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button type="button" className="secondaryButton" style={pillBtn} onClick={() => setDetailId(r.id)}>
+                          <Eye size={13} /> 查看
+                        </button>
+                        {r.is_active && (
+                          <button type="button" className="secondaryButton" style={pillBtn} onClick={() => void takeDown(r)}>
+                            下架
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {detailId != null && <ReferenceDetailModal refId={detailId} onClose={() => setDetailId(null)} />}
+      {adoptOpen && (
+        <AdoptModal
+          categories={categories}
+          onClose={() => setAdoptOpen(false)}
+          onDone={() => {
+            setAdoptOpen(false);
+            void load();
+          }}
+        />
+      )}
+      {importOpen && (
+        <ImportModal
+          categories={categories}
+          onClose={() => setImportOpen(false)}
+          onDone={() => {
+            setImportOpen(false);
+            void load();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+// ── 详情抽屉（只读 Tiptap）────────────────────────────────────────────────────
+function ReferenceDetailModal({ refId, onClose }: { refId: number; onClose: () => void }) {
+  const { toast } = useToast();
+  const [detail, setDetail] = useState<Awaited<ReturnType<typeof getReference>> | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    getReference(refId)
+      .then((d) => {
+        if (alive) setDetail(d);
+      })
+      .catch((err) => {
+        toast(err instanceof Error ? err.message : "加载失败", "error");
+        onClose();
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refId]);
+
+  return (
+    <Modal
+      title={detail?.title ?? "参考详情"}
+      onClose={onClose}
+      width={860}
+      maxHeight={760}
+      footer={
+        <button type="button" className="secondaryButton" onClick={onClose}>
+          关闭
+        </button>
+      }
+    >
+      {loading || !detail ? (
+        <p style={{ color: "var(--fg-3)" }}>加载中…</p>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 12, fontSize: 12.5 }}>
+            <span className={`badge ${detail.origin === "external" ? "running" : "succeeded"}`}>{originLabel(detail.origin)}</span>
+            <span style={{ color: "var(--fg-3)" }}>类目：{detail.category ?? "（通用）"}</span>
+            {detail.origin === "external" ? (
+              detail.source_url ? (
+                <a
+                  href={detail.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--accent, #6d6bf6)", display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  {detail.platform || "原文链接"} <ExternalLink size={12} />
+                </a>
+              ) : (
+                <span style={{ color: "var(--fg-3)" }}>{detail.platform || "无来源链接"}</span>
+              )
+            ) : detail.source_article_deleted ? (
+              <span style={{ color: "var(--red, #f85149)" }}>原文已删</span>
+            ) : detail.article_id != null ? (
+              <a
+                href={`/article/${detail.article_id}`}
+                style={{ color: "var(--accent, #6d6bf6)", display: "inline-flex", alignItems: "center", gap: 4 }}
+              >
+                查看原文 <ExternalLink size={12} />
+              </a>
+            ) : null}
+          </div>
+          <ReferenceReaderBody contentJson={detail.content_json} />
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// ── 采纳站内文章 ──────────────────────────────────────────────────────────────
+function AdoptModal({
+  categories,
+  onClose,
+  onDone,
+}: {
+  categories: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { toast } = useToast();
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<ArticleSummary[]>([]);
+  const [searched, setSearched] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  // 文章无溯源类目时的补选：{articleId, category}
+  const [pick, setPick] = useState<{ articleId: number; title: string; category: string } | null>(null);
+
+  async function runSearch() {
+    const q = query.trim();
+    if (!q) return;
+    setSearching(true);
+    setSearched(true);
+    try {
+      if (/^\d+$/.test(q)) {
+        const a = await getArticle(Number(q)); // 纯数字直接按 ID 取（不能塞进 FTS 的 q）
+        setResults([a]);
+      } else {
+        const list = await listArticles(new URLSearchParams({ q, review_status: "approved" }));
+        setResults(list);
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "搜索失败", "error");
+      setResults([]);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function beginAdopt(articleId: number) {
+    setBusyId(articleId);
+    try {
+      const full = await getArticle(articleId); // 采纳前取详情读 source_question_category
+      const cat = full.source_question_category?.trim();
+      if (cat) {
+        await finishAdopt(articleId, null); // 有溯源类目 → 后端自动用文章类目
+      } else {
+        setPick({ articleId, title: full.title, category: "" }); // 无 → 弹补选
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "采纳失败", "error");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function finishAdopt(articleId: number, category: string | null) {
+    try {
+      await adoptReference({ article_id: articleId, category: category || null });
+      toast("已采纳到高质量库", "success");
+      onDone();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "采纳失败", "error");
+    }
+  }
+
+  return (
+    <Modal
+      title="采纳站内文章"
+      onClose={onClose}
+      width={640}
+      maxHeight={640}
+      footer={
+        <button type="button" className="secondaryButton" onClick={onClose}>
+          关闭
+        </button>
+      }
+    >
+      <p style={{ fontSize: 12, color: "var(--fg-3)", marginTop: 0 }}>
+        仅能采纳「已审核（approved）」文章。输入纯数字按文章 ID 精确取；否则按关键词搜索（命中标题 / 作者 / 正文）。
+      </p>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <input
+          style={{ ...fieldStyle, flex: 1 }}
+          value={query}
+          placeholder="文章 ID 或关键词"
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void runSearch();
+          }}
+        />
+        <button type="button" className="primaryButton" disabled={searching} onClick={() => void runSearch()}>
+          <Search size={14} /> 搜索
+        </button>
+      </div>
+
+      {pick && (
+        <div
+          style={{
+            border: "1px solid var(--hair)",
+            borderRadius: 10,
+            padding: 12,
+            marginBottom: 12,
+            background: "var(--surface-2, transparent)",
+          }}
+        >
+          <div style={{ fontSize: 12.5, color: "var(--fg)", marginBottom: 8 }}>
+            「{pick.title}」无溯源类目，可选填一个类目（留空 = 通用兜底池）：
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <select
+              style={{ ...fieldStyle, flex: 1 }}
+              value={pick.category}
+              onChange={(e) => setPick({ ...pick, category: e.target.value })}
+            >
+              <option value="">（不填 / 通用）</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="primaryButton"
+              onClick={() => {
+                const { articleId, category } = pick;
+                setPick(null);
+                void finishAdopt(articleId, category || null);
+              }}
+            >
+              确认采纳
+            </button>
+            <button type="button" className="secondaryButton" onClick={() => setPick(null)}>
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
+      {searching ? (
+        <p style={{ color: "var(--fg-3)", fontSize: 12 }}>搜索中…</p>
+      ) : searched && results.length === 0 ? (
+        <p style={{ color: "var(--fg-3)", fontSize: 12 }}>无匹配文章。</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {results.map((a) => (
+            <div
+              key={a.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                border: "1px solid var(--hair)",
+                borderRadius: 10,
+                padding: "8px 12px",
+              }}
+            >
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {a.title}
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 6 }}>
+                  ID {a.id} <ReviewBadge status={a.review_status} />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="primaryButton"
+                style={pillBtn}
+                disabled={busyId === a.id}
+                onClick={() => void beginAdopt(a.id)}
+              >
+                {busyId === a.id ? "…" : "采纳"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ── 录入外部文章 ──────────────────────────────────────────────────────────────
+function ImportModal({
+  categories,
+  onClose,
+  onDone,
+}: {
+  categories: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { toast } = useToast();
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("");
+  const [markdown, setMarkdown] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [platform, setPlatform] = useState("");
+  const [saving, setSaving] = useState(false);
+  // 提交后若查重命中，展示疑似重复列表（不阻断——参考已入库），用户确认后关闭。
+  const [similar, setSimilar] = useState<QualitySimilar[] | null>(null);
+
+  async function submit() {
+    if (!title.trim()) {
+      toast("标题不能为空", "error");
+      return;
+    }
+    if (!markdown.trim()) {
+      toast("正文不能为空", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await importReference({
+        title: title.trim(),
+        markdown,
+        category: category || null,
+        source_url: sourceUrl.trim() || null,
+        platform: platform.trim() || null,
+      });
+      if (res.similar.length > 0) {
+        setSimilar(res.similar); // 已入库，仅软提示
+      } else {
+        toast("已录入高质量库", "success");
+        onDone();
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "录入失败", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (similar) {
+    return (
+      <Modal
+        title="已录入（发现疑似重复）"
+        onClose={onDone}
+        width={520}
+        footer={
+          <button type="button" className="primaryButton" onClick={onDone}>
+            知道了
+          </button>
+        }
+      >
+        <p style={{ fontSize: 12.5, color: "var(--fg-2)", marginTop: 0 }}>
+          参考已录入。以下是库中疑似重复的条目（仅提示，不影响本次录入）：
+        </p>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+          {similar.map((s) => (
+            <li key={s.id} style={{ marginBottom: 4 }}>
+              {s.title}（ID {s.id}）
+            </li>
+          ))}
+        </ul>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      title="录入外部文章"
+      onClose={onClose}
+      width={640}
+      maxHeight={720}
+      footer={
+        <>
+          <button type="button" className="secondaryButton" onClick={onClose} disabled={saving}>
+            取消
+          </button>
+          <button type="button" className="primaryButton" onClick={() => void submit()} disabled={saving}>
+            {saving ? "录入中…" : "录入"}
+          </button>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <label style={fieldColumn}>
+          <span style={fieldLabelText}>标题</span>
+          <input style={fieldStyle} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="外部文章标题" />
+        </label>
+        <label style={fieldColumn}>
+          <span style={fieldLabelText}>类目（可空 = 通用兜底池）</span>
+          <select style={fieldStyle} value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="">（不填 / 通用）</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div style={{ display: "flex", gap: 12 }}>
+          <label style={{ ...fieldColumn, flex: 1 }}>
+            <span style={fieldLabelText}>来源链接（可空）</span>
+            <input style={fieldStyle} value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://…" />
+          </label>
+          <label style={{ ...fieldColumn, flex: 1 }}>
+            <span style={fieldLabelText}>平台（可空）</span>
+            <input style={fieldStyle} value={platform} onChange={(e) => setPlatform(e.target.value)} placeholder="如 知乎 / 公众号" />
+          </label>
+        </div>
+        <label style={fieldColumn}>
+          <span style={fieldLabelText}>正文（Markdown）</span>
+          <textarea
+            style={{ ...fieldStyle, height: 240, padding: 10, resize: "vertical", lineHeight: 1.6 }}
+            value={markdown}
+            onChange={(e) => setMarkdown(e.target.value)}
+            placeholder="粘贴 Markdown 正文…"
+          />
+        </label>
+      </div>
+    </Modal>
+  );
+}
+
+const thStyle: React.CSSProperties = {
+  padding: "10px 16px",
+  textAlign: "left",
+  fontWeight: 600,
+  color: "var(--fg-3)",
+  fontSize: 12,
+  whiteSpace: "nowrap",
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  background: "var(--surface-2)",
+  boxShadow: "inset 0 -1px 0 var(--hair)",
+};
+
+const tdStyle: React.CSSProperties = { padding: "10px 16px", verticalAlign: "middle" };
+const mutedStyle: React.CSSProperties = { color: "var(--fg-3)" };
+const pillBtn: React.CSSProperties = { padding: "4px 10px", fontSize: 12 };
+
+const filterLabel: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  fontSize: 12.5,
+  color: "var(--fg-2)",
+};
+
+const filterSelect: React.CSSProperties = {
+  height: 32,
+  padding: "0 8px",
+  border: "1px solid var(--hair)",
+  borderRadius: 8,
+  background: "var(--paper, var(--glass))",
+  color: "var(--fg)",
+  fontSize: 12.5,
+  colorScheme: "dark",
+};
+
+const fieldStyle: React.CSSProperties = {
+  width: "100%",
+  height: 38,
+  padding: "0 12px",
+  border: "1px solid var(--hair-2, var(--hair))",
+  borderRadius: 10,
+  background: "var(--paper, var(--glass))",
+  color: "var(--fg)",
+  fontSize: 13,
+  colorScheme: "dark",
+  boxSizing: "border-box",
+};
+
+const fieldColumn: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 6 };
+const fieldLabelText: React.CSSProperties = { fontSize: 11.5, fontWeight: 500, color: "var(--fg-2)" };

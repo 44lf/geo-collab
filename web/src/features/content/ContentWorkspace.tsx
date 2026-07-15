@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBlocker } from "react-router-dom";
-import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
-import type { NodeViewProps } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import { TextStyle } from "@tiptap/extension-text-style";
-import Color from "@tiptap/extension-color";
-import Highlight from "@tiptap/extension-highlight";
-import TextAlign from "@tiptap/extension-text-align";
+import { EditorContent, useEditor } from "@tiptap/react";
 import { Plus, Save, Search, Trash2, Upload, ChevronRight, Check, Send, ShieldCheck, ListChecks, RefreshCw } from "lucide-react";
 import { useToast } from "../../components/Toast";
 import {
@@ -37,6 +30,7 @@ import { ArticleListItem, ReviewBadge, formatArticleTemplateSource } from "../..
 import { Modal } from "../../components/Modal";
 import { Pagination } from "../../components/Pagination";
 import { DistributeModal, type DistributeTarget } from "./DistributeModal";
+import { buildReadonlyExtensions } from "./readonlyExtensions";
 
 function makeEmptyDraft(): Draft {
   return {
@@ -174,137 +168,8 @@ function sortJsonValue(value: unknown): unknown {
 
 const EMPTY_BODY_STATE = stableStringify(normalizeEditorDocument(emptyDoc, "save"));
 
-const CustomTextStyle = TextStyle.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      fontSize: {
-        default: null,
-        parseHTML: (el: HTMLElement) => el.style.fontSize || null,
-        renderHTML: (attrs: Record<string, unknown>) =>
-          attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {},
-      },
-    };
-  },
-});
-
-function ImageResizeView({ node, updateAttributes, selected, editor }: NodeViewProps) {
-  const attrs = node.attrs as {
-    src: string;
-    alt: string;
-    title: string;
-    assetId: string | null;
-    stockImageId: number | null;
-    width: string;
-    progress: number | null;
-  };
-  const imgRef = useRef<HTMLImageElement>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
-  const [imgError, setImgError] = useState(false);
-
-  const isPending = typeof attrs.assetId === "string" && attrs.assetId.startsWith("pending-");
-
-  useEffect(() => {
-    setImgError(false);
-  }, [attrs.src]);
-
-  useEffect(() => {
-    return () => {
-      cleanupRef.current?.();
-    };
-  }, []);
-
-  function startResize(e: React.MouseEvent) {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = imgRef.current?.offsetWidth ?? 300;
-    const containerWidth = imgRef.current?.parentElement?.offsetWidth || 600;
-
-    function onMove(ev: MouseEvent) {
-      const pct = Math.min(
-        100,
-        Math.max(10, Math.round(((startWidth + ev.clientX - startX) / containerWidth) * 100)),
-      );
-      updateAttributes({ width: `${pct}%` });
-    }
-    function onUp() {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      cleanupRef.current = null;
-    }
-    cleanupRef.current = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }
-
-  return (
-    <NodeViewWrapper style={{ display: "block", position: "relative", width: attrs.width ?? "100%" }}>
-      {isPending && imgError ? (
-        <div className="imgUploadingPlaceholder">
-          <span>{attrs.progress != null ? `上传中 ${attrs.progress}%` : "上传中…"}</span>
-          {attrs.progress != null && (
-            <div className="imgUploadProgress">
-              <div className="imgUploadProgressBar" style={{ width: `${attrs.progress}%` }} />
-            </div>
-          )}
-        </div>
-      ) : (
-        <img
-          ref={imgRef}
-          src={attrs.src}
-          alt={attrs.alt ?? ""}
-          title={attrs.title ?? ""}
-          data-asset-id={attrs.assetId ?? undefined}
-          data-stock-image-id={attrs.stockImageId ?? undefined}
-          style={{ width: "100%", display: "block", borderRadius: "var(--r)" }}
-          draggable={false}
-          onError={() => { if (isPending) setImgError(true); }}
-          onLoad={() => setImgError(false)}
-        />
-      )}
-      {selected && editor.isEditable && <div className="imgResizeHandle" onMouseDown={startResize} />}
-    </NodeViewWrapper>
-  );
-}
-
-const CustomImage = Image.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      assetId: {
-        default: null,
-        parseHTML: (el) => el.getAttribute("data-asset-id"),
-        renderHTML: (attrs) => (attrs.assetId ? { "data-asset-id": attrs.assetId } : {}),
-      },
-      stockImageId: {
-        default: null,
-        parseHTML: (el) => {
-          const value = el.getAttribute("data-stock-image-id");
-          return value ? Number(value) : null;
-        },
-        renderHTML: (attrs) => (attrs.stockImageId ? { "data-stock-image-id": attrs.stockImageId } : {}),
-      },
-      width: {
-        // 新插入的图片默认显示宽度（编辑器内）。已有文章在 content_json 里存了
-        // 显式宽度、旧 HTML 也走下面的 parseHTML 回落，不受此默认值影响。
-        default: "30%",
-        parseHTML: (el) => el.style.width || "100%",
-        renderHTML: (attrs) => ({ style: `width: ${attrs.width ?? "100%"}` }),
-      },
-      progress: {
-        default: null,
-        parseHTML: () => null,
-        renderHTML: () => ({}),
-      },
-    };
-  },
-  addNodeView() {
-    return ReactNodeViewRenderer(ImageResizeView);
-  },
-});
+// CustomTextStyle / ImageResizeView / CustomImage 已抽到 ./readonlyExtensions（与只读 reader 复用同一套
+// Tiptap 扩展定义）；编辑器扩展改由 buildReadonlyExtensions() 构建。
 
 const LIST_PAGE_SIZE = 10;
 
@@ -385,17 +250,10 @@ export function ContentWorkspace({
   }, []);
 
   const editor = useEditor({
-    extensions: [
-      // Tiptap v3 的 StarterKit 已内置 link / underline，故用 StarterKit 提供它们（link 关掉点击跳转），
-      // 不再单独注册 @tiptap/extension-link、@tiptap/extension-underline——重复注册会触发
-      // "Duplicate extension names" 冲突，导致含链接/下划线标记的文档 setContent 解析失败、正文渲染为空。
-      StarterKit.configure({ link: { openOnClick: false } }),
-      CustomImage.configure({ allowBase64: false }),
-      CustomTextStyle,
-      Color,
-      Highlight.configure({ multicolor: true }),
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
-    ],
+    // 扩展集合抽到共享工厂（与高质量库只读 reader 复用同一套定义）；每次返回全新实例，
+    // 不跨 editor 共享扩展对象。Tiptap v3 注意事项（StarterKit 已内置 link/underline，禁止重复注册）
+    // 详见 buildReadonlyExtensions 的注释。
+    extensions: buildReadonlyExtensions(),
     content: emptyDoc,
     onUpdate({ editor }) {
       setCharCount(editor.getText().replace(/\s/g, "").length);
