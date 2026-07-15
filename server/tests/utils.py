@@ -107,6 +107,7 @@ def _model_modules() -> None:
     import server.app.modules.loop_skills.models  # noqa: F401
     import server.app.modules.pipelines.models  # noqa: F401
     import server.app.modules.prompt_templates.models  # noqa: F401
+    import server.app.modules.quality_reference.models  # noqa: F401
     import server.app.modules.report.models  # noqa: F401
     import server.app.modules.skills.models  # noqa: F401
     import server.app.modules.system.models  # noqa: F401
@@ -149,6 +150,12 @@ def reset_test_database(engine: Engine, *, create_schema: bool = True) -> None:
                     sa.text(
                         "ALTER TABLE articles ADD FULLTEXT INDEX ft_articles "
                         "(title, author, plain_text) WITH PARSER ngram"
+                    )
+                )
+                conn.execute(
+                    sa.text(
+                        "ALTER TABLE quality_reference ADD FULLTEXT INDEX "
+                        "ftx_quality_reference_plain (plain_text) WITH PARSER ngram"
                     )
                 )
         finally:
