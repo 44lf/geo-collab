@@ -48,17 +48,16 @@ def _reactivate(db, ref):
 
 
 def _insert_idempotent(db: Session, ref: QualityReference) -> QualityReference:
-    """content_hash UNIQUE 做并发兜底：预查未命中也可能撞车 → 捕 IntegrityError、重查返回已有。"""
+    """content_hash UNIQUE 做并发兜底：预查未命中仍可能撞车 → 捕 IntegrityError、回滚重查返回已有那条。"""
     existing = _by_hash(db, ref.content_hash)
     if existing is not None:
         return _reactivate(db, existing)
     try:
-        with db.begin_nested():
-            db.add(ref)
-            db.flush()
+        db.add(ref)
+        db.flush()
         return ref
     except IntegrityError:
-        db.rollback()  # 回退 savepoint 后重查（另一并发已插入）
+        db.rollback()  # 另一并发已插入同 content_hash：回滚本次失败插入后重查
         again = _by_hash(db, ref.content_hash)
         if again is not None:
             return _reactivate(db, again)

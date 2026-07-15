@@ -147,6 +147,13 @@ def test_is_source_article_deleted(monkeypatch):
         own_ref_live = svc.adopt_article(db, user_id=1, article_id=live_article.id)
         db.commit()
         assert svc.is_source_article_deleted(db, own_ref_live) is False
+
+        # own 参考但 article_id 已 NULL（FK SET NULL / 源被物理删）→ True
+        own_ref_live.article_id = None
+        db.commit()
+        db.refresh(own_ref_live)
+        assert own_ref_live.origin == "own" and own_ref_live.article_id is None
+        assert svc.is_source_article_deleted(db, own_ref_live) is True
     finally:
         db.close()
         app_ctx.cleanup()
