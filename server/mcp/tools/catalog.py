@@ -247,10 +247,11 @@ async def list_skills(category: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def pick_quality_references(category: str | None = None, k: int | None = None) -> dict:
+async def pick_quality_references(
+    category: str | None = None, k: int | None = None
+) -> dict[str, Any]:
     """取 1~k 篇同类高质量参考（服务端优先 external、随机、正文截断），供对抗判分对比。"""
     params: dict[str, Any] = {"category": category}
     if k is not None:
         params["k"] = k
-    r = await _aget("/api/quality-reference/pick", params=params)
-    return r.get("data", r)
+    return await _aget("/api/quality-reference/pick", params=params)
