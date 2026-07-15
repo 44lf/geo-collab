@@ -186,3 +186,17 @@ def test_feed_endpoint_returns_items_and_counts(app_ctx, db):
 def test_feed_endpoint_rejects_bad_review_status(app_ctx):
     resp = app_ctx.client.get("/api/articles/feed", params={"review_status": "bogus"})
     assert resp.status_code == 400
+
+
+# ── 对抗判分带出（Task 6）───────────────────────────────────────────────────
+
+
+def test_feed_item_surfaces_adversarial_score(app_ctx, db):
+    art = _mk_article(db, app_ctx.admin_id, "对抗判分文章", "pending")
+    art.adversarial_score = 88
+    db.commit()
+
+    resp = list_article_feed(db, review_status="pending", skip=0, limit=10, user_id=None)
+
+    item = next(it for it in resp.items if it.kind == "article" and it.article.id == art.id)
+    assert item.article.adversarial_score == 88
