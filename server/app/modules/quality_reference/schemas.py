@@ -5,24 +5,33 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class CategoryAssoc(BaseModel):  # 一条问题类型关联（子表行）
+    category: str = Field(min_length=1, max_length=200)
+    question_texts: list | None = None  # 该类型下的问题词
+
+    class Config:
+        from_attributes = True
+
+
 class AdoptRequest(BaseModel):
     article_id: int
     category: str | None = Field(
         default=None, max_length=200
-    )  # 文章无 source_question_category 时前端补选
+    )  # 文章无 source_question_category 时前端补选（单值回落）
 
 
 class ImportRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     markdown: str = Field(min_length=1)
     category: str | None = Field(default=None, max_length=200)
+    question_texts: list | None = None  # 单值 category 下的问题词（多类型走后续 patch replace-all）
     source_url: str | None = Field(default=None, max_length=1000)
     platform: str | None = Field(default=None, max_length=100)
 
 
 class PatchRequest(BaseModel):
     is_active: bool | None = None
-    category: str | None = None
+    categories: list[CategoryAssoc] | None = None  # 整体 replace-all（空数组=清空=通用；None=不改）
 
 
 class QualityReferenceRead(BaseModel):  # 列表用，轻量，不含正文
@@ -30,7 +39,7 @@ class QualityReferenceRead(BaseModel):  # 列表用，轻量，不含正文
     origin: str
     article_id: int | None
     title: str
-    category: str | None
+    categories: list[CategoryAssoc]  # 该参考挂的问题类型标签集（含问题词）
     source_url: str | None
     platform: str | None
     is_active: bool

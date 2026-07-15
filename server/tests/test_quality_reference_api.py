@@ -125,10 +125,14 @@ def test_patch_deactivates_reference(monkeypatch):
         inactive_list = c.get("/api/quality-reference", params={"is_active": False})
         assert any(row["id"] == rid for row in inactive_list.json())
 
-        # category 未传（None）不应清空已有 category
+        # categories 未传（None）不应清空已有关联（replace-all 只在显式传 categories 时触发）
         p2 = c.patch(f"/api/quality-reference/{rid}", json={"is_active": True})
         assert p2.status_code == 200
-        assert p2.json()["category"] == "通用"
+        assert [c["category"] for c in p2.json()["categories"]] == ["通用"]
+
+        # 显式传空数组 = 清空 = 通用
+        p3 = c.patch(f"/api/quality-reference/{rid}", json={"categories": []})
+        assert p3.status_code == 200 and p3.json()["categories"] == []
     finally:
         app_ctx.cleanup()
 
@@ -165,7 +169,7 @@ def test_categories_and_stats(monkeypatch):
         db.commit()
         adopt_r = c.post("/api/quality-reference/adopt", json={"article_id": a.id})
         own_id = adopt_r.json()["id"]
-        c.patch(f"/api/quality-reference/{own_id}", json={"category": "餐厅"})
+        c.patch(f"/api/quality-reference/{own_id}", json={"categories": [{"category": "餐厅"}]})
 
         cats = c.get("/api/quality-reference/categories")
         assert cats.status_code == 200
@@ -179,6 +183,44 @@ def test_categories_and_stats(monkeypatch):
         assert by_cat["餐厅"]["external"] == 2
         assert by_cat["餐厅"]["own"] == 1
         assert by_cat["餐厅"]["total"] == 3
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
+def test_adopt_then_patch_multi_category_and_list_filter(monkeypatch):
+    """采纳后 patch 加两类型：主表一行、GET detail 两类目、list 按任一类目都能过滤到。"""
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _make_article(db)
+        db.commit()
+        c = app_ctx.client
+        r = c.post("/api/quality-reference/adopt", json={"article_id": a.id, "category": "餐厅"})
+        assert r.status_code == 200
+        rid = r.json()["id"]
+        assert [x["category"] for x in r.json()["categories"]] == ["餐厅"]  # 回落补选
+
+        # replace-all 加第二类型
+        p = c.patch(
+            f"/api/quality-reference/{rid}",
+            json={
+                "categories": [{"category": "餐厅"}, {"category": "酒店", "question_texts": ["q1"]}]
+            },
+        )
+        assert p.status_code == 200
+        assert sorted(x["category"] for x in p.json()["categories"]) == ["酒店", "餐厅"]
+
+        # 两个类目各自都能 list 过滤到同一 ref（主表仍一行）
+        for cat in ("餐厅", "酒店"):
+            lst = c.get("/api/quality-reference", params={"category": cat})
+            assert lst.status_code == 200
+            assert any(row["id"] == rid for row in lst.json())
+
+        detail = c.get(f"/api/quality-reference/{rid}")
+        assert detail.status_code == 200
+        assert sorted(x["category"] for x in detail.json()["categories"]) == ["酒店", "餐厅"]
     finally:
         db.close()
         app_ctx.cleanup()

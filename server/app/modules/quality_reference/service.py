@@ -7,7 +7,9 @@
   ValueError）。
 - import_external 的 content_html 必须过 nh3.clean（防存储型 XSS）；content_json 用
   dumps_content_json 序列化成字符串存（与 Article 同款正文三份并行结构约定）。
-- pick_references 同类目优先 external、own 补足；类目不足回落 category IS NULL 通用池。
+- 问题类型关联走子表 quality_reference_category（多对多）：set_reference_categories 做
+  replace-all；pick_references 池 A＝有该 category 关联行、池 B＝无任何关联行（通用兜底），
+  每池仍优先 external、own 补足。
 """
 
 from __future__ import annotations
@@ -22,10 +24,35 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from server.app.modules.articles.models import Article
-from server.app.modules.quality_reference.models import QualityReference
+from server.app.modules.quality_reference.models import (
+    QualityReference,
+    QualityReferenceCategory,
+)
 from server.app.shared.errors import ClientError, ValidationError
 
 _UNSET = object()
+
+
+def set_reference_categories(db, ref_id: int, items: list[dict]) -> None:
+    """replace-all：整体替换某 reference 的问题类型关联（先删旧、再插新）。
+
+    items = list[{"category": str, "question_texts": list|None}]；跳过空 category、按 category
+    去重（UNIQUE(reference_id,category) 兜底）。经关系集合 clear→flush→append→flush 落地：
+    中间 flush 保证 DELETE 早于 INSERT，避免类目重叠时撞 UNIQUE。
+    """
+    ref = get_reference(db, ref_id)
+    ref.categories.clear()  # 标记旧关联为 orphan
+    db.flush()  # 立即 DELETE 旧行，早于下面的 INSERT
+    seen: set[str] = set()
+    for it in items or []:
+        cat = (it.get("category") or "").strip()
+        if not cat or cat in seen:
+            continue
+        seen.add(cat)
+        ref.categories.append(
+            QualityReferenceCategory(category=cat, question_texts=it.get("question_texts"))
+        )
+    db.flush()
 
 
 def _normalize(s: str) -> str:
@@ -47,24 +74,30 @@ def _reactivate(db, ref):
     return ref
 
 
-def _insert_idempotent(db: Session, ref: QualityReference) -> QualityReference:
-    """content_hash UNIQUE 做并发兜底：预查未命中仍可能撞车 → 捕 IntegrityError、回滚重查返回已有那条。"""
+def _insert_idempotent(db: Session, ref: QualityReference) -> tuple[QualityReference, bool]:
+    """content_hash UNIQUE 做并发兜底：预查未命中仍可能撞车 → 捕 IntegrityError、回滚重查返回已有那条。
+
+    返回 (ref, created)：created=True 仅当本次真正新插入；dup 复活时 created=False（调用方据此
+    决定是否建/改类型关联，避免复活已有参考时误动其关联）。
+    """
     existing = _by_hash(db, ref.content_hash)
     if existing is not None:
-        return _reactivate(db, existing)
+        return _reactivate(db, existing), False
     try:
         db.add(ref)
         db.flush()
-        return ref
+        return ref, True
     except IntegrityError:
         db.rollback()  # 另一并发已插入同 content_hash：回滚本次失败插入后重查
         again = _by_hash(db, ref.content_hash)
         if again is not None:
-            return _reactivate(db, again)
+            return _reactivate(db, again), False
         raise
 
 
-def adopt_article(db, *, user_id: int, article_id: int) -> QualityReference:
+def adopt_article(
+    db, *, user_id: int, article_id: int, fallback_category: str | None = None
+) -> QualityReference:
     a = db.query(Article).filter(Article.id == article_id, Article.is_deleted == False).first()  # noqa: E712
     if a is None:
         raise ClientError(f"article not found: {article_id}")
@@ -72,7 +105,7 @@ def adopt_article(db, *, user_id: int, article_id: int) -> QualityReference:
         raise ValidationError("只能采纳已审核（approved）文章")
     dup = db.query(QualityReference).filter(QualityReference.article_id == article_id).first()
     if dup is not None:
-        return _reactivate(db, dup)  # 同篇不重复采纳（article_id UNIQUE）
+        return _reactivate(db, dup)  # 同篇不重复采纳（article_id UNIQUE）；复活不动关联
     plain = a.plain_text or ""
     ref = QualityReference(
         origin="own",
@@ -82,13 +115,33 @@ def adopt_article(db, *, user_id: int, article_id: int) -> QualityReference:
         content_html=a.content_html or "",
         plain_text=plain,
         content_hash=compute_content_hash(a.title, plain),
-        category=a.source_question_category,
         added_by_user_id=user_id,
     )
-    return _insert_idempotent(db, ref)
+    ref, created = _insert_idempotent(db, ref)
+    if created:
+        # 关联类型：文章有 source_question_category 就用它（带 source_question_texts）；否则回落
+        # 前端补选的 fallback_category（无问题词）；都无则不关联（=通用兜底）。
+        if a.source_question_category:
+            set_reference_categories(
+                db,
+                ref.id,
+                [
+                    {
+                        "category": a.source_question_category,
+                        "question_texts": a.source_question_texts,
+                    }
+                ],
+            )
+        elif fallback_category:
+            set_reference_categories(
+                db, ref.id, [{"category": fallback_category, "question_texts": None}]
+            )
+    return ref
 
 
-def import_external(db, *, user_id, title, markdown, category, source_url, platform):
+def import_external(
+    db, *, user_id, title, markdown, category, source_url, platform, question_texts=None
+):
     import nh3
 
     from server.app.modules.ai_generation.converter import markdown_to_html, markdown_to_tiptap
@@ -105,12 +158,16 @@ def import_external(db, *, user_id, title, markdown, category, source_url, platf
         content_html=nh3.clean(markdown_to_html(md)),  # 防存储型 XSS
         plain_text=md,
         content_hash=compute_content_hash(title, md),
-        category=category,
         source_url=source_url,
         platform=platform,
         added_by_user_id=user_id,
     )
-    return _insert_idempotent(db, ref), similar
+    ref, created = _insert_idempotent(db, ref)
+    if created and category:  # 新插入且给了单值 category → 关联一条；多类型走后续 patch replace-all
+        set_reference_categories(
+            db, ref.id, [{"category": category, "question_texts": question_texts}]
+        )
+    return ref, similar
 
 
 def list_references(db, *, origin=None, category=None, is_active=None, skip=0, limit=50):
@@ -118,7 +175,8 @@ def list_references(db, *, origin=None, category=None, is_active=None, skip=0, l
     if origin is not None:
         q = q.filter(QualityReference.origin == origin)
     if category is not None:
-        q = q.filter(QualityReference.category == category)
+        # join 子表按 category 过滤（UNIQUE(reference_id,category) 保证至多一行、不产生重复）
+        q = q.join(QualityReferenceCategory).filter(QualityReferenceCategory.category == category)
     if is_active is not None:
         q = q.filter(QualityReference.is_active == is_active)
     return q.order_by(QualityReference.created_at.desc()).offset(skip).limit(min(limit, 200)).all()
@@ -131,18 +189,19 @@ def get_reference(db, ref_id):
     return ref
 
 
-def patch_reference(db, ref_id, *, is_active=None, category=_UNSET):
+def patch_reference(db, ref_id, *, is_active=None, categories=_UNSET):
     ref = get_reference(db, ref_id)
     if is_active is not None:
         ref.is_active = is_active
-    if category is not _UNSET:
-        ref.category = category
+    if categories is not _UNSET:
+        set_reference_categories(db, ref_id, categories or [])  # replace-all；空数组=清空=通用
     db.flush()
     return ref
 
 
 def pick_references(db, *, category, k, truncate_chars) -> list[dict]:
-    """精确类目→不足回落 category IS NULL 通用池；每池优先 external、own 补足；返回带 origin。"""
+    """池 A＝有该 category 关联行的 active ref；不足回落池 B＝无任何关联行的 active ref（通用）；
+    每池优先 external、own 补足。返回保持 `category` 键（池 A 填命中类目、池 B 填 None）供 verifier 兼容。"""
 
     def prefer_ext(rows, n):
         ext = [r for r in rows if r.origin == "external"]
@@ -151,30 +210,40 @@ def pick_references(db, *, category, k, truncate_chars) -> list[dict]:
         random.shuffle(own)
         return (ext + own)[:n]
 
-    picked = []
+    picked: list[tuple[QualityReference, str | None]] = []
     if category:
-        picked = prefer_ext(
+        rows_a = (
             db.query(QualityReference)
-            .filter(QualityReference.is_active == True, QualityReference.category == category)  # noqa: E712
-            .all(),
-            k,
+            .join(QualityReferenceCategory)
+            .filter(
+                QualityReference.is_active == True,  # noqa: E712
+                QualityReferenceCategory.category == category,
+            )
+            .all()
         )
+        picked = [(r, category) for r in prefer_ext(rows_a, k)]
     if len(picked) < k:
-        picked += prefer_ext(
+        taken = {r.id for r, _ in picked}
+        rows_b = (
             db.query(QualityReference)
-            .filter(QualityReference.is_active == True, QualityReference.category.is_(None))  # noqa: E712
-            .all(),
-            k - len(picked),
+            .outerjoin(QualityReferenceCategory)
+            .filter(
+                QualityReference.is_active == True,  # noqa: E712
+                QualityReferenceCategory.id.is_(None),  # 无任何关联行 = 通用兜底池
+            )
+            .all()
         )
+        rows_b = [r for r in rows_b if r.id not in taken]
+        picked += [(r, None) for r in prefer_ext(rows_b, k - len(picked))]
     return [
         {
             "id": r.id,
             "title": r.title,
-            "category": r.category,
+            "category": cat,
             "origin": r.origin,
             "plain_text": (r.plain_text or "")[:truncate_chars],
         }
-        for r in picked[:k]
+        for r, cat in picked[:k]
     ]
 
 
@@ -208,15 +277,17 @@ def is_source_article_deleted(db, ref) -> bool:
 def category_origin_stats(db) -> list[dict]:
     from sqlalchemy import case, func
 
+    # join 子表按 child.category 聚合；一篇挂多类型的参考在各类目分别计数，external/own 看 origin。
     rows = (
         db.query(
-            QualityReference.category,
+            QualityReferenceCategory.category,
             func.sum(case((QualityReference.origin == "external", 1), else_=0)),
             func.sum(case((QualityReference.origin == "own", 1), else_=0)),
             func.count(),
         )
+        .join(QualityReference, QualityReference.id == QualityReferenceCategory.reference_id)
         .filter(QualityReference.is_active == True)  # noqa: E712
-        .group_by(QualityReference.category)
+        .group_by(QualityReferenceCategory.category)
         .all()
     )
     return [

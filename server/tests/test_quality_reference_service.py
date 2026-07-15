@@ -186,7 +186,7 @@ def test_category_origin_stats(monkeypatch):
         a1 = _make_article(db, title="own1", plain="own own own")
         db.commit()
         own_ref = svc.adopt_article(db, user_id=1, article_id=a1.id)
-        own_ref.category = "餐厅"
+        svc.set_reference_categories(db, own_ref.id, [{"category": "餐厅", "question_texts": None}])
         db.commit()
 
         svc.import_external(
@@ -207,6 +207,141 @@ def test_category_origin_stats(monkeypatch):
         assert stats["酒店"]["external"] == 1
         assert stats["酒店"]["own"] == 0
         assert stats["酒店"]["total"] == 1
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
+def test_adopt_fills_category_from_article_source(monkeypatch):
+    """own 采纳时用 article.source_question_category + source_question_texts 关联一条。"""
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _make_article(db, cat="餐厅")
+        a.source_question_texts = ["问题甲"]
+        db.commit()
+        ref = svc.adopt_article(db, user_id=1, article_id=a.id)
+        db.commit()
+        db.refresh(ref)
+        assert [c.category for c in ref.categories] == ["餐厅"]
+        assert ref.categories[0].question_texts == ["问题甲"]
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
+def test_adopt_fallback_category_when_article_has_none(monkeypatch):
+    """文章无 source_question_category 时回落 fallback_category（前端补选），无问题词。"""
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _make_article(db, cat=None)
+        db.commit()
+        ref = svc.adopt_article(db, user_id=1, article_id=a.id, fallback_category="酒店")
+        db.commit()
+        db.refresh(ref)
+        assert [c.category for c in ref.categories] == ["酒店"]
+        assert ref.categories[0].question_texts is None
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
+def test_set_reference_categories_replace_all_single_row(monkeypatch):
+    """adopt 后再 patch 加第二类型：主表仍一行、子表两行；replace-all 整体替换。"""
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _make_article(db, cat="餐厅")
+        db.commit()
+        ref = svc.adopt_article(db, user_id=1, article_id=a.id)
+        db.commit()
+        # replace-all 加两类型
+        svc.set_reference_categories(
+            db,
+            ref.id,
+            [
+                {"category": "餐厅", "question_texts": None},
+                {"category": "酒店", "question_texts": ["问题乙"]},
+            ],
+        )
+        db.commit()
+        db.refresh(ref)
+        assert db.query(QualityReference).count() == 1  # 主表仍一行（铁律）
+        cats = sorted(c.category for c in ref.categories)
+        assert cats == ["酒店", "餐厅"]  # 子表两行
+
+        # 再 replace-all 成单一类型 → 覆盖
+        svc.set_reference_categories(db, ref.id, [{"category": "民宿", "question_texts": None}])
+        db.commit()
+        db.refresh(ref)
+        assert [c.category for c in ref.categories] == ["民宿"]
+
+        # 空数组 = 清空 = 通用
+        svc.set_reference_categories(db, ref.id, [])
+        db.commit()
+        db.refresh(ref)
+        assert ref.categories == []
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+@pytest.mark.mysql
+def test_pick_multi_category_ref_hits_both_and_falls_back(monkeypatch):
+    """一个 ref 挂两类型：pick(类型A) 命中、pick(类型B) 也命中；pick(无关类型) 回落通用池。"""
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        # ref1：external，挂 餐厅 + 酒店 两类型
+        ref1, _ = svc.import_external(
+            db,
+            user_id=1,
+            title="双类型参考",
+            markdown="丁" * 40,
+            category="餐厅",
+            source_url=None,
+            platform=None,
+        )
+        db.commit()
+        svc.set_reference_categories(
+            db,
+            ref1.id,
+            [
+                {"category": "餐厅", "question_texts": None},
+                {"category": "酒店", "question_texts": None},
+            ],
+        )
+        db.commit()
+        # ref2：无任何关联行 = 通用兜底池
+        ref2, _ = svc.import_external(
+            db,
+            user_id=1,
+            title="通用参考",
+            markdown="戊" * 40,
+            category=None,
+            source_url=None,
+            platform=None,
+        )
+        db.commit()
+
+        hit_a = svc.pick_references(db, category="餐厅", k=5, truncate_chars=10)
+        assert ref1.id in {r["id"] for r in hit_a}
+        assert any(r["id"] == ref1.id and r["category"] == "餐厅" for r in hit_a)
+
+        hit_b = svc.pick_references(db, category="酒店", k=5, truncate_chars=10)
+        assert ref1.id in {r["id"] for r in hit_b}
+        assert any(r["id"] == ref1.id and r["category"] == "酒店" for r in hit_b)
+
+        # 无关类型：池 A 空 → 回落通用池（无关联行的 ref2），且 category=None
+        hit_c = svc.pick_references(db, category="不存在类型", k=5, truncate_chars=10)
+        ids_c = {r["id"] for r in hit_c}
+        assert ref2.id in ids_c
+        assert ref1.id not in ids_c  # ref1 有关联行 → 不进通用池
+        assert all(r["category"] is None for r in hit_c)
     finally:
         db.close()
         app_ctx.cleanup()

@@ -8,12 +8,15 @@ quality_reference 收纳两类参考文章：
 
 正文三份并行结构（content_json / content_html / plain_text）与 Article 同款快照惯例，
 保证参考记录自包含（不依赖 articles 表存活）。content_hash 做查重（sha256(归一化
-title+plain_text)），category 空值＝通用兜底（不按题材过滤也能命中）。
+title+plain_text)）。问题类型关联走子表 quality_reference_category（多对多）：一篇参考
+可挂多个类型 + 每类型可选问题词；「通用兜底」＝该参考在子表**无任何行**（不再是单列
+category IS NULL）。
 """
 
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -22,7 +25,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.core.time import utcnow
 from server.app.db.base import Base
@@ -46,12 +49,40 @@ class QualityReference(Base):
     content_html: Mapped[str] = mapped_column(Text, default="")  # 外部已 nh3 清洗
     plain_text: Mapped[str] = mapped_column(Text)
     content_hash: Mapped[str] = mapped_column(String(64))  # sha256(归一化 title+plain_text)
-    category: Mapped[str | None] = mapped_column(
-        String(200), nullable=True, index=True
-    )  # 空=通用兜底
     source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     platform: Mapped[str | None] = mapped_column(String(100), nullable=True)
     added_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    # 问题类型关联（多对多子表）；replace-all 走 service.set_reference_categories。
+    categories: Mapped[list["QualityReferenceCategory"]] = relationship(
+        back_populates="reference",
+        cascade="all, delete-orphan",
+        passive_deletes=True,  # 依赖 DB ON DELETE CASCADE 清理子行
+        order_by="QualityReferenceCategory.id",
+    )
+
+
+class QualityReferenceCategory(Base):
+    """quality_reference 的问题类型关联（多对多子表）。
+
+    一篇参考可关联多个问题类型，每类型可选存问题词（question_texts）。UNIQUE(reference_id,
+    category) 去重；FK ON DELETE CASCADE 随 reference 删除清理。某参考在本表无任何行＝通用兜底。
+    """
+
+    __tablename__ = "quality_reference_category"
+    __table_args__ = (
+        UniqueConstraint("reference_id", "category", name="uq_qref_category_ref_cat"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reference_id: Mapped[int] = mapped_column(
+        ForeignKey("quality_reference.id", ondelete="CASCADE"), nullable=False
+    )  # UNIQUE(reference_id,category) 的最左前缀即满足 FK 所需索引，无需单独建 index
+    category: Mapped[str] = mapped_column(String(200), index=True)
+    question_texts: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 该类型下的问题词
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    reference: Mapped["QualityReference"] = relationship(back_populates="categories")

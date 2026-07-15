@@ -12,7 +12,7 @@ from server.app.core.security import get_current_user
 from server.app.db.session import get_db
 from server.app.modules.ai_generation.models import QuestionItem
 from server.app.modules.quality_reference import service as svc
-from server.app.modules.quality_reference.models import QualityReference
+from server.app.modules.quality_reference.models import QualityReferenceCategory
 from server.app.modules.quality_reference.schemas import (
     AdoptRequest,
     ImportRequest,
@@ -27,9 +27,9 @@ quality_reference_router = APIRouter()
 
 @quality_reference_router.post("/adopt", response_model=QualityReferenceRead)
 def adopt(p: AdoptRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    ref = svc.adopt_article(db, user_id=user.id, article_id=p.article_id)
-    if p.category and ref.category is None:  # 文章无分类时用前端补选
-        ref.category = p.category
+    ref = svc.adopt_article(
+        db, user_id=user.id, article_id=p.article_id, fallback_category=p.category
+    )
     db.commit()
     db.refresh(ref)
     return ref
@@ -43,6 +43,7 @@ def import_ext(p: ImportRequest, db: Session = Depends(get_db), user=Depends(get
         title=p.title,
         markdown=p.markdown,
         category=p.category,
+        question_texts=p.question_texts,
         source_url=p.source_url,
         platform=p.platform,
     )
@@ -78,11 +79,7 @@ def categories(db: Session = Depends(get_db), user=Depends(get_current_user)):
         .all()
     )
     r = (
-        db.execute(
-            select(QualityReference.category)
-            .where(QualityReference.category.isnot(None))
-            .distinct()
-        )
+        db.execute(select(QualityReferenceCategory.category).distinct())  # child.category
         .scalars()
         .all()
     )
@@ -116,7 +113,10 @@ def patch(
         db,
         ref_id,
         is_active=p.is_active,
-        category=p.category if p.category is not None else svc._UNSET,
+        # categories=None → 不改；显式传（含空数组）→ replace-all
+        categories=(
+            [c.model_dump() for c in p.categories] if p.categories is not None else svc._UNSET
+        ),
     )
     db.commit()
     db.refresh(ref)

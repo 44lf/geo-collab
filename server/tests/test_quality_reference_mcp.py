@@ -71,7 +71,10 @@ def test_pick_truncates_plain_text(monkeypatch):
     db = app_ctx.session_factory()
     try:
         from server.app.modules.quality_reference.models import QualityReference
-        from server.app.modules.quality_reference.service import compute_content_hash
+        from server.app.modules.quality_reference.service import (
+            compute_content_hash,
+            set_reference_categories,
+        )
 
         text = "一二三四五六七八九十"
         ref = QualityReference(
@@ -82,9 +85,10 @@ def test_pick_truncates_plain_text(monkeypatch):
             content_html="",
             plain_text=text,
             content_hash=compute_content_hash("参考", text),
-            category="通用",
         )
         db.add(ref)
+        db.flush()
+        set_reference_categories(db, ref.id, [{"category": "通用", "question_texts": None}])
         db.commit()
 
         h = {"X-MCP-Token": "secret"}
@@ -94,6 +98,7 @@ def test_pick_truncates_plain_text(monkeypatch):
         assert len(refs) == 1
         assert refs[0]["plain_text"] == text[:5]
         assert refs[0]["origin"] == "external"
+        assert refs[0]["category"] == "通用"  # 池 A 填命中类目
     finally:
         db.close()
         app_ctx.cleanup()
