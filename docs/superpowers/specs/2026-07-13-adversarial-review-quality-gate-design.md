@@ -1,249 +1,242 @@
-# 对抗评审前置门（异步质量闸门）· 设计稿
+# 对抗评审质量门（同步·in-loop 版）· 设计稿
 
-- 日期：2026-07-13
-- 状态：设计已确认，待写实现计划（writing-plans）
-- 范围：**phase-1 可落地**——在现有 `/goal` 生文 loop 与内容管理之间，插入一道服务端**异步对抗质量门**；不训练模型、判别走 LiteLLM。
-- 思路来源：`Downloads/2026-07-13-gan-discriminator-scoring-design.md`（借 GAN 判别范式）。本稿**只借思路**，数据建模与接入方式按本仓库现状重新裁剪，与来源稿多处不同（见「与来源稿的差异」）。
+- 日期：2026-07-13（初稿，异步方案）→ **2026-07-14 重写为同步方案（需求已确认）**
+- 状态：**需求已确认，待写实现计划（writing-plans）**
+- 范围：**phase-1 可落地**——在 `/goal` 生文 loop 内，**同步**给每篇新生成文章加一道「对抗判分」：verifier 子代理在同一次运行里读 1~3 篇同类高质量参考、判一个相对分作为**参考值**附到文章上；文章照常进未审核库，人审仍是最终 truth。
+- 思路来源：`Downloads/2026-07-13-gan-discriminator-scoring-design.md`（借 GAN 判别范式）。本稿只借「拿真品当参照系」的思路，落地按本仓库现状裁剪。
+- **重写说明**：初稿设计的是「入库后服务端异步 runner + scheduler + `review_status='adversarial_pending'` 状态机」。用户确认改为**同步**：生文和审核在同一次 Claude Code 运行里做完，不引入服务端异步机器、不加 review_status 值、不建待对抗审核库。旧异步方案见文末「与初稿（异步方案）的差异」。
 
 ---
 
 ## 一、背景与目标
 
-**现状**：`/goal` loop 生文后由 `geo-article-verifier` 子助手**内联自评绝对分**（4 维 0-100，门槛 `total≥70`），过线即 `review_status=pending` 进待审核库。绝对分无参照系、会漂移、奖励平庸。
+**现状**：`/goal` loop 生文后由 `geo-article-verifier` 子代理内联做 4 维自评（factuality / readability / style / policy_safety，`total≥70` 过线），过线即 `save_article` → `review_status=pending` 进未审核库。绝对分无参照系、会漂移、奖励平庸。
 
-**目标**：把「生成 → 直接进待审核」改为「生成 → **待对抗评审** → 过对抗门 → 待审核 → 人审」。对抗门用「这篇 vs 1~3 篇同类高质量真品」判 `realness` 相对分作为进人审队列的自动闸；**人审仍是最终 truth**。
+**目标**：在**保留 4 维自评**的前提下，给 verifier **后置**加一段「对抗判分」——拿这篇 vs 1~3 篇同类**高质量真品**判一个相对分（realness）。分只是**给人审多一个信号的参考值**，不改文章去向（照进未审核库）。
 
-**关键约束（用户已拍板）**：
-- 生文 loop 的**写作机制不动**（writer 子助手、选题、生成量为准）。
-- 对抗门是**唯一自动门**：删除 verifier 内联自评。
-- 对抗门**异步**跑（定时 / 手动；不阻塞 loop）。
-- 高质量库是**会员表 FK→articles**，不复用来源稿的 snapshot 建模。
-- 分类用**源问题分类去规范化字符串**，不新建 taxonomy。
+**关键约束（用户已确认）**：
+- **同步 in-loop**：对抗判分在 verifier 子代理里跑完，通过 MCP 工具 + skill 实现；**无服务端异步 runner / scheduler / per-save 触发**。
+- **对抗分纯 advisory**：文章无论对抗分高低都进未审核库；loop 的 retry / 停止条件**仍挂在 4 维自评**上（不改今天的循环逻辑）。
+- **不动 `review_status`**：不加 `adversarial_pending` 值、不建待对抗审核库（`save` 仍置 `pending`）。
+- **高质量库自包含**：外部参考文章可**不入 articles 表**，`quality_reference` 表**违反范式**存三份正文快照（含 Tiptap `content_json`，为将来判图保住图节点）；自产文章采纳时也快照进来（不留活引用）。
+- **判分零配置**：判分由 host（Claude 子代理）做，不调服务端 LiteLLM；判分规则写在 skill markdown 里。
+- **问题溯源只做 /goal**：文章加 `source_question_category` + `source_question_texts`，只在 MCP save 路径填；scheme / pipeline 生文路径不碰。
 
 ---
 
-## 二、数据流总览
+## 二、数据流总览（同步）
 
 ```
-loop 生文（writer 子助手不变）
-   │  save-from-mcp：落 source_question_category 快照 + review_status = adversarial_pending
+/goal orchestrator（每篇一个全新上下文的 verifier 子代理）
+   │
    ▼
-┌──────────── 待对抗评审 review_status = adversarial_pending ────────────┐
-│  异步对抗门 runner（定时线程 / 手动端点触发）                             │
-│   ① 取一篇 adversarial_pending 文章                                     │
-│   ② 按 source_question_category 召回 1~3 篇高质量参考（万能字段兜底）    │
-│   ③ LLM 判别 → realness / gap_diagnosis / policy_safety                │
-│   ④ 写 adversarial_review_results 一行                                  │
-│   ⑤ policy_safety ≥ 硬线 且 realness ≥ 过线 → review_status = pending   │
-│       否则留 adversarial_pending（前置页可见分数/诊断、人工干预）        │
-└────────────────────────────────────────────────────────────────────┘
-   │  过门
+verifier 子代理：
+   ① get_article 读候选（+ source_question_category / source_question_texts）
+   ② 4 维自评（前置，保留）——不过线：短路，不判对抗，按 4 维走 retry/换题
+   ③ 过线 → 循环 N 次：
+        pick_quality_references(category, k)  # 服务端随机取 k 篇、正文截断
+        依 skill 内的对抗判分规则给一个 realness 分
+   ④ N 个分在 skill 内求平均
+   ⑤ record_adversarial_score(article_id, 平均分)   # 只写一个数
+   │
    ▼
-待审核库 review_status = pending → 人工审核 → approved → 可分发
+文章照常在未审核库（review_status=pending），列表多显一个对抗分字段，人审最终裁定
 ```
 
-**三不变式**：
-1. 人审仍是最终 truth——对抗门只在 `pending` 之前挡，不动 `approved`。
-2. 检索/判别失败或库空 → **降级不阻塞**（记 `degraded` 直接放行）。
-3. 计数事实查 DB——loop 停止条件按 DB 生成量，不信子助手自报。
+**不变式**：
+1. 人审仍是最终 truth——对抗分只是附加信号，不做任何自动闸。
+2. 参考库空 / 判分异常 → 降级：跳过对抗判分（`adversarial_score` 留 NULL），不阻塞、不影响 4 维走向。
+3. loop 计数 / 停止 / retry 全挂 4 维自评，与今天一致；对抗判分是纯附加步。
 
 ---
 
 ## 三、数据模型改动
 
-### 3.1 `articles` 表加 3 列（迁移）
+### 3.1 `articles` 表加 3 列（全 nullable，迁移）
 
 | 列 | 类型 | 用途 |
 |---|---|---|
-| `source_question_category` | `varchar(200)` null, index | 去规范化存源问题分类（`QuestionItem.category` 快照）；对抗门检索的 join key |
-| `is_reference` | `bool` default 0, server_default `'0'`, index | 参考/竞品文章标志；内容列表 & 分发查询过滤掉 |
-| `review_status` 枚举**加值** | — | 迁移改 CHECK `ck_articles_review_status`：`review_status in ('adversarial_pending','pending','approved')` |
+| `source_question_category` | `varchar(200)` null, index | 去规范化快照：这篇来自哪个问题类别（`QuestionItem.category`）。参考匹配键 + 采纳时自动带分类 |
+| `source_question_texts` | `JSON` null | 去规范化快照：这篇用了哪些提问词（`["提问词A","提问词B"]`，一个类别可选 1~N 词）。仅记录/后续按词筛选用 |
+| `adversarial_score` | `int` null | 对抗判分（N 次求平均）。NULL=未判 / 降级 |
 
-- `review_status` 默认值仍 `approved`（既有 + 手工内容语义不变）；仅 loop 的 save 路径显式置 `adversarial_pending`。
-- `source_question_category` 沿用现有 `source_agent_name` / `source_template_name` 的「去规范化仅展示/检索、不做外键」惯例。
+- **`review_status` 一个字不改**（不加值、CHECK 不动、model `__table_args__` 不动）。文章照旧默认 `approved`、loop save 路径置 `pending`。
+- 两个 `source_question_*` 沿用 `source_agent_name` / `source_template_name` 的「去规范化仅展示/检索、不做外键」惯例——`question_items` 是飞书镜像（会软删/重同步），FK 会烂，故只快照。
+- `source_question_texts` 用 JSON 数组而非分隔符串：提问词是自由中文、本身含顿号/逗号，任何分隔符都会撞内容；JSON 支持后续 `JSON_CONTAINS` 按问题词精确筛选。
 
-### 3.2 新表 `quality_reference`（会员表，FK→articles）
-
-| 列 | 类型 | 说明 |
-|---|---|---|
-| `id` | int PK | |
-| `article_id` | int FK→articles(ON DELETE CASCADE) NOT NULL, **unique** | 金标准成员；自产精品 + 手录竞品都先入 `articles` 再标成员 |
-| `category` | `varchar(200)` null, index | 分类覆写；空则回退文章的 `source_question_category` |
-| `source` | `varchar(30)` | `own_approved` / `competitor_manual` / `competitor_crawled`（预留，phase-1 不做） |
-| `source_url` | `varchar(1000)` null | 竞品来源链接（可选） |
-| `platform` | `varchar(100)` null | 竞品来源平台（可选） |
-| `added_by` | `varchar(120)` | 采纳/录入人（MCP 路径取 operator id 字样） |
-| `is_active` | `bool` default 1, index | 下架开关（劣质样本停用不删，防污染 real 分布） |
-| `created_at` | datetime | |
-
-### 3.3 新表 `adversarial_review_results`（判别结果，FK→articles）
+### 3.2 新表 `quality_reference`（自包含快照，非纯 FK 会员表）
 
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id` | int PK | |
-| `article_id` | int FK→articles(ON DELETE CASCADE), index | 被判文章（一对多：每跑一次写一行，保留历史） |
-| `realness` | int null | 0-100 主判分；`degraded` 时为 null |
-| `policy_safety` | int null | 合规分（硬否决用）；`degraded` 时为 null |
-| `verdict` | `varchar(20)` | `passed` / `failed` / `degraded`（无参考/判别失败的放行降级） |
-| `gap_diagnosis` | text null | 与真品差距诊断（回流下一轮参考） |
-| `ref_article_ids` | JSON | 本次用了哪几篇参考（`[]` 时说明降级） |
-| `model_label` | `varchar(120)` null | 判别所用 LiteLLM 模型串 |
-| `trigger_source` | `varchar(20)` | `scheduled` / `manual` / `per_save` |
-| `created_at` | datetime | |
+| `origin` | `enum('own','external')` NOT NULL, index | **清晰的来源标志，服务端按入口盖章、绝不手填**（见 §4） |
+| `article_id` | int FK→articles(ON DELETE **SET NULL**), null, **UNIQUE** | 自产溯源 + 防同一篇重复采纳；外部文章 = NULL。SET NULL：删源文章不删已冻结的参考快照 |
+| `title` | `varchar(300)` NOT NULL | 快照 |
+| `content_json` | `Text` | Tiptap 结构快照（含 image 节点）→ 只读渲染 + 将来判图的图源 |
+| `content_html` | `Text` | 渲染 HTML 快照（转换器免费产） |
+| `plain_text` | `Text` NOT NULL | 判分文本材料 + `content_hash` 归一化源 |
+| `content_hash` | `char(64)` NOT NULL, index | `sha256(归一化(title + plain_text))`，外部粘贴查重 |
+| `category` | `varchar(200)` null, index | 参考匹配键。**可空**（外部允许不填）；空 = 通用兜底池 |
+| `source_url` | `varchar(1000)` null | 外部溯源（可选） |
+| `platform` | `varchar(100)` null | 外部来源平台（可选） |
+| `added_by_user_id` | int FK→users, null | 采纳/录入人（接口走 user JWT，存真实用户 FK） |
+| `is_active` | bool default 1, index | 下架开关（劣质样本停用不删，防污染 real 分布） |
+| `created_at` / `updated_at` | datetime | |
 
-> 刻意**不复用 `AutoReviewDecision`**（用户明确要单独建表）；两者语义、生命周期、消费方均不同。
+外加 `FULLTEXT(plain_text) WITH PARSER ngram`（近似查重软提示，phase-1 做）。
 
----
+**三份正文是故意的快照冗余**：参考不可变（只读不改），CLAUDE.md「三份要同步」的坑只在编辑时成立，这里插入即冻结、无同步负担。自产采纳时**拷贝**源文章三份（不留活 FK 引用），源文章日后改/删不影响这份「金标准」。
 
-## 四、save 路径 & 分类落库
-
-- `SaveArticleFromMcpPayload` / MCP `save_article` **工具签名不变**——后端已有 `question_item_id`，在 `save_article_from_mcp` 内查 `item.category` 直接快照进 `article.source_question_category`。
-- 同一函数把 `review_status` 由 `"pending"` 改为 **`"adversarial_pending"`**。
-- 竞品手录路径（见 §六）建 article 时置 `is_reference=True` + `review_status='approved'`（终态，**不落 adversarial_pending 队列、也不落待审队列**），发布安全靠 `is_reference` 过滤兜底（§八），并写 `source_question_category = category`。
-
-> 结论：比最初设想的「改 MCP 签名」更省——分类是后端从 `question_item_id` 派生的一列快照，MCP 层零改。
+> 刻意**不复用 `AutoReviewDecision`**、也**不建对抗判分历史表**：对抗分只存一个平均数在文章上（§7），参考明细 / 每次用哪几篇都不记（N 次随机取参考、太多且用不上）。
 
 ---
 
-## 五、对抗评审 runner（核心新模块）
+## 四、高质量库 CRUD + 查重（user JWT）
 
-新模块 `server/app/modules/adversarial_review/`：`models.py` + `service.py` + `router.py` + `scheduler.py`，各文件单一职责。
+**可见性**：高质量库是**全员共享的组织级金标准池**（沿用问题池的共享语义）——任何登录用户可 CRUD，`pick_quality_references`（MCP，loop 侧）看全部 `is_active=True`、**不按用户过滤**；`adopt` 仅校验源文章对本人可见（admin 不限）。`added_by_user_id` 仅作溯源、不作可见性过滤。
 
-### 5.1 判别一篇（纯函数式 + 短生命周期 session）
+来源由**入口**决定、服务端盖章，用户永不手填 `origin`（同 `save_article_from_mcp` 服务端盖 `source_agent_name` 的纪律）：
 
-```pseudo
-review_one(article_id, trigger_source):
-    a = get_article(article_id)                       # plain_text + source_question_category
-    refs = pick_refs(category=a.source_question_category, k=TOPK)   # §5.2
-    if len(refs) == 0:                                # 防御性：万能库也空（理论上不出现）
-        write_result(verdict="degraded", refs=[]); promote_to_pending(a); return
-    v = llm_judge(refs, a)                            # §5.4，LiteLLM ai_format 模型
-    write_result(realness=v.realness, policy_safety=v.policy_safety,
-                 gap_diagnosis=v.gap, ref_article_ids=[r.id for r in refs],
-                 verdict=("passed" if _passes(v) else "failed"),
-                 trigger_source=trigger_source)
-    if _passes(v):                                    # policy 硬线 且 realness 过线
-        promote_to_pending(a)                         # review_status: adversarial_pending → pending
-    # 否则留 adversarial_pending（前置页人工处置）
-
-_passes(v) := v.policy_safety >= POLICY_HARD_MIN and v.realness >= REALNESS_PASS
-promote_to_pending(a) := a.review_status = "pending"（仅当当前为 adversarial_pending 时）
-```
-
-### 5.2 检索（phase-1 简单版）
-
-- 按 `source_question_category` 过滤 `quality_reference`（`is_active=True` join `articles`），取**最近 1~3 篇**（`created_at` desc，`limit=TOPK`）。
-- **万能字段兜底**：先按真实类目召回；命中 0 篇则回落「万能」类目（哨兵串，见 §六）再召回。**有多少用多少**（1~3 篇），不设 `MIN_REFS` 硬地板——万能库种子保证恒 ≥1。
-- **不做 ngram / 向量**（留 phase-2）——早期语料小、全万能类目，类目过滤足够。
-
-### 5.3 触发（三种形式）
-
-- **手动**：`POST /api/adversarial-review/run`（批量跑当前 `adversarial_pending`，可带 `limit`）+ `POST /api/articles/{id}/adversarial-review`（跑单篇）。MCP token 与 user JWT 各一份（前置页按钮 / Loop 侧各用）。
-- **定时**：`scheduler.py` 后台线程，开关 `GEO_ADVERSARIAL_SCHEDULER_ENABLED`（默认关）、周期 `GEO_ADVERSARIAL_SCHEDULER_INTERVAL_SECONDS`、时区 `GEO_SCHEDULER_TZ`。复用 pipeline scheduler 的**条件 UPDATE claim** 范式防重叠；批量扫 `adversarial_pending`。**仅同 web 进程后台线程**（与 generation/pipeline 一致，无独立 worker），`bg_session_factory=SessionLocal`。
-- **per-save 异步（可选，默认关）**：save 成功后 best-effort spawn 一次 `review_one(trigger_source="per_save")`，实现「刚生成马上判」。开关 `GEO_ADVERSARIAL_PER_SAVE_ENABLED`。
-
-### 5.4 LLM 判别
-
-- 走 LiteLLM `ai_format` 模型（同 `auto_review.score_articles` 解析路径，须短生命周期 session）。
-- Prompt 结构：给「1~3 篇真实高质量文（real）+ 1 篇待判文（fake）」，要求输出 JSON `{realness:0-100, policy_safety:0-100, gap_diagnosis:str}`，判「更像真品高质量，还是像典型 AI 水文」。
-- 异常一律走 `core/mcp_errors.mcp_exception_response`（MCP 端点）/ 记 `verdict="degraded"` 放行（定时/批量路径 best-effort，单篇失败不拖累整批）。
-
-### 5.5 冷启动 / 降级
-
-- 正常路径：万能库种子保证恒有参考，`review_one` 走完整判别。
-- 防御性降级（理论上不触发）：召回 0 篇或 `llm_judge` 抛错 → 记 `verdict="degraded"` + **直接放行进 pending**，不阻塞。`degraded` 计数供运营判断「该补哪个类目的库」。
-- **上线前置**：给「万能」类目高质量库人工灌 ≥5 篇种子。
-
----
-
-## 六、高质量库管理（CRUD 模块）
-
-`quality_reference` 接口（user JWT，前端 / 运营用）：
-
-- `POST /api/quality-reference/adopt` — 采纳一篇 `approved` 自产文章：`{article_id}` → 建 `quality_reference` 行（`source=own_approved`）。文章本体不动。
-- `POST /api/quality-reference/import-competitor` — 手录竞品：`{title, markdown, category, source_url?, platform?}` → 建 article（`is_reference=True` + `review_status='approved'` + `markdown_to_tiptap/html` + `source_question_category=category`）+ 建 `quality_reference` 行（`source=competitor_manual`）。
-- `GET /api/quality-reference` — 列表（按 `category` / `source` / `is_active` 过滤 + 分页）。
+- `POST /api/quality-reference/adopt` — **采纳站内文章**（自产快速录入）：`{article_id}`。
+  - 服务端硬校验 `review_status='approved'` + 属本人 + 未删（高质量文章必已过审）；
+  - 快照文章三份正文 + title + `category = article.source_question_category`（无则前端回落下拉选）；
+  - 置 `origin='own'`、填 `article_id`、算 `content_hash`；
+  - 前端「采纳」入口 = 搜索框（**全数字→按 id 精确 `get_article`；否则→标题/正文 FTS `list_articles(query=, review_status='approved', user_id=me)`**）+ 结果列表（已采纳的靠 `article_id UNIQUE` 置灰/幂等）+ 一键采纳。
+- `POST /api/quality-reference/import` — **录入外部文章**：`{title, markdown, category?, source_url?, platform?}`。
+  - `markdown_to_tiptap` / `markdown_to_html`（复用 save 路径那对转换器）出三份正文；`plain_text` = 归一化 markdown；
+  - 置 `origin='external'`、`article_id=NULL`、算 `content_hash`；
+  - 表单极简：title + category（下拉，可留空）+ 一个 markdown 粘贴框 + 可选 url/platform。
+- `GET /api/quality-reference` — 列表（按 `origin` / `category` / `is_active` 过滤 + 分页）。
 - `PATCH /api/quality-reference/{id}` — 下架 / 改类目（`is_active` / `category`）。
 
-**万能字段**：手录一批历史文章时 `category="通用"`（哨兵串，配置化 `GEO_QUALITY_UNIVERSAL_CATEGORY`）统一填充；后续普通生文各自带真实 `source_question_category`。检索先按真实类目、命中不足回落「通用」。
+**category 下拉候选源** = `QuestionItem.category`（问题分类）∪ 已有 `quality_reference.category`（去重）。**选不打**——`pick_refs` 靠 category 字符串精确匹配，手打会把同一类目劈成好几个、参考永远匹配不上候选。
+
+**查重两层**：
+- **exact（硬，幂等）**：`article_id UNIQUE`（自产不重复采纳）+ 插入前查 `content_hash`；命中 → **返回/复活已有那条**（含撞到 `is_active=False` 的旧行时提示重启用），不报错、不建重复行。
+- **near-dup（软，给人判）**：`import` 时拿粘贴正文前 N 字跑 `MATCH...AGAINST`（ngram），top-K 命中列为「疑似重复」让人眼判，**不硬挡**（模糊匹配有误报）。
 
 ---
 
-## 七、Loop skills 改动（对抗门唯一自动门 + 生成量停）
+## 五、MCP 工具（+2，`MCP_TOOLS_COUNT` 27→29）
 
-- **删 verifier**：orchestrator 主循环删掉 verifier subagent 段（`geo-goal-orchestrator/SKILL.md:255-316` 区块）；`geo-article-verifier` skill 从 loop 流程下线（保留文件休眠或删，实现计划再定）。
-- **删 loop 内重写**：`REWRITE_CAP` / `prior_feedback` / `q_exact` 重写整套移除——失败即换下一题（重写预算恒 0）。`问题Id=` / 题材 / 模板锁**仍决定 worklist 选取**，但不再触发同题重写。重写职责让位给「对抗门不过 → 前置页人工触发重写 / 换题」。
-- **停止条件改生成量**：退出闸门由「数 verifier approved 决策」改为「数今日 loop 生成量」——按 `source_agent_name="loop"` + `metrics.writer_model==model_label` + `created_at` 窗口数 `Article` 行。`netto.count >= N_eff` 即停。
-  - 后端：`auto_review/service.py` 的 `list_recent_decisions` 旁加 `count_loop_generated(model_label, since_hours)`（数 Article：`source_agent_name="loop"` + `metrics.writer_model` + `created_at` 窗口，不数 AutoReviewDecision）。
-  - MCP：**不改** `list_today_loop_articles` 既有 `decided_by` 语义（其它 loop 配方可能依赖），**新增姊妹端点/工具** `list_today_generated`（MCP token）供 orchestrator 停止条件调用。
-- **writer 不变**：仍写 markdown + `save_article`；配图时机由 orchestrator 保留（save 后 review_status 自动为 adversarial_pending，writer 无感）。
-- **叙述规范**：orchestrator 主对话叙述新增术语映射（「待对抗评审」「对抗门」中文表述），沿用现有「禁英文/内部术语」纪律。
+- `pick_quality_references(category, k)` — 服务端按 category 取 `is_active=True` 参考：**先精确类目、不足回落 `category IS NULL` 通用池**；**每池内优先取 `origin='external'`（人写/竞品）、`own` 只补足**——命门：不让池子被自产 AI 稿占满退化成「AI 判 AI」；随机取 ≤k 篇（不用 recency——非质量信号、小库过拟合）；**返回时每篇 `plain_text` 服务端截断**（`GEO_ADVERSARIAL_REF_TRUNCATE_CHARS`，复用 auto_review `[:4000]` 惯例）保护子代理上下文，**返回项带 `origin`** 让 skill/人审看得到混合比例。phase-1 返回 `plain_text`（判文字）；`content_json`/图 URL 留 phase-2 判图时再返。
+- `record_adversarial_score(article_id, score)` — 只写 `articles.adversarial_score`（skill 已在 skill 内对 N 次判分求平均，传一个数）。不写明细。
+
+两工具都走 `Depends(require_mcp_token)` 子路由 + `mcp_exception_response` 兜底。`save_article` / `get_article` 复用现有。
 
 ---
 
-## 八、前端前置页
+## 六、save 路径 & 问题溯源（只做 /goal）
 
-- 内容管理**前面加「待对抗评审」页**（`web/src/features/content/` 新增视图 + `web/src/api/` 对应客户端）：
-  - 列 `review_status='adversarial_pending'` 文章 + 最新一条 `adversarial_review_results`（realness / verdict / gap_diagnosis）。
-  - 操作：手动触发判别（单篇 / 批量）、直接放行进待审核、查看差距诊断。
-- 内容列表主页查询（`articles/services/feed.py` 的 list 查询）过滤掉 `is_reference=True` 与 `adversarial_pending`（只显 `pending`/`approved` 的可运营内容）；分发相关查询同样排除 `is_reference`。
-
----
-
-## 九、MCP 工具 & 端点清单
-
-- 新后端端点：
-  - `adversarial-review/*`：批量 run / 单篇 run / list pending（MCP token + user JWT）。
-  - `quality-reference/*`：adopt / import-competitor / list / patch（user JWT）。
-- 新 MCP 工具：`list_today_generated`（orchestrator 停止条件必需，见 §七）；其余按 Loop 侧是否需要（实现计划再定最小集）：候选 `run_adversarial_review` / `adopt_quality_reference` / `import_competitor_reference`。
-- **`MCP_TOOLS_COUNT`（`mcp_catalog/connect_router.py`）随新增工具数同步更新**。
-- `save_article` 路径行为改（§四），**工具签名不变**。
+- `save_article_from_mcp`（[articles/routers/mcp.py](../../server/app/modules/articles/routers/mcp.py)）payload 加**可选** `question_item_ids: list[int]`（不传 → 回落 `[question_item_id]`，向后兼容）。
+- 服务端按这批 item 快照：`source_question_category`（同批共有的类别；一个类别一篇文章）+ `source_question_texts = [item.question_text ...]`。
+- 工具签名相应扩展（`save_article` 加可选 `question_item_ids`）；`/goal` writer/orchestrator skill 传它用了的问题项列表。
+- **scheme_executor / pipeline（ai_generate·ai_compose·question_source）一律不碰**——那些路径的 `source_question_*` 留 NULL（列 nullable，无副作用）。将来要全铺是独立增强，本期不做。
 
 ---
 
-## 十、阈值配置（`GEO_` 前缀）
+## 七、verifier skill 改动（`geo-article-verifier` + orchestrator）
+
+- **保留 4 维自评**（前置）：完全不动今天的评分 + `submit_review_decision`；retry / netto 停止条件**仍挂 4 维**（初稿「删 verifier + 改数生成量」的方案**作废**）。
+- **后置加对抗判分**：
+  1. **短路**——4 维不过线就不判对抗（烂稿不付加载参考的上下文，代价是这类稿 `adversarial_score` 留 NULL，可接受）；
+  2. 过线 → 循环 N 次：`pick_quality_references(category, k)`（每次随机取，参考各异）→ 依 skill 内判分规则给一个 realness；
+  3. N 个分**在 skill 内求平均** → `record_adversarial_score(article_id, 平均分)`；
+  4. 参考库空 / 判分异常 → 跳过（不写分、不阻塞）。
+- **对抗判分规则 + 提示词写在 skill markdown 里**（host 判分、零配置；不建服务端 prompt_templates scope、不做 jinja2 tab）。N 的大小、判分规则都在 skill 里调，服务端不动。
+- **writer**：`save_article` 时带 `question_item_ids` 列表（§6）。
+- **category 从哪来**：verifier 靠 `article_id` → `get_article` 读 `source_question_category`，凭 id 即自足、不用外部再喂。
+
+---
+
+## 八、前端
+
+- **新增「高质量库」管理页**（`web/src/features/` 下新 feature + `web/src/api/` 客户端）：
+  - 列表（按 origin/category/is_active 过滤）；
+  - 「采纳站内文章」入口（搜 id/标题 + 一键）；「录入外部文章」入口（markdown 粘贴表单）；
+  - 点某条 → **只读 Tiptap 查看器**（`editable:false`、无工具栏/保存键，加载 `content_json`）。**遵守 Tiptap v3 纪律**：StarterKit 已内置 link/underline，不重复注册（否则含链接文档 setContent 会空白，见 `bug-permalink-deeplink-blank-tiptap-v3`）。
+- **文章列表**：现有四维分（`auto_review_score`）旁**新增对抗分字段**（`adversarial_score`）——`ArticleListRead` 加一列、[feed.py serialize_article_summaries](../../server/app/modules/articles/services/feed.py) 照 `auto_review_score` 那样多拼一个。
+
+---
+
+## 九、配置（`GEO_` 前缀）
 
 | 配置 | 默认 | 用途 |
 |---|---|---|
-| `GEO_ADVERSARIAL_REALNESS_PASS` | 65 | 主闸门过线分 |
-| `GEO_ADVERSARIAL_POLICY_HARD_MIN` | 80 | 合规硬否决线 |
-| `GEO_ADVERSARIAL_TOPK` | 3 | 召回参考上限（有多少用多少，≤ 此值） |
-| `GEO_ADVERSARIAL_SCHEDULER_ENABLED` | false | 定时对抗门开关 |
-| `GEO_ADVERSARIAL_SCHEDULER_INTERVAL_SECONDS` | 300 | 定时周期 |
-| `GEO_ADVERSARIAL_PER_SAVE_ENABLED` | false | per-save 异步开关 |
-| `GEO_QUALITY_UNIVERSAL_CATEGORY` | `通用` | 万能字段哨兵串 |
+| `GEO_ADVERSARIAL_TOPK` | 3 | `pick_quality_references` 单次召回上限（有多少用多少，≤ 此值） |
+| `GEO_ADVERSARIAL_REF_TRUNCATE_CHARS` | 4000 | 单篇参考 `plain_text` 返回截断长度（保护子代理上下文） |
+
+> 判分阈值 / N 次数 / policy 硬线**不在服务端配**——判分是 host（skill）做的，这些都在 skill markdown 里；对抗分纯 advisory、无服务端闸门。
 
 ---
 
-## 十一、分期
+## 十、分期
 
-- **Phase-1（本次）**：3 列迁移（含 CHECK 改值）+ 两新表 + save 路由改 + 对抗 runner（检索 / 判别 / promote / 降级）+ 手动 & 定时触发 + 库 CRUD + loop 停止条件改 & 删 verifier/重写 + 前置页 + 万能库灌种子。
-- **Phase-2（later，本稿不做，仅标注）**：ngram / 语义检索、per-save 内联默认开、竞品自动采集（`competitor_crawled`）、判别通过率 / 一致性看板、对抗门不过的自动重写回流、成对 ELO。
-
----
-
-## 十二、测试
-
-- 迁移：CHECK 约束新值可写 `adversarial_pending`、旧值仍合法；两新表建成 + FK/唯一约束生效（`@pytest.mark.mysql`）。
-- `review_one` 纯函数：过线 / 不过线 / 0 参考降级三分支；`promote_to_pending` 仅在 adversarial_pending 时迁移。
-- 检索 `pick_refs`：真实类目命中 / 回落万能 / 取 1~3 篇上限。
-- scheduler：条件 UPDATE claim 防重叠（同 pipeline scheduler 测法）。
-- save 路由：`save_article_from_mcp` 落 `adversarial_pending` + `source_question_category` 快照。
-- 内容列表：`is_reference=True` 与 `adversarial_pending` 被主列表 / 分发查询过滤。
-- netto：`count_loop_generated` 按 `source_agent_name` + `writer_model` + 时间窗计数正确。
-- 库 CRUD：adopt（自产）/ import-competitor（建 is_reference article + 成员行）/ 下架。
+- **Phase-1（本次）**：
+  - **W1 · 对抗审核核心**：3 列迁移中的 `adversarial_score` + `source_question_category` / 新表 `quality_reference`（三份快照 + content_hash + ngram）+ CRUD（adopt/import/list/patch）+ 查重（exact 幂等 + ngram 软提示）+ `pick_quality_references` / `record_adversarial_score` 两 MCP 工具 + verifier skill 后置对抗判分（短路 + N 次平均）+ 前端高质量库页（含只读 Tiptap）+ 文章列表加对抗分字段。
+  - **W2 · 问题溯源（只 /goal）**：`source_question_texts` JSON 列 + `save_article_from_mcp` 加可选 `question_item_ids` 快照 category + texts + writer skill 传列表。
+- **Phase-2（本稿不做，仅标注）**：判图（`pick_quality_references` 返 `content_json`/图 URL）、外部 URL 抓正文 / 批量导入、问题溯源全铺（scheme + pipeline 路径）、对抗判分历史表 / 通过率看板、成对 ELO。
 
 ---
 
-## 十三、与来源稿的差异（借思路不照搬）
+## 十一、测试
 
-| 维度 | 来源稿 | 本稿（按仓库现状） |
+- 迁移：3 列建成且 nullable、`review_status` CHECK **未变**；`quality_reference` 建成 + `article_id` UNIQUE / `origin` enum / FK SET NULL / ngram FULLTEXT 生效（`@pytest.mark.mysql`）。
+- CRUD：`adopt`（仅 approved、快照三份、category 从 `source_question_category`、`origin='own'`）/ `import`（三份转换、`origin='external'`、category 可空）/ 下架 / 改类。
+- 查重：`content_hash` 撞车走幂等复活（含已下架重启用）；`article_id` 重复采纳被 UNIQUE 挡；ngram 疑似重复返回 top-K 不硬挡。
+- `pick_quality_references`：精确类目命中 / 回落 `category IS NULL` 通用池 / 随机取 ≤k / 每篇 `plain_text` 服务端截断到配置长度。
+- `record_adversarial_score`：只写 `articles.adversarial_score`，不动其它。
+- save 路径：`save_article_from_mcp` 传 `question_item_ids` → 快照 `source_question_category` + `source_question_texts`（JSON 列表）；不传时回落单个。
+- 前端序列化：`ArticleListRead` 带出 `adversarial_score`；只读 Tiptap 加载 `content_json` 不重复注册扩展。
+- 不回归：`review_status` 语义 / feed 两 tab / `_validate_articles_approved` 全不变（本设计不碰）。
+
+---
+
+## 十二、与初稿（异步方案）的差异
+
+| 维度 | 初稿（异步） | 本稿（同步，已确认） |
 |---|---|---|
-| 分类字段 | 新 `quality_reference.category` 自由串 + 文章侧未定 | **源问题分类 `QuestionItem.category` 去规范化快照**进 `articles.source_question_category` |
-| 高质量库 | snapshot 表（自带 title/plain_text） | **会员表 FK→articles**（竞品也入 articles + `is_reference`） |
-| 判别定位 | 替换 verifier 的**同步**主闸门 | **异步前置门**：生成 → adversarial_pending →（异步过门）→ pending |
-| 判别结果表 | 复用 `AutoReviewDecision` | **单独新表 `adversarial_review_results`** |
-| loop 停止 | 沿用 netto 过审数 | **改数生成量**（真异步，删 verifier + loop 内重写） |
-| 检索 | ngram FTS | **类目过滤取最近 1~3**（ngram 留 phase-2） |
-| 冷启动 | `< MIN_REFS` 退回绝对分 | **有多少用多少**（万能兜底恒 ≥1）；0 参考才防御性 degraded 放行 |
-| review_status | 不动 | **加 `adversarial_pending` 值**（迁移改 CHECK） |
+| 判别时机 | 入库后服务端异步 runner + scheduler | **同步 in-loop**，verifier 子代理里跑（MCP + skill） |
+| 状态机 | `review_status` 加 `adversarial_pending` + promote 到 pending | **不动 review_status**，文章照进未审核库 |
+| 定位 | 进人审队列的**自动闸** | **纯 advisory 参考值**，不做闸 |
+| 竞品参考 | 入 articles + `is_reference` / `review_status='reference'` 过滤 | **只入 `quality_reference`（三份快照）**，不进 articles → 无分发 footgun |
+| 高质量库 | 纯 FK 会员表 | **自包含快照表**（三份正文，含 content_json 判图） |
+| 判分执行 | 服务端 LiteLLM | **host 子代理判分**（零配置），规则在 skill |
+| 判分结果 | 单独 `adversarial_review_results` 表（realness/policy/gap/ref_ids…） | **只一个 `articles.adversarial_score`**（N 次求平均），无明细无历史表 |
+| verifier | 删除 | **保留 4 维（前置）**，后置加对抗判分 |
+| loop 停止 | 改数生成量 | **仍挂 4 维**（不变） |
+| 触发 | scheduler 默认开 + per-save | **无服务端触发**，skill 顺序跑 |
+| 提示词管理 | 服务端 prompt_templates scope + jinja2 tab | **写在 skill markdown**（不建 scope / tab） |
+| 问题溯源 | — | 加 `source_question_category` + `source_question_texts`，**仅 /goal 路径** |
+
+---
+
+## 十三、Codex 二轮审核后的决策与修正（2026-07-14）
+
+两轮对抗审核后，以下为最终定案。前文与本节冲突时**以本节为准**。
+
+### 13.1 用户拍板的 3 个设计决策
+
+- **库治理：维持全员可写（接受风险）。** `import`/`adopt`/`patch` 任一登录用户可写，不设 admin/curator 门、不加 `is_trusted` 字段。
+- **问题溯源：本期只存单题。** `source_question_texts` 存 `[单条 question_text]`（列仍为 JSON 数组，留 phase-2 多题）；`save_article` **不加** `question_item_ids` 参数、**不改 orchestrator**。
+- **对抗分时效：不加时效字段。** 只 `articles.adversarial_score` 一列，不加 `scored_version`/`scored_at`；文章编辑后分不失效。
+
+### 13.2 明确接受的风险（知情选择，非疏漏）
+
+- **命门未完全关闭**：`external` 不是质量证明（任何登录用户可粘 AI 稿标成 external），`pick` 在 external 不足时会补 `own` → 语料退化时可能变「AI 判 AI」。**缓解**（必须做）：`pick` 每池**优先 external**、返回项带 `origin`；前端展示 external/own 配比 + 覆盖告警，让人看得见退化。**残留风险由用户接受。**
+- **分可能陈旧**：文章编辑后 `adversarial_score` 不失效，人审可能看到对不上正文的旧分。纯 advisory、人审兜底，用户接受。
+- **N 次平均是同模型同上下文连判**，非独立评委，属方差平滑而非校准；分是**粗信号**、非精确 0-100。文档层承认，不追求精确度。
+
+### 13.3 集成契约修正（二轮 Codex 核实，plan v2 必须实现）
+
+- **`get_article` 要暴露溯源字段**：`ArticleRead` + `to_article_read` 加 `source_question_category` + `source_question_texts`，否则 verifier 读不到分类去 `pick`（`ArticleRead` 现无此字段，schemas.py:121）。
+- **参考详情端点**：新增 `GET /api/quality-reference/{id}` 返回三份正文，供只读 Tiptap 渲染（列表 schema 保持轻量、不含正文）。
+- **`origin` 用 ENUM/CHECK**（非裸 `String`）；**`content_hash` 加 UNIQUE**（否则并发 check-then-insert 照插重复、且无冲突可 catch）。
+- **外部 `content_html` 过 `nh3.clean`**（`markdown_to_html` 保留 raw HTML → 存储型 XSS；文章路径本就走 nh3，schemas.py:59）。
+- **near-dup 真接线**：`import` 先查 `find_similar`、响应显式返回 `similar`；FTS 故障记日志（不静默吞成空）。
+- **`pick` 端点做成 GET**，MCP 工具复用 catalog 的 `_aget`（catalog.py 无 `_apost`）。
+- **软删语义**：文章软删（`is_deleted=True`）不触发 FK `SET NULL`，`article_id` 仍指向软删文章；前端来源链接按 `article.is_deleted` 显示「原文已删」，别把 `SET NULL` 描述成现有删除行为。
+- **skill 发布走 DB**：改 verifier/writer 模板后，必须幂等建新 `SkillVersion` 并设 `goal.current_version_id`（seed 脚本见 `goal` 存在即 skip、本机覆盖只算冒烟；"未 bump CI 红"已过时）。
+- **测试真跑迁移**：`build_test_app` 用 `create_all`（新模型要进 `utils.py` 的 `_model_modules`、qref 的 ngram 要补进 reset），**迁移链/FK/ENUM/FULLTEXT 只能靠真 `alembic upgrade head` 验**（`test_fts_and_migrations.py` 那条），别用 create_all 假绿。
+- **前端是 fetch 不是 axios**：用 `api<T>(path, RequestInit)`（core.ts:23）；页面走 `routes.tsx` lazy route + `types.ts` NavKey/navItems + `App.tsx` 导航映射（**无 visitedTabs**）。
+- **`MCP_TOOLS_COUNT` 27→29**：断言在 `test_mcp_status_count.py` + `test_mcp_tools_registration.py`（非 catalog）；`CLAUDE.md` 的 26/27 也同步 29。
