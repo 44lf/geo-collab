@@ -80,6 +80,7 @@ from server.app.modules.mcp_catalog.router import router as mcp_catalog_router
 from server.app.modules.performance.router import router as performance_router
 from server.app.modules.pipelines.router import router as pipelines_router
 from server.app.modules.prompt_templates.router import router as prompt_templates_router
+from server.app.modules.quality_reference.router import quality_reference_router
 from server.app.modules.report.router import report_mcp_router
 from server.app.modules.report.router import router as report_router
 from server.app.modules.system.auth_router import router as auth_router
@@ -414,6 +415,12 @@ def create_app() -> FastAPI:
         ai_models_router,
         prefix="/api/ai-models",
         tags=["ai-models"],
+        dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        quality_reference_router,
+        prefix="/api/quality-reference",
+        tags=["quality-reference"],
         dependencies=[Depends(get_current_user)],
     )
 
