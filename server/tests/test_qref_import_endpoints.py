@@ -86,3 +86,36 @@ def test_image_proxy_serves_bytes(monkeypatch):
         assert app_ctx.client.get("/api/quality-reference/images/999999").status_code == 404
     finally:
         app_ctx.cleanup()
+
+
+def test_image_proxy_minio_failure_returns_502(monkeypatch):
+    from server.app.modules.quality_reference import image_store
+    from server.app.modules.quality_reference.models import QualityReferenceImage
+
+    app_ctx = build_test_app(monkeypatch)
+    try:
+        db = app_ctx.session_factory()
+        try:
+            img = QualityReferenceImage(
+                sha256="c" * 64,
+                minio_key=f"{'c' * 64}.png",
+                bucket="geo-qref-images",
+                mime_type="image/png",
+                size=10,
+            )
+            db.add(img)
+            db.commit()
+            image_id = img.id
+        finally:
+            db.close()
+
+        # 行存在但 MinIO 读取失败 → 502（区分于缺行的 404），而非被吞成 404
+        def _boom(bucket, key):
+            raise RuntimeError("minio down")
+
+        monkeypatch.setattr(image_store.image_store_lib, "get_object_bytes", _boom)
+
+        resp = app_ctx.client.get(f"/api/quality-reference/images/{image_id}")
+        assert resp.status_code == 502
+    finally:
+        app_ctx.cleanup()
