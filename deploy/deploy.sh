@@ -159,10 +159,21 @@ cd "$DEPLOY_DIR"
 export SERVER_VERSION WEB_VERSION
 
 # ── 表结构迁移（仅涉及后端时；统一单点执行，避免 app/worker 竞态）──
+# 迁移前先停 worker：它是已知的长事务元凶，会钉住 articles 的元数据锁（MDL）让 ALTER
+# 静默挂起（默认 lock_wait_timeout≈一年，见 2026-07-15 部署事故 docs/superpowers/specs/
+# 2026-07-15-deploy-migrate-lock-safety-design.md）。app 保持在线（迁移均为加列/建表、向后
+# 兼容），实现零用户停服。额外用 -e 注入 lock_wait_timeout=60s 兜底：万一仍被别的连接钉锁，
+# 60s 后抛 1205 快速失败、job 立刻红，而非静默挂起 + CI 超时自动重试雪崩。
 if $deploy_server; then
   echo ""
-  echo "==> 迁移数据库表结构 (alembic upgrade head)"
-  docker compose -f "$COMPOSE_FILE" run --rm migrate
+  echo "==> 迁移前停 worker 释放 articles 锁（app 保持在线）"
+  docker compose -f "$COMPOSE_FILE" stop worker || true
+  echo "==> 迁移数据库表结构 (alembic upgrade head, lock_wait_timeout=60s 兜底)"
+  if ! docker compose -f "$COMPOSE_FILE" run --rm -e GEO_MIGRATE_LOCK_WAIT_TIMEOUT=60 migrate; then
+    echo "❌ 迁移失败，恢复 worker 后退出（不留 worker 停摆残局）"
+    docker compose -f "$COMPOSE_FILE" up -d worker || true
+    exit 1
+  fi
 fi
 
 # ── 持久化版本状态 ───────────────────────────────────────────
@@ -172,6 +183,11 @@ printf 'SERVER_VERSION=%s\nWEB_VERSION=%s\n' "$SERVER_VERSION" "$WEB_VERSION" > 
 echo ""
 echo "==> 启动服务 (仅重建版本变更的服务)"
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+
+# 后端重启后 app 容器 IP 可能变化，reload nginx 让它重新解析 DNS（零停机）
+if $deploy_server; then
+  docker compose -f "$COMPOSE_FILE" exec -T nginx nginx -s reload 2>/dev/null || true
+fi
 
 echo ""
 docker compose -f "$COMPOSE_FILE" ps

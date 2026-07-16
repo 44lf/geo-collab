@@ -107,6 +107,10 @@ deploy:
     - mkdir -p /tmp/auth && echo "$DOCKER_AUTH_CONFIG" > /tmp/auth/config.json
     - if [ "$TARGET" = all ] || [ "$TARGET" = server ]; then copy geo-collab-server; fi
     - if [ "$TARGET" = all ] || [ "$TARGET" = web ]; then copy geo-collab-web; fi
+    # 先把仓库版 deploy.sh 投递到 prod（prod 非 git 管理、CI 原本只推镜像不推脚本，
+    # 仓库改动到不了线上 —— 见 docs/superpowers/specs/2026-07-15-deploy-migrate-lock-safety-design.md）。
+    # 必须在下面执行远端 deploy.sh 之前 scp，本次发版同一轮即用上新脚本。
+    - scp "$CI_PROJECT_DIR/deploy/deploy.sh" "deploy:$DEPLOY_PATH/deploy.sh"
     # 远端拉取 + 迁移 + 起服务（deploy.sh registry 模式）
     - |
       ssh deploy bash -s <<EOF
