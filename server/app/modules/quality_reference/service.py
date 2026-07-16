@@ -96,7 +96,12 @@ def _insert_idempotent(db: Session, ref: QualityReference) -> tuple[QualityRefer
 
 
 def adopt_article(
-    db, *, user_id: int, article_id: int, fallback_category: str | None = None
+    db,
+    *,
+    user_id: int,
+    article_id: int,
+    fallback_category: str | None = None,
+    fallback_question_texts: list | None = None,
 ) -> QualityReference:
     a = db.query(Article).filter(Article.id == article_id, Article.is_deleted == False).first()  # noqa: E712
     if a is None:
@@ -134,7 +139,9 @@ def adopt_article(
             )
         elif fallback_category:
             set_reference_categories(
-                db, ref.id, [{"category": fallback_category, "question_texts": None}]
+                db,
+                ref.id,
+                [{"category": fallback_category, "question_texts": fallback_question_texts}],
             )
     return ref
 

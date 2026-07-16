@@ -159,3 +159,60 @@ def test_pick_truncates_plain_text(monkeypatch):
     finally:
         db.close()
         app_ctx.cleanup()
+
+
+def test_adopt_from_mcp_sets_fallback_question_texts(monkeypatch):
+    """无溯源文章：回落 category + question_texts 都落到子表关联行（经详情端点核实）。"""
+    monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _make_article(db, review_status="approved")  # 无 source_question_category
+        db.commit()
+        r = app_ctx.client.post(
+            "/api/quality-reference/adopt-from-mcp",
+            json={
+                "article_id": a.id,
+                "category": "攻略",
+                "question_texts": ["怎么开局", "新手推荐"],
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        ref_id = r.json()["id"]
+        detail = app_ctx.client.get(f"/api/quality-reference/{ref_id}")  # user JWT（admin cookie）
+        assert detail.status_code == 200, detail.text
+        cats = detail.json()["categories"]
+        assert len(cats) == 1
+        assert cats[0]["category"] == "攻略"
+        assert cats[0]["question_texts"] == ["怎么开局", "新手推荐"]
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+def test_adopt_from_mcp_provenance_ignores_fallback(monkeypatch):
+    """有溯源文章：忽略入参 category/question_texts，走 source_question_* 自动关联。"""
+    monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _make_article(db, review_status="approved")
+        a.source_question_category = "剧情"
+        a.source_question_texts = ["主线剧情如何"]
+        db.commit()
+        r = app_ctx.client.post(
+            "/api/quality-reference/adopt-from-mcp",
+            json={"article_id": a.id, "category": "攻略", "question_texts": ["无关问题"]},
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["categories"] == ["剧情"]  # 溯源优先
+        detail = app_ctx.client.get(f"/api/quality-reference/{body['id']}")
+        cats = detail.json()["categories"]
+        assert cats[0]["category"] == "剧情"
+        assert cats[0]["question_texts"] == ["主线剧情如何"]
+    finally:
+        db.close()
+        app_ctx.cleanup()

@@ -443,7 +443,11 @@ async def record_adversarial_score(article_id: int, score: int) -> dict[str, Any
 
 
 @mcp.tool()
-async def adopt_quality_reference(article_id: int, category: str | None = None) -> dict[str, Any]:
+async def adopt_quality_reference(
+    article_id: int,
+    category: str | None = None,
+    question_texts: list[str] | None = None,
+) -> dict[str, Any]:
     """采纳一篇【已过人审(approved)】站内文章进高质量库，作对抗判分的参考真品。
 
     - 只接受 review_status="approved" 的站内文章（复用平台审核门禁）；未审 / 软删 / 不存在
@@ -456,6 +460,9 @@ async def adopt_quality_reference(article_id: int, category: str | None = None) 
         article_id: 目标文章（须已 approved）。
         category: 可选。文章无溯源类目(source_question_category)时，用它作回落关联类目；
             文章有溯源类目时后端忽略本参数。
+        question_texts: 可选。与回落 category 配对使用的问题词列表；同样仅在文章无溯源类目时
+            生效（有溯源走 source_question_texts）。只传 question_texts 不传 category 时无类目
+            可挂、被忽略。
 
     Returns:
         {"ok": True, "data": {"id": int, "origin": "own", "article_id": int, "title": str,
@@ -464,4 +471,6 @@ async def adopt_quality_reference(article_id: int, category: str | None = None) 
     body: dict[str, Any] = {"article_id": article_id, "user_id": _OPERATOR_USER_ID}
     if category:
         body["category"] = category
+    if question_texts:
+        body["question_texts"] = question_texts
     return await _apost("/api/quality-reference/adopt-from-mcp", json=body)
