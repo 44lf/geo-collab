@@ -50,6 +50,7 @@ def pick(
 class AdoptFromMcpPayload(BaseModel):
     article_id: int
     category: str | None = Field(default=None, max_length=200)  # 无溯源类目时回落关联
+    question_texts: list | None = None  # 与回落 category 配对；文章有溯源时忽略
     user_id: int = 1  # operator（Loop 身份）；tool 传 _OPERATOR_USER_ID，缺省回落 admin(1)
 
 
@@ -74,6 +75,7 @@ def adopt_from_mcp(
             user_id=payload.user_id,
             article_id=payload.article_id,
             fallback_category=payload.category,
+            fallback_question_texts=payload.question_texts,
         )
         db.commit()
         db.refresh(ref)

@@ -142,6 +142,48 @@ def list_articles(
     return list(db.execute(stmt).scalars().all())
 
 
+def search_by_title(
+    db: Session,
+    *,
+    title: str,
+    review_status: str | None = None,
+    limit: int = 20,
+) -> list[Article]:
+    """标题子串搜索（LIKE on articles.title，转义 % _ \\），按 updated_at 倒序。
+
+    只搜标题（贴合"依据标题搜索"），不碰 author/plain_text，不改 list_articles 语义。
+    title 为空/纯空白 → 返回 []（不退化成列全部文章）。load_only 摘要列 + plain_text 供 snippet。
+    review_status=None 不过滤。
+    """
+    if not title or not title.strip():
+        return []
+    kw = title.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    stmt = (
+        select(Article)
+        .where(
+            Article.is_deleted == False,  # noqa: E712
+            Article.title.like(f"%{kw}%"),
+        )
+        .options(
+            load_only(
+                Article.title,
+                Article.author,
+                Article.review_status,
+                Article.word_count,
+                Article.plain_text,
+                Article.created_at,
+                Article.updated_at,
+            ),
+            lazyload(Article.tags),
+        )
+        .order_by(Article.updated_at.desc())
+    )
+    if review_status is not None:
+        stmt = stmt.where(Article.review_status == review_status)
+    stmt = stmt.limit(max(1, min(limit, 100)))
+    return list(db.execute(stmt).scalars().all())
+
+
 def serialize_article_summaries(db: Session, articles: list[Article]) -> dict[int, ArticleListRead]:
     """批量把 Article 序列化成 ArticleListRead,按 id 建 map。
 

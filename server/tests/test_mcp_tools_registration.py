@@ -19,4 +19,11 @@ def test_registered_count_meets_floor():
     from server.mcp.server import mcp
 
     assert len(mcp._tool_manager._tools) >= MCP_TOOLS_COUNT
-    assert MCP_TOOLS_COUNT == 30
+    assert MCP_TOOLS_COUNT == 31
+
+
+def test_search_articles_by_title_tool_registered():
+    import server.mcp.tools.catalog  # noqa: F401  触发注册
+    from server.mcp.server import mcp
+
+    assert "search_articles_by_title" in mcp._tool_manager._tools

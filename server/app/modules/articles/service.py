@@ -35,6 +35,7 @@ from server.app.modules.articles.services.daily_groups import (
 from server.app.modules.articles.services.feed import (
     list_article_feed,
     list_articles,
+    search_by_title,
     serialize_article_summaries,
 )
 from server.app.modules.articles.services.groups import (
@@ -68,6 +69,7 @@ __all__ = [
     "sync_article_body_assets",
     # 列表 / 检索 / Feed（services/feed.py）
     "list_articles",
+    "search_by_title",
     "serialize_article_summaries",
     "list_article_feed",
     # 文章审核（services/review.py）
