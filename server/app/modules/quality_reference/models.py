@@ -20,7 +20,9 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -86,3 +88,63 @@ class QualityReferenceCategory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     reference: Mapped["QualityReference"] = relationship(back_populates="categories")
+
+
+class QualityReferenceImage(Base):
+    """去重共享的图片资源（不属于单篇；归属由 QualityReferenceImageLink 表达）。"""
+
+    __tablename__ = "quality_reference_image"
+    __table_args__ = (UniqueConstraint("sha256", name="uq_qref_image_sha256"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64))  # 去重键（内容哈希）
+    minio_key: Mapped[str] = mapped_column(String(500))  # 专桶内对象 key（sha256+ext）
+    bucket: Mapped[str] = mapped_column(String(100))  # 冗余记桶名，便于将来迁桶
+    mime_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int] = mapped_column(Integer)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class QualityReferenceImageLink(Base):
+    """reference ↔ image 关联（多对多，供孤儿清理）。"""
+
+    __tablename__ = "quality_reference_image_link"
+    __table_args__ = (
+        UniqueConstraint("reference_id", "image_id", name="uq_qref_image_link_ref_img"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reference_id: Mapped[int] = mapped_column(
+        ForeignKey("quality_reference.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    image_id: Mapped[int] = mapped_column(
+        ForeignKey("quality_reference_image.id"), nullable=False, index=True
+    )
+
+
+class QualityReferenceImportJob(Base):
+    """异步导入 job（仿 VideoJob）：建 job 秒回 → 后台线程跑 → 轮询状态。"""
+
+    __tablename__ = "quality_reference_import_job"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), server_default="pending"
+    )  # pending/running/done/failed
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    title: Mapped[str] = mapped_column(String(300))
+    markdown: Mapped[str] = mapped_column(Text)  # 输入快照
+    platform: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    source_url: Mapped[str] = mapped_column(String(1000))  # 必填
+    category: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    question_texts: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    reference_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 成功回填
+    images_total: Mapped[int] = mapped_column(Integer, default=0)
+    images_rehosted: Mapped[int] = mapped_column(Integer, default=0)
+    images_skipped: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
