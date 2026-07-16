@@ -1,8 +1,12 @@
 """Markdown → HTML / Tiptap JSON 转换工具。
 
 Tiptap 支持的节点类型（本模块覆盖范围）：
-  doc, paragraph, heading(level 1-6), bulletList, orderedList, listItem
+  doc, paragraph, heading(level 1-6), bulletList, orderedList, listItem, image
   文本标记：bold, italic, code
+
+image 是块级节点，遇到 heading/list 内嵌图片时会被提升到 doc 顶层（近似保序，
+不保证与周围文本严格同序），提升后若原 heading/listItem/bulletList/orderedList
+因此变空，会被整体丢弃，避免产出违反 ProseMirror 默认 schema 的空结构节点。
 """
 
 from html.parser import HTMLParser
@@ -35,11 +39,6 @@ class _TiptapBuilder(HTMLParser):
             self._stack[-1].setdefault("content", []).append(node)
         else:
             self._root.append(node)
-
-    def _pop_commit(self) -> None:
-        """弹出栈顶节点并挂到父级。"""
-        node = self._stack.pop()
-        self._commit(node)
 
     # ── HTMLParser 回调函数 ───────────────────────────────────────────────
 
@@ -95,7 +94,13 @@ class _TiptapBuilder(HTMLParser):
                     self._commit(node)
         elif tag in ("h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol"):
             if self._stack:
-                self._pop_commit()
+                node = self._stack.pop()
+                # 空结构节点（如 heading/list 内的图片被提升到顶层后，原节点没剩其它
+                # 内容）直接丢弃，不产出空节点——ProseMirror 默认 schema 要求
+                # heading/bulletList/orderedList/listItem 的 content 非空，产出空节点
+                # 会导致 Tiptap 文档整体解析失败、正文渲染空白。
+                if node.get("content"):
+                    self._commit(node)
         elif tag == "li":
             if not self._stack:
                 return
@@ -107,7 +112,11 @@ class _TiptapBuilder(HTMLParser):
             )
             if not has_block and item.get("content"):
                 item["content"] = [{"type": "paragraph", "content": item["content"]}]
-            self._commit(item)
+            # listItem 内的图片被提升到顶层后可能留下空壳（content=[]）：同样丢弃，
+            # 使其所属 bulletList/orderedList 少一个 item 而不是携带一个非法空 item；
+            # 若该 list 的所有 item 都被丢弃，list 自身也会在上面的 ul/ol 分支被丢弃。
+            if item.get("content"):
+                self._commit(item)
         elif tag == "strong":
             self._marks = [m for m in self._marks if m["type"] != "bold"]
         elif tag == "em":
