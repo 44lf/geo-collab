@@ -109,73 +109,77 @@ def run_import_job(job_id: str, session_factory) -> None:
     """后台线程入口：先抢并发闸 → 自开 session 跑整条 pipeline。异常兜底写 failed。
 
     抢闸在开 session 之前：排队线程只被 park、不占 DB 连接（护连接池）。job 行此时仍是
-    pending，轮询看到 pending→running→done，语义正确。释放在 finally，与 db.close() 同处。
+    pending，轮询看到 pending→running→done，语义正确。释放挪到外层 finally：即使
+    session_factory() 或内层 db.close() 抛异常，许可也保证释放（BoundedSemaphore 不
+    自愈，漏放会永久收窄并发闸）。
     """
     _IMPORT_SEMAPHORE.acquire()
-    db = session_factory()
     try:
-        job = db.query(QualityReferenceImportJob).filter_by(job_id=job_id).one()
-        job.status = "running"
-        db.commit()
-
-        urls = extract_image_urls(job.markdown)
-        job.images_total = len(urls)
-        db.commit()
-
-        # ── 阶段 A：逐图下载+去重入库，各自 commit（先落地，避免后续回滚冲掉）──
-        mapping: dict[str, str] = {}
-        image_ids: list[int] = []
-        rehosted = skipped = 0
-        for i, url in enumerate(urls):
-            try:
-                data, mime = download_image(url)
-                img = image_store.ingest_image(db, data, mime)
-                db.commit()
-                mapping[url] = image_store.internal_url(img.id)
-                image_ids.append(img.id)
-                rehosted += 1
-            except ImageFetchError as exc:
-                db.rollback()
-                skipped += 1
-                logger.warning("qref 图片跳过 job=%s url=%s: %s", job_id, url, exc)
-            job.images_rehosted = rehosted
-            job.images_skipped = skipped
-            job.progress = round((i + 1) / (len(urls) + 1), 3) if urls else 0.5
-            db.commit()
-
-        # ── 阶段 B：改写 markdown → import_external 落库 + commit ──
-        rewritten = rewrite_image_urls(job.markdown, mapping)
-        ref, _similar = service.import_external(
-            db,
-            user_id=_OPERATOR_USER_ID,
-            title=job.title,
-            category=job.category,
-            source_url=job.source_url,
-            platform=job.platform,
-            question_texts=job.question_texts,
-            markdown=rewritten,
-        )
-        db.commit()  # import_external 只 flush，这里提交（dup 复活也返回有效 ref）
-
-        # ── 阶段 C：写 image_link（含 dup 复活场景，关联挂到已有 ref）+ commit ──
-        for image_id in image_ids:
-            _link_image(db, ref.id, image_id)
-        job.reference_id = ref.id
-        job.progress = 1.0
-        job.status = "done"
-        db.commit()
-    except Exception as exc:  # noqa: BLE001 — 后台线程兜底
-        logger.exception("qref 外部参考导入失败: job_id=%s", job_id)
-        db.rollback()
+        db = session_factory()
         try:
             job = db.query(QualityReferenceImportJob).filter_by(job_id=job_id).one()
-            job.status = "failed"
-            job.error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            job.status = "running"
             db.commit()
-        except Exception:
-            logger.exception("写 failed 状态也失败: job_id=%s", job_id)
+
+            urls = extract_image_urls(job.markdown)
+            job.images_total = len(urls)
+            db.commit()
+
+            # ── 阶段 A：逐图下载+去重入库，各自 commit（先落地，避免后续回滚冲掉）──
+            mapping: dict[str, str] = {}
+            image_ids: list[int] = []
+            rehosted = skipped = 0
+            for i, url in enumerate(urls):
+                try:
+                    data, mime = download_image(url)
+                    img = image_store.ingest_image(db, data, mime)
+                    db.commit()
+                    mapping[url] = image_store.internal_url(img.id)
+                    image_ids.append(img.id)
+                    rehosted += 1
+                except ImageFetchError as exc:
+                    db.rollback()
+                    skipped += 1
+                    logger.warning("qref 图片跳过 job=%s url=%s: %s", job_id, url, exc)
+                job.images_rehosted = rehosted
+                job.images_skipped = skipped
+                job.progress = round((i + 1) / (len(urls) + 1), 3)
+                db.commit()
+
+            # ── 阶段 B：改写 markdown → import_external 落库 + commit ──
+            rewritten = rewrite_image_urls(job.markdown, mapping)
+            ref, _similar = service.import_external(
+                db,
+                user_id=_OPERATOR_USER_ID,
+                title=job.title,
+                category=job.category,
+                source_url=job.source_url,
+                platform=job.platform,
+                question_texts=job.question_texts,
+                markdown=rewritten,
+            )
+            db.commit()  # import_external 只 flush，这里提交（dup 复活也返回有效 ref）
+
+            # ── 阶段 C：写 image_link（含 dup 复活场景，关联挂到已有 ref）+ commit ──
+            for image_id in image_ids:
+                _link_image(db, ref.id, image_id)
+            job.reference_id = ref.id
+            job.progress = 1.0
+            job.status = "done"
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 — 后台线程兜底
+            logger.exception("qref 外部参考导入失败: job_id=%s", job_id)
+            db.rollback()
+            try:
+                job = db.query(QualityReferenceImportJob).filter_by(job_id=job_id).one()
+                job.status = "failed"
+                job.error = f"{type(exc).__name__}: {str(exc)[:500]}"
+                db.commit()
+            except Exception:
+                logger.exception("写 failed 状态也失败: job_id=%s", job_id)
+        finally:
+            db.close()
     finally:
-        db.close()
         _IMPORT_SEMAPHORE.release()
 
 

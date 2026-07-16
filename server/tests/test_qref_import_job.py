@@ -135,6 +135,66 @@ def test_run_import_job_full_flow(monkeypatch):
         test_app.cleanup()
 
 
+def test_run_import_job_failed_path_releases_semaphore(monkeypatch):
+    """Phase B（import_external）抛非 ImageFetchError → job 落 failed，且信号量必须被释放。
+
+    锁定 run_import_job 的 acquire/release 配对：即使 worker 主体在 db.commit() 之前
+    的中段异常退出，外层 finally 也必须放回许可（否则 BoundedSemaphore 永久收窄）。
+    """
+    import threading
+
+    from server.app.modules.quality_reference import image_store, import_job
+    from server.app.modules.quality_reference.models import QualityReferenceImportJob
+    from server.app.modules.quality_reference.schemas import ImportExternalReferenceRequest
+    from server.tests.utils import build_test_app
+
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
+
+    def fake_download(url, **kw):
+        return png, "image/png"
+
+    def boom_import_external(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(import_job, "download_image", fake_download)
+    monkeypatch.setattr(image_store.image_store_lib, "ensure_bucket", lambda b: None)
+    monkeypatch.setattr(image_store.image_store_lib, "upload_image", lambda *a, **k: None)
+    monkeypatch.setattr(import_job.service, "import_external", boom_import_external)
+    # 收紧到 1 并发，release 断言更直观
+    monkeypatch.setattr(import_job, "_IMPORT_SEMAPHORE", threading.BoundedSemaphore(1))
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        db = test_app.session_factory()
+        try:
+            req = ImportExternalReferenceRequest(
+                title="站外真品",
+                markdown="导语\n\n![ok](http://h/1.png)",
+                source_url="https://ext.example/post/2",
+                category="测评",
+            )
+            job = import_job.create_import_job(db, req)
+            job_id = job.job_id
+        finally:
+            db.close()
+
+        import_job.run_import_job(job_id, test_app.session_factory)
+
+        db = test_app.session_factory()
+        try:
+            failed = db.query(QualityReferenceImportJob).filter_by(job_id=job_id).one()
+            assert failed.status == "failed"
+            assert failed.error
+        finally:
+            db.close()
+
+        # 许可必须已释放：非阻塞 acquire 应能拿到，再放回去
+        assert import_job._IMPORT_SEMAPHORE.acquire(blocking=False) is True
+        import_job._IMPORT_SEMAPHORE.release()
+    finally:
+        test_app.cleanup()
+
+
 def test_import_jobs_respect_concurrency_bound(monkeypatch):
     import threading
     import time
