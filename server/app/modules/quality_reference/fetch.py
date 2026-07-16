@@ -22,6 +22,13 @@ class SsrfBlockedError(ImageFetchError):
     """目标解析到私网/环回/元数据地址，或 scheme 不允许 → 拒绝。"""
 
 
+# 显式拦截列表：某些地址段在 ipaddress 的 is_private/is_reserved/... 标志位上不必然为
+# True（且随 Python 版本可能变化，is_global 更不可靠），需要单独兜底。
+_EXTRA_BLOCKED_NETS = (
+    ipaddress.ip_network("100.64.0.0/10"),  # RFC 6598 CGN / shared address space
+)
+
+
 def assert_public_host(host: str) -> None:
     """解析 host 的所有地址，任一为私网/环回/link-local/保留/元数据即拒。"""
     if not host:
@@ -33,6 +40,8 @@ def assert_public_host(host: str) -> None:
     for info in infos:
         addr = info[4][0]
         ip = ipaddress.ip_address(addr)
+        if ip.version == 6 and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
         if (
             ip.is_private
             or ip.is_loopback
@@ -40,6 +49,7 @@ def assert_public_host(host: str) -> None:
             or ip.is_reserved
             or ip.is_multicast
             or ip.is_unspecified
+            or any(ip in net for net in _EXTRA_BLOCKED_NETS)
         ):
             raise SsrfBlockedError(f"目标地址不允许（私网/环回/元数据）: {host} → {addr}")
 
@@ -86,7 +96,9 @@ def download_image(
             if not mime.startswith("image/"):
                 mime = _sniff_mime(data)
                 if mime is None:
-                    raise ImageFetchError(f"非图片内容: content-type={resp.headers.get('content-type')}")
+                    raise ImageFetchError(
+                        f"非图片内容: content-type={resp.headers.get('content-type')}"
+                    )
             return data, mime
     raise ImageFetchError(f"重定向超过 {max_redirects} 跳")
 
