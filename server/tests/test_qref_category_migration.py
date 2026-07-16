@@ -55,7 +55,7 @@ def test_migration_0063_backfills_child_and_drops_category(monkeypatch):
 
     try:
         cfg = Config("alembic.ini")
-        cfg.set_main_option("sqlalchemy.url", get_test_database_url())
+        cfg.set_main_option("sqlalchemy.url", get_test_database_url().replace("%", "%%"))
 
         # 升到 0062（category 单列仍在），插入 own + external 两条参考再升 head 验回填。
         command.upgrade(cfg, "0062_adversarial_review")
