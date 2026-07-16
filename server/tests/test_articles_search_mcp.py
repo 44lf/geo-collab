@@ -55,3 +55,66 @@ def test_search_by_title_matches_and_filters(monkeypatch):
     finally:
         db.close()
         app_ctx.cleanup()
+
+
+def test_search_endpoint_defaults_approved_and_flags_adopted(monkeypatch):
+    monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a1 = _mk(
+            db, title="周年庆盘点", review_status="approved", plain_text="开篇正文很长很长很长"
+        )
+        _mk(db, title="周年庆前瞻", review_status="pending")
+        db.commit()
+
+        from server.app.modules.quality_reference import service as qsvc
+
+        qsvc.adopt_article(db, user_id=app_ctx.admin_id, article_id=a1.id)  # 采纳 a1 进库
+        db.commit()
+
+        h = {"X-MCP-Token": "secret"}
+        r = app_ctx.client.get("/api/mcp/articles/search", params={"title": "周年庆"}, headers=h)
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        assert [i["title"] for i in items] == ["周年庆盘点"]  # 默认只回 approved
+        assert items[0]["already_adopted"] is True
+        assert items[0]["snippet"].startswith("开篇正文")
+
+        r2 = app_ctx.client.get(
+            "/api/mcp/articles/search",
+            params={"title": "周年庆", "review_status": "all"},
+            headers=h,
+        )
+        assert {i["title"] for i in r2.json()["items"]} == {"周年庆盘点", "周年庆前瞻"}
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+def test_search_route_does_not_shadow_get_by_id(monkeypatch):
+    monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+    app_ctx = build_test_app(monkeypatch)
+    db = app_ctx.session_factory()
+    try:
+        a = _mk(db, title="独苗文章", review_status="approved")
+        db.commit()
+        h = {"X-MCP-Token": "secret"}
+        r_search = app_ctx.client.get(
+            "/api/mcp/articles/search", params={"title": "独苗"}, headers=h
+        )
+        assert r_search.status_code == 200  # /search 命中搜索，不被 {id:int} 当 422
+        r_get = app_ctx.client.get(f"/api/mcp/articles/{a.id}", headers=h)
+        assert r_get.status_code == 200 and r_get.json()["id"] == a.id  # 单篇仍正常
+    finally:
+        db.close()
+        app_ctx.cleanup()
+
+
+def test_search_requires_mcp_token(monkeypatch):
+    app_ctx = build_test_app(monkeypatch)  # 未设 GEO_MCP_TOKEN → 全 401
+    try:
+        r = app_ctx.client.get("/api/mcp/articles/search", params={"title": "x"})
+        assert r.status_code == 401
+    finally:
+        app_ctx.cleanup()

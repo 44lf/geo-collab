@@ -24,6 +24,7 @@ from server.app.modules.ai_generation.schemas import (
 )
 from server.app.modules.articles import get_article as svc_get_article
 from server.app.modules.articles import list_articles as svc_list_articles
+from server.app.modules.articles import search_by_title as svc_search_by_title
 from server.app.modules.articles.schemas import (
     ArticleListRead,
     ArticleRead,
@@ -33,6 +34,7 @@ from server.app.modules.image_library.models import StockCategory, StockImage
 from server.app.modules.pipelines.models import Pipeline
 from server.app.modules.prompt_templates.schemas import PromptScope, PromptTemplateRead
 from server.app.modules.prompt_templates.service import list_prompt_templates as svc_list_templates
+from server.app.modules.quality_reference.models import QualityReference
 from server.app.modules.tasks.models import PublishRecord
 
 router = APIRouter(dependencies=[Depends(require_mcp_token)])
@@ -90,7 +92,48 @@ def mcp_list_articles(
     ]
 
 
-@router.get("/articles/{article_id}", response_model=ArticleRead)
+_SEARCH_SNIPPET_CHARS = 100
+
+
+@router.get("/articles/search")
+def mcp_search_articles_by_title(
+    title: str = Query(...),
+    review_status: str = Query(default="approved"),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """[MCP] 按标题搜自有文章，主要给 adopt_quality_reference 挑候选。
+
+    默认只回 approved；review_status="all" 放开全部状态。返回带 already_adopted / snippet。
+    """
+    svc_rs = None if review_status == "all" else review_status
+    articles = svc_search_by_title(db, title=title, review_status=svc_rs, limit=limit)
+    if not articles:
+        return {"items": []}
+    ids = [a.id for a in articles]
+    adopted = {
+        aid
+        for (aid,) in db.execute(
+            select(QualityReference.article_id).where(QualityReference.article_id.in_(ids))
+        ).all()
+    }
+    return {
+        "items": [
+            {
+                "id": a.id,
+                "title": a.title,
+                "review_status": a.review_status,
+                "word_count": a.word_count,
+                "already_adopted": a.id in adopted,
+                "snippet": (a.plain_text or "")[:_SEARCH_SNIPPET_CHARS],
+                "created_at": a.created_at,
+            }
+            for a in articles
+        ]
+    }
+
+
+@router.get("/articles/{article_id:int}", response_model=ArticleRead)
 def mcp_get_article(article_id: int, db: Session = Depends(get_db)) -> ArticleRead:
     """[MCP] 取单篇文章详情。"""
     article = svc_get_article(db, article_id)
