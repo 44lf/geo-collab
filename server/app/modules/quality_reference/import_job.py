@@ -36,7 +36,8 @@ _OPERATOR_USER_ID = 1  # Loop 身份（admin），added_by_user_id 可空、admi
 
 # 并发闸（护连接池）：同时至多 N 个导入 job 真跑，其余 daemon 线程 park 排队、不占 DB
 # 连接。仿 pipelines 的 GEO_PIPELINE_MAX_CONCURRENT_RUNS；非互斥锁，只限吞吐不串行化。
-_MAX_CONCURRENT = int(os.environ.get("GEO_QREF_IMPORT_MAX_CONCURRENT", "3"))
+# 夹到 >=1：环境变量误配成 0/负数会让 BoundedSemaphore(0) 永久卡死所有导入。
+_MAX_CONCURRENT = max(1, int(os.environ.get("GEO_QREF_IMPORT_MAX_CONCURRENT", "3")))
 _IMPORT_SEMAPHORE = threading.BoundedSemaphore(_MAX_CONCURRENT)
 
 # markdown 图片：![alt](url) 或 ![alt](url "title")；取 url token（到空白/右括号止）
@@ -51,13 +52,23 @@ def extract_image_urls(markdown: str) -> list[str]:
     return list(seen.keys())
 
 
-def rewrite_image_urls(markdown: str, mapping: dict[str, str]) -> str:
-    """把 markdown 里命中 mapping 的图片 URL 替换为内链；未命中原样保留。"""
+def rewrite_image_urls(
+    markdown: str, mapping: dict[str, str], *, drop_unmapped: bool = False
+) -> str:
+    """把 markdown 里命中 mapping 的图片 URL 替换为内链。
+
+    `drop_unmapped=False`（默认）：未命中原样保留。
+    `drop_unmapped=True`：未命中的图片整段剔除（不留外链）——调用方须确保 mapping 已
+    覆盖所有想保留的图片（下载失败/SSRF 拦截的图片不在 mapping 里，剔除避免 reader
+    端浏览器再去抓取原始外部 URL）。
+    """
 
     def _sub(m: re.Match) -> str:
         url = m.group(1)
         new = mapping.get(url)
-        return m.group(0).replace(url, new) if new else m.group(0)
+        if new:
+            return m.group(0).replace(url, new)
+        return "" if drop_unmapped else m.group(0)
 
     return _IMG_RE.sub(_sub, markdown or "")
 
@@ -66,8 +77,12 @@ def create_import_job(
     db: Session, req: ImportExternalReferenceRequest
 ) -> QualityReferenceImportJob:
     """校验 + 插 pending + commit，秒回。"""
-    if not req.source_url.strip():
+    source_url = req.source_url.strip()
+    if not source_url:
         raise ValidationError("source_url 必填")
+    if not source_url.lower().startswith(("http://", "https://")):
+        # 存量 provenance 字段，前端可能渲染成链接；防 javascript: 等 scheme 存储型 XSS。
+        raise ValidationError("source_url 必须是 http/https URL")
     job = QualityReferenceImportJob(
         job_id=uuid.uuid4().hex,
         status="pending",
@@ -147,7 +162,10 @@ def run_import_job(job_id: str, session_factory) -> None:
                 db.commit()
 
             # ── 阶段 B：改写 markdown → import_external 落库 + commit ──
-            rewritten = rewrite_image_urls(job.markdown, mapping)
+            # drop_unmapped=True：下载失败/被 SSRF 拦截的图片没有内链映射，整段剔除，
+            # 不让原始外部 URL 留在 content_json/plain_text 里（否则 reader 端浏览器
+            # 会直接请求该外链，复现 SSRF/隐私泄露，也破坏"不留外链"约束）。
+            rewritten = rewrite_image_urls(job.markdown, mapping, drop_unmapped=True)
             ref, _similar = service.import_external(
                 db,
                 user_id=_OPERATOR_USER_ID,

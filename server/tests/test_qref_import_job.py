@@ -66,6 +66,20 @@ def test_rewrite_image_urls():
     assert "http://h/2.png" in out  # 未映射的原样保留
 
 
+def test_rewrite_image_urls_drops_unmapped():
+    from server.app.modules.quality_reference import import_job
+
+    md = "![x](http://h/1.png) and ![y](http://h/2.png)"
+    out = import_job.rewrite_image_urls(
+        md,
+        {"http://h/1.png": "/api/quality-reference/images/1"},
+        drop_unmapped=True,
+    )
+    assert "/api/quality-reference/images/1" in out
+    assert "http://h/2.png" not in out
+    assert "![y]" not in out  # 未映射的图片整段剔除，不留外链
+
+
 def test_run_import_job_full_flow(monkeypatch):
     from server.app.modules.quality_reference import image_store, import_job
     from server.app.modules.quality_reference.models import (
@@ -126,6 +140,9 @@ def test_run_import_job_full_flow(monkeypatch):
             # 正文 content_json 含内链 image 节点、外链已改写
             assert "/api/quality-reference/images/" in ref.content_json
             assert "http://h/1.png" not in ref.content_json
+            # 下载失败(skipped)的图片外链必须被整段剔除，不留外链(SSRF/破图)
+            assert "http://h/bad.png" not in ref.content_json
+            assert "http://h/bad.png" not in ref.plain_text
             # image_link 挂到该 ref（成功那张）
             links = db.query(QualityReferenceImageLink).filter_by(reference_id=ref.id).all()
             assert len(links) == 1
@@ -253,5 +270,44 @@ def test_import_jobs_respect_concurrency_bound(monkeypatch):
         gate.set()  # 放行跑完
         for t in threads:
             t.join(timeout=10)
+    finally:
+        test_app.cleanup()
+
+
+def test_max_concurrent_clamped_to_at_least_one(monkeypatch):
+    """GEO_QREF_IMPORT_MAX_CONCURRENT=0（或负数）不能把 BoundedSemaphore 建成 0——
+    否则每个导入 job 永久卡在 acquire()。模块级常量在 import 时求值，用 importlib.reload
+    在改过环境变量后重新触发求值。"""
+    import importlib
+
+    from server.app.modules.quality_reference import import_job
+
+    monkeypatch.setenv("GEO_QREF_IMPORT_MAX_CONCURRENT", "0")
+    try:
+        reloaded = importlib.reload(import_job)
+        assert reloaded._MAX_CONCURRENT >= 1
+    finally:
+        importlib.reload(import_job)  # 恢复真实环境（还原默认值），不污染后续测试
+
+
+def test_create_import_job_rejects_non_http_source_url(monkeypatch):
+    from server.app.modules.quality_reference import import_job
+    from server.app.modules.quality_reference.schemas import ImportExternalReferenceRequest
+    from server.app.shared.errors import ValidationError
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        db = test_app.session_factory()
+        try:
+            req = ImportExternalReferenceRequest(
+                title="t",
+                markdown="x",
+                source_url="javascript:alert(1)",
+            )
+            with pytest.raises(ValidationError):
+                import_job.create_import_job(db, req)
+        finally:
+            db.close()
     finally:
         test_app.cleanup()
