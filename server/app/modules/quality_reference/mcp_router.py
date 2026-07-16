@@ -66,8 +66,9 @@ def adopt_from_mcp(
 
     复用 svc.adopt_article 的审核门禁：非 approved / 不存在文章抛命名异常（ClientError/
     ValidationError → 全局 handler 映射 400，与 record_score 一致）。同篇幂等（article_id
-    UNIQUE，dup 复活不重复建）。**只接受站内已审文章、注入不了外部内容**——外部真品录入
-    是前端人工动作，MCP 不开这条路，防 AI 自灌毒化参考池。
+    UNIQUE，dup 复活不重复建）。**本端点只采纳站内已审文章**——真·站外文章（爬虫外部真品）走独立的 import-external
+    异步入库端点（POST /api/quality-reference/import-external，source_url 溯源），此端点不注入
+    外部内容、防 AI 自灌毒化。
     """
     try:
         ref = svc.adopt_article(
