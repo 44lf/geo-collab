@@ -55,7 +55,7 @@ def test_migration_0063_backfills_child_and_drops_category(monkeypatch):
 
     try:
         cfg = Config("alembic.ini")
-        cfg.set_main_option("sqlalchemy.url", get_test_database_url())
+        cfg.set_main_option("sqlalchemy.url", get_test_database_url().replace("%", "%%"))
 
         # 升到 0062（category 单列仍在），插入 own + external 两条参考再升 head 验回填。
         command.upgrade(cfg, "0062_adversarial_review")
@@ -128,8 +128,10 @@ def test_migration_0063_backfills_child_and_drops_category(monkeypatch):
         assert ext_cat == "酒店"
         assert ext_qt is None
 
-        # 幂等回滚重升：downgrade 回单列（lossy best-effort）再 upgrade 回子表
-        command.downgrade(cfg, "-1")
+        # 幂等回滚重升：downgrade 回单列（lossy best-effort）再 upgrade 回子表。
+        # 显式指定目标 revision（而非相对 "-1"）——"-1" 是相对当前 head 的一步，一旦后续
+        # 迁移（如 0064）堆到 0063 之上，"-1" 就只会撤销最新那个迁移而非本迁移，断言会漂移。
+        command.downgrade(cfg, "0062_adversarial_review")
         insp2 = inspect(engine)
         assert "quality_reference_category" not in insp2.get_table_names()
         assert "category" in _qref_columns(insp2)

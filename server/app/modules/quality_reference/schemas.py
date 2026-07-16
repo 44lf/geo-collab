@@ -67,3 +67,30 @@ class QualityReferenceDetail(QualityReferenceRead):  # 详情用，带三份正�
 class ImportResponse(BaseModel):
     reference: QualityReferenceRead
     similar: list[dict]  # near-dup 疑似重复（不硬挡）
+
+
+class ImportExternalReferenceRequest(BaseModel):
+    """异步导入站外参考的入参（markdown 路径，含图片自动下载改内链）。"""
+
+    title: str = Field(min_length=1, max_length=300)
+    markdown: str = Field(min_length=1)
+    source_url: str = Field(min_length=1, max_length=1000)  # 必填：每条可溯源
+    category: str | None = Field(default=None, max_length=200)
+    question_texts: list | None = None
+    platform: str | None = Field(default=None, max_length=100)
+
+
+class ImportJobStatus(BaseModel):
+    """导入 job 轮询响应（仿 VideoJob 状态视图）。"""
+
+    job_id: str
+    status: str
+    progress: float
+    reference_id: int | None = None
+    images_total: int = 0
+    images_rehosted: int = 0
+    images_skipped: int = 0
+    error: str | None = None
+
+    class Config:
+        from_attributes = True

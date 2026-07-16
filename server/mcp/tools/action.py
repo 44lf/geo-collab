@@ -453,8 +453,9 @@ async def adopt_quality_reference(
     - 只接受 review_status="approved" 的站内文章（复用平台审核门禁）；未审 / 软删 / 不存在
       → 报错（400）。
     - 幂等：同一篇重复采纳返回已有那条，不重复建。
-    - **不能录入站外内容**：外部真品录入是前端人工动作（防 AI 把自产内容伪装成外部真品、
-      毒化参考池、架空对抗判分）。想要外部参考请让人在 Web「高质量库 → 录入外部文章」加。
+    - **本工具只采纳站内已审文章**（防 AI 把自产内容伪装成参考真品、毒化参考池）。要录入
+      真·站外文章（爬虫抓到的外部真品），用 `import_external_reference`（异步入外部参考池、
+      source_url 溯源）；或让人在 Web「高质量库 → 录入外部文章」加。
 
     Args:
         article_id: 目标文章（须已 approved）。
@@ -474,3 +475,63 @@ async def adopt_quality_reference(
     if question_texts:
         body["question_texts"] = question_texts
     return await _apost("/api/quality-reference/adopt-from-mcp", json=body)
+
+
+@mcp.tool()
+async def import_external_reference(
+    title: str,
+    markdown: str,
+    source_url: str,
+    category: str | None = None,
+    question_texts: list[str] | None = None,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    """把爬到的**真·站外文章**异步导入高质量库的「外部参考」池（origin=external）。
+
+    与 adopt_quality_reference（只收站内已审文章）互补：本工具**专收站外真品**——别人
+    在其它平台写的真实内容，经 Crawl4AI 等爬虫抓成 markdown（含外链图）。落库即
+    is_active=True 直接生效，作对抗判分的参考真品。
+
+    **务必只灌真实站外内容**：source_url 必填、服务端盖 origin=external。不要拿 AI
+    自产内容伪装成外部真品灌进来——那会毒化参考池、架空对抗判分。
+
+    异步：本工具建 job 秒回 job_id（图片下载慢，规避 30s 超时）。之后轮询
+    get_external_reference_status(job_id) 直到 status=done/failed。图片会被下载回传进
+    站内专桶、正文改写为站内内链（不留外链）、跨篇 sha256 去重共享；单图抓不到会
+    best-effort 跳过（计入 images_skipped，不判整体失败）。
+
+    Args:
+        title: 文章标题（1–300 字）。
+        markdown: 正文 markdown（含 ![](外链图) 语法即可，图片会被自动 rehost）。
+        source_url: 来源 URL（**必填**，保证可溯源）。
+        category: 可选。问题类型（对应 QuestionItem.category），用于对抗判分按类目挑参考。
+        question_texts: 可选。该类型下的问题词列表，与 category 配对。
+        platform: 可选。来源平台名（如 "知乎" / "小红书"）。
+
+    Returns:
+        {"ok": True, "data": {"job_id": str, "status": "pending", ...}, "error": None}
+        建 job 后轮询 get_external_reference_status(job_id)。
+    """
+    body: dict[str, Any] = {"title": title, "markdown": markdown, "source_url": source_url}
+    if category:
+        body["category"] = category
+    if question_texts:
+        body["question_texts"] = question_texts
+    if platform:
+        body["platform"] = platform
+    return await _apost("/api/quality-reference/import-external", json=body)
+
+
+@mcp.tool()
+async def get_external_reference_status(job_id: str) -> dict[str, Any]:
+    """轮询 import_external_reference 建的异步导入 job 状态。
+
+    Args:
+        job_id: import_external_reference 返回的 job_id。
+
+    Returns:
+        {"ok": True, "data": {"job_id": str, "status": "pending"|"running"|"done"|"failed",
+         "progress": float, "reference_id": int|null, "images_total": int,
+         "images_rehosted": int, "images_skipped": int, "error": str|null}, "error": None}
+    """
+    return await _aget(f"/api/quality-reference/import-jobs/{job_id}")

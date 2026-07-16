@@ -52,7 +52,7 @@ def test_alembic_upgrade_creates_qref_and_columns(monkeypatch):
 
     try:
         cfg = Config("alembic.ini")
-        cfg.set_main_option("sqlalchemy.url", get_test_database_url())
+        cfg.set_main_option("sqlalchemy.url", get_test_database_url().replace("%", "%%"))
         command.upgrade(cfg, "head")  # 真跑迁移链——revision id 写错会在此崩
 
         insp = inspect(engine)
