@@ -80,6 +80,8 @@ from server.app.modules.mcp_catalog.router import router as mcp_catalog_router
 from server.app.modules.performance.router import router as performance_router
 from server.app.modules.pipelines.router import router as pipelines_router
 from server.app.modules.prompt_templates.router import router as prompt_templates_router
+from server.app.modules.quality_reference.images_router import quality_reference_images_router
+from server.app.modules.quality_reference.import_router import quality_reference_import_router
 from server.app.modules.quality_reference.mcp_router import quality_reference_mcp_router
 from server.app.modules.quality_reference.router import quality_reference_router
 from server.app.modules.report.router import report_mcp_router
@@ -302,6 +304,18 @@ def create_app() -> FastAPI:
         prefix="/api",
         tags=["quality-reference-mcp"],
     )
+    # qref 外部参考异步导入（MCP token）：POST /import-external + GET /import-jobs/{id}
+    app.include_router(
+        quality_reference_import_router,
+        prefix="/api",
+        tags=["quality-reference-mcp"],
+    )
+    # qref 图片公开只读代理：GET /images/{id}（内链渲染用，无鉴权，仿 stock-images）
+    app.include_router(
+        quality_reference_images_router,
+        prefix="/api",
+        tags=["quality-reference-images"],
+    )
 
     # 注册 API 路由模块（全部需要 JWT cookie 鉴权）
     app.include_router(
@@ -446,6 +460,11 @@ def create_app() -> FastAPI:
     import server.app.modules.video.service as _video_service
 
     _video_service.bg_session_factory = SessionLocal
+
+    # qref 外部参考导入后台线程（spawn_import_job 读 import_job 里这个变量）
+    import server.app.modules.quality_reference.import_job as _qref_import_job
+
+    _qref_import_job.bg_session_factory = SessionLocal
 
     # 问题池定时镜像同步：仅在 GEO_QUESTION_POOL_AUTO_SYNC_ENABLED=true 时启动后台线程。
     # 默认关闭，测试 / 本地不会打真实飞书。启动失败只记日志，不致命。
