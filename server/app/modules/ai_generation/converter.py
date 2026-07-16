@@ -60,9 +60,40 @@ class _TiptapBuilder(HTMLParser):
             self._marks.append({"type": "italic"})
         elif tag in ("code", "tt"):
             self._marks.append({"type": "code"})
+        elif tag == "img":
+            a = dict(attrs)
+            img_node = {
+                "type": "image",
+                "attrs": {
+                    "src": a.get("src") or "",
+                    "alt": a.get("alt") or "",
+                    "title": "",
+                    "width": "30%",  # 编辑器 CustomImage 默认显示宽度
+                    "assetId": None,  # 内链已在 src 里，非站内 Asset
+                },
+            }
+            # image 是块级节点，不能嵌在 paragraph/list 里。若正处于段落中：
+            # 先把已累积的段落文本收尾（保序），再把 image 落到顶层，最后重开一个
+            # 空段落承接图片后面的行内文本。python-markdown 把 ![](url) 包成 <p><img/></p>，
+            # 独占一行时该段落为空、会在 </p> 处被丢弃。
+            reopen = False
+            if self._stack and self._stack[-1].get("type") == "paragraph":
+                para = self._stack.pop()
+                if para.get("content"):
+                    self._commit(para)
+                reopen = True
+            self._root.append(img_node)
+            if reopen:
+                self._stack.append({"type": "paragraph", "content": []})
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in ("h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol"):
+        if tag == "p":
+            # 只弹 paragraph；空段落（如仅承接过被提升的图片）直接丢弃，不产出空节点。
+            if self._stack and self._stack[-1].get("type") == "paragraph":
+                node = self._stack.pop()
+                if node.get("content"):
+                    self._commit(node)
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol"):
             if self._stack:
                 self._pop_commit()
         elif tag == "li":
