@@ -255,3 +255,34 @@ async def pick_quality_references(
     if k is not None:
         params["k"] = k
     return await _aget("/api/quality-reference/pick", params=params)
+
+
+@mcp.tool()
+async def search_articles_by_title(
+    title: str,
+    review_status: str = "approved",
+    limit: int = 20,
+) -> dict[str, Any]:
+    """按标题关键词搜自有（站内）文章，主要用于挑一篇已审文章去 adopt_quality_reference 入高质量库。
+
+    Args:
+        title: 标题关键词（子串匹配，只搜标题）。
+        review_status: 默认 "approved"（只回能直接采纳的候选）；"pending" / "draft" 搜对应状态，
+            "all" 搜全部状态。
+        limit: 1–100，默认 20。
+
+    Returns:
+        {"ok": True, "data": {"items": [
+            {"id", "title", "review_status", "word_count",
+             "already_adopted": bool, "snippet": str, "created_at": str}
+        ]}, "error": None}
+
+    典型用法：先本工具拿到 id → 再 adopt_quality_reference(article_id=id) 入高质量库。
+    already_adopted=True 表示该文已在库、无需重复采纳。
+    """
+    params: dict[str, Any] = {
+        "title": title,
+        "review_status": review_status,
+        "limit": max(1, min(100, limit)),
+    }
+    return await _aget("/api/mcp/articles/search", params=params)
