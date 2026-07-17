@@ -28,7 +28,7 @@
 - **标签驱动检索**：writer 按矩阵选「1-2 个相关标签 + 几个无关标签」，`query_games_by_tags` 做 DB 聚合先筛一批候选，再由 Claude 从候选里挑。**选哪些标签的策略写在 skill 里**；**可选什么标签**由 MCP 工具查。
 - **v1 存扁平标签**：game-search 源只给扁平 tag，v1 就存扁平 tag，`game_tags.axis` **预留空列**（多轴留给日后富化，不为造多轴卡住 L1）。
 - **语料保留原生 + 预留空列**：存 game-search 原生字段（名称/评分/平台/评论数/图标/截图 URL/官方简介）；另加 `highlight_comments` / `related_hotspots` 两个**可空列，v1 默认 null**，等日后别的脚本填。
-- **入库=GEO 后端模块 + CLI**：抓取逻辑折叠进 GEO 后端新模块；`python -m server.scripts.ingest_games` CLI（可 cron）为主，**不做常驻定时线程**（YAGNI）。可选薄 HTTP 触发端点（MCP-token）。
+- **入库=GEO 内置定时任务 + 手动 CLI**：抓取逻辑折叠进 GEO 后端新模块；由 `create_app()` 启动一个后台守护线程**定时刷新**（复用现有 `ai_generation/sync_scheduler.py` 模式：env 开关 + interval + 幂等 upsert + 单目标失败隔离），**不需要每次手动执行**；另留 `python -m server.scripts.ingest_games` CLI 供一次性 seed / backfill / 补抓。
 - **截图 v1 入 MinIO**：真实截图下载入库，配图优先用真截图。
 - **强制取材 = 库优先 + websearch 兜底**：候选 ≥ 阈值走库、彻底不搜；候选 < 阈值 writer 回退现有 WebSearch（安全网，不移除）。
 - **配图零改动**：复用现有 `get_or_create_companion_category` + 确定性落图，配图代码不改。
@@ -37,11 +37,12 @@
 
 ## 二、数据流总览
 
-### 入库（离线/异步，与生文解耦）
+### 入库（内置定时任务，与生文解耦）
 
 ```
-cron / 手动:  python -m server.scripts.ingest_games --source taptap --category 经营 --pages N
-   │
+create_app() 启动后台守护线程 game_library.scheduler.start_game_ingest(session_factory)
+   │   每隔 GEO_GAME_INGEST_INTERVAL_SECONDS 跑一轮 run_ingest_once（wait→run，幂等）
+   │   （手动补抓：python -m server.scripts.ingest_games --source taptap --category 经营 --pages N，同一份 service）
    ▼
 game_library.sources.{taptap,baidu}.search(...)   # 折叠自 game-search.zip，http_direct 出网
    │  → list[Game]（源生结构：name/score/tags/platforms/comment_count/icon_url/screenshot_urls/description）
@@ -135,6 +136,7 @@ server/app/modules/game_library/
   models.py        # Game / GameTag ORM
   schemas.py       # 入库/检索 Pydantic
   service.py       # upsert_game / query_games_by_tags / list_game_tags 的服务实现
+  scheduler.py     # 定时入库后台线程：run_ingest_once / start_game_ingest / stop_game_ingest
   router.py        # MCP-token 只读检索端点（给 MCP 工具用）+ 可选入库触发端点
   types.py         # 折叠自 game-search: Game dataclass + 常量
   registry.py      # 折叠自 game-search: SOURCES 注册表
@@ -156,18 +158,25 @@ server/scripts/ingest_games.py   # CLI 入口
 
 > **出网**：sources 是 `http_direct`（urllib/requests），与现有 `shared/baidu.py` 千帆出网同类。运行环境为 GEO 后端（conda `geo_xzpt` + GEO settings 提供 DB/MinIO）。截图下载走短超时 + best-effort。
 
-### CLI `python -m server.scripts.ingest_games`
+### 定时入库（`scheduler.py`，复用 `sync_scheduler.py` 模式）
 
+- `run_ingest_once(session_factory) -> {"targets", "upserted", "failed"}`：**纯函数式扫一轮、可单测**——遍历「入库目标清单」（source + category），逐目标 `sources.search(...)` → 逐游戏 `upsert_game`；单目标失败隔离（rollback + 记日志，不影响其它目标），不休眠。测试直接调它并 monkeypatch `sources.*.search`，不跑真休眠、不真出网。
+- `start_game_ingest(session_factory) -> bool`：按 `GEO_GAME_INGEST_SCHEDULER_ENABLED` 起 daemon 线程；循环 `wait(interval) → run_ingest_once`（先等再抓，避免一启动就打外站；停止事件可立即唤醒）。`interval = max(下限, GEO_GAME_INGEST_INTERVAL_SECONDS)`，默认建议 **6 小时**（游戏门户变化慢，一天几次足够）。
+- `stop_game_ingest()`：测试 / 优雅关闭用。
+- **启动位置**：`create_app()` 里与 `start_auto_sync` 并列启动（web 进程内，无需独立 worker；不依赖浏览器，与问题池同步同类）。
+- **入库目标清单**（抓哪些 source×category）：v1 走**配置/env 驱动**（如 `GEO_GAME_INGEST_TARGETS` JSON 或模块常量种子清单，覆盖矩阵题材：经营/养成/国风等）。DB 驱动的可编辑目标清单留给 L2 策展。
+- **多进程 caveat**（照抄现有模式）：每个 web 进程各起一个入库线程，`upsert_game` 幂等、重复无害但浪费；生产建议单进程跑 web，或后续加进程级租约（与 `sync_scheduler` 同注意事项）。
+
+### CLI `python -m server.scripts.ingest_games`（手动 seed / backfill）
+
+- 定时任务之外的**手动补抓**：首次种库、临时抓某个新分类、backfill。
 - 参数：`--source {taptap,baidu}`、`--category <中文分类名>`、`--pages N`、`--limit N`、`--min-score`（可选）。
-- 用 `SessionLocal` 短 session（in-process，参照其它 `server/scripts/*`）。
-- 逐游戏 `upsert_game`，打印/汇总 upsert/入图计数。
-- **可 cron**：刷新 = 重跑 CLI；upsert 幂等保证重复运行只更新不增重。
+- 用 `SessionLocal` 短 session（in-process，参照其它 `server/scripts/*`），调**同一份** `service.upsert_game`，与定时任务共用核心；打印/汇总 upsert/入图计数。
+- 幂等：与定时任务同源，重复运行只更新不增重。
 
-### 刷新节奏（v1）
+### 可选：MCP-token HTTP 触发端点
 
-- **CLI/cron 起步，不做常驻定时线程**（YAGNI；用户诉求就是「异步脚本」）。
-- 入库范围：按配置/参数的分类清单（覆盖矩阵关心的题材，如经营/养成/国风等），可迭代扩。
-- 可选：MCP-token 保护的薄 HTTP 触发端点（`POST /api/mcp/game-library/ingest`，异步起后台 job 返回 job_id），供远端/无 shell 触发。**非 FastMCP 工具，不计入 `MCP_TOOLS_COUNT`**。v1 可后置。
+- `POST /api/mcp/game-library/ingest`（MCP-token 保护，异步起后台 job 返回 job_id），供远端/无 shell 手动触发一轮。**非 FastMCP 工具，不计入 `MCP_TOOLS_COUNT`**。有了内置定时任务后**优先级下降**，v1 可后置。
 
 ---
 
@@ -235,6 +244,7 @@ server/scripts/ingest_games.py   # CLI 入口
 
 ## 九、测试（server/tests，`@pytest.mark.mysql`）
 
+- `run_ingest_once` 扫一轮：monkeypatch `sources.*.search` 返回假 Game，断言 upsert 计数、单目标失败隔离（一个目标抛错不影响其它目标）。
 - `upsert_game` 幂等：同 `(source, source_game_id)` 重跑只更新不增重；标签重建正确。
 - 截图入库去重：同 URL 重跑不重复灌图；`stock_category_id` 正确回写。
 - `query_games_by_tags`：OR 命中、`exclude_tags`、`min_score`、排序、`is_active` 过滤。
@@ -248,7 +258,13 @@ server/scripts/ingest_games.py   # CLI 入口
 ## 十、迁移与文档
 
 - **Alembic**：新增迁移建 `games` / `game_tags`（跟随当前迁移头，不写死版本号）。`stock_category_id` FK ondelete SET NULL、`game_id` FK ondelete CASCADE。
+- **新增 env（`GEO_` 前缀，pydantic-settings）**：
+  - `GEO_GAME_INGEST_SCHEDULER_ENABLED`（默认 `false`，与其它调度器同风格：默认关，生产显式开）
+  - `GEO_GAME_INGEST_INTERVAL_SECONDS`（默认 `21600` = 6h，代码 `max()` 下限保护）
+  - `GEO_GAME_INGEST_TARGETS`（入库目标清单，JSON；缺省回落模块内种子清单）
+  - 时区沿用现有 `GEO_SCHEDULER_TZ`
 - **CLAUDE.md**：
+  - `create_app()` 启动的后台线程清单里加「定时入库」（与问题池同步、pipeline 调度并列），并写明**多进程 caveat**（别跑多实例 web，或后续加租约）。
   - Domain Modules 段加 `game_library/` 一节。
   - MCP「Tool 三组」catalog 列表 +2（`list_game_tags` / `query_games_by_tags`），`MCP_TOOLS_COUNT` 33→35。
   - 路由清单 `/api/mcp/game-library/*`（若加入库触发端点）。
@@ -263,7 +279,7 @@ server/scripts/ingest_games.py   # CLI 入口
 - **L3 下游复用**：喂选题生成、对抗评审验真、视频 storyboard、文章↔游戏反向引用分析。
 - **多轴标签富化**：`game_tags.axis` 的实际分类填充（v1 只留空列）。
 - **语料富化脚本**：`highlight_comments` / `related_hotspots` 的抓取填充（v1 默认 null）。
-- **常驻定时刷新线程**：v1 用 CLI/cron。
+- **DB 驱动的可编辑入库目标清单 + 每目标独立节奏 / 进程级租约**：v1 定时任务走 env/常量种子清单 + 单进程，目标清单的运营可编辑化与多进程租约留后。
 
 以上均为脊梁日后可插的路线图，不影响 L1 落地。
 
@@ -271,7 +287,8 @@ server/scripts/ingest_games.py   # CLI 入口
 
 ## 十二、开放项 / 待实现计划细化
 
-- 入库分类清单的默认配置放哪（CLI 默认 vs 配置文件 vs env）——writing-plans 阶段定。
+- 入库目标清单（source×category）默认放哪：`GEO_GAME_INGEST_TARGETS` env（JSON） vs 模块内种子常量 —— writing-plans 阶段定，倾向「env 覆盖、缺省回落常量」。
+- 定时任务默认 interval（建议 6h）与下限值 —— 落地可调。
 - writer 阈值默认值（建议 `>=4`）与「多样性标签」条数（建议 1-2 相关 + 2-3 无关）——skill 常量，落地可调。
 - 截图入库的尺寸/数量上限（每游戏最多存几张、单图压缩策略）——参照 image_library 现有约定。
-- 可选 HTTP 入库触发端点是否 v1 就做（默认后置，CLI 先行）。
+- 可选 HTTP 入库触发端点是否 v1 就做（有定时任务后优先级下降，默认后置）。
