@@ -44,22 +44,6 @@ export function renderAutoReviewScore(score: string) {
   );
 }
 
-/**
- * 渲染对抗判分（0-100 整数，N 次对抗评审平均，纯 advisory）。null（手动/scheme/pipeline 文章）恒显「—」。
- */
-export function renderAdversarialScore(score: number | null) {
-  if (score == null) {
-    return <span style={{ color: "var(--text-muted, #888)" }}>—</span>;
-  }
-  const color =
-    score >= 70 ? "var(--green, #3fb950)" : score >= 40 ? "var(--amber, #d29922)" : "var(--red, #f85149)";
-  return (
-    <span className="badge" style={{ color }}>
-      {score}
-    </span>
-  );
-}
-
 export const ArticleListItem = React.memo(function ArticleListItem({
   article,
   draftId,
@@ -102,13 +86,6 @@ export const ArticleListItem = React.memo(function ArticleListItem({
               {renderAutoReviewScore(article.auto_review_score)}
             </span>
           ) : null}
-          <span
-            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-            title="对抗判分（N 次对抗评审平均，纯 advisory；无则为 —）"
-          >
-            对抗分：
-            {renderAdversarialScore(article.adversarial_score)}
-          </span>
         </span>
         <span className="articleSourceLine">智能体：{article.source_agent_name || "—"}</span>
         <span className="articleSourceRow">
