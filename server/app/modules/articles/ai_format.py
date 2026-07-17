@@ -753,6 +753,7 @@ def run_ai_format(
     builtin_variant: str = "conservative",
     format_model_selected: str | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """识别正文小标题，并把更新后的 Tiptap 文档写回文章。返回实际插入并落库的图片数。
 
@@ -784,6 +785,7 @@ def run_ai_format(
             builtin_variant=builtin_variant,
             format_model_selected=format_model_selected,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
 
     # 段1（短借连接）：读 + 第一道锁检查 + 拼提示词，随即归还连接
@@ -840,6 +842,7 @@ def run_ai_format(
             heading_indices=heading_indices,
             max_images=max_images,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -858,6 +861,7 @@ def run_ai_format_from_game_list(
     min_spacing: int | None,
     builtin_variant: str,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """确定性配图：拿显式游戏清单落图，不调 ai_format LLM、不提升标题。
 
@@ -901,6 +905,7 @@ def run_ai_format_from_game_list(
             image_search_query=prep.image_search_query,
             max_images=max_images,
             out_diagnostics=fmt_diag,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -917,6 +922,7 @@ def run_ai_format_from_game_list(
         out_diagnostics["anchored"] = len(positions)
         out_diagnostics["inserted"] = inserted
         out_diagnostics["missed"] = max(0, expected - inserted)
+        out_diagnostics["random_filled"] = int(fmt_diag.get("random_filled", 0) or 0)
         missed_games = list(fmt_diag.get("missed_games", []) or [])
         missed_games += [u["game"] for u in unmatched]
         out_diagnostics["missed_games"] = missed_games
@@ -1085,6 +1091,7 @@ def _ai_format_write_back(
     heading_indices: set[int],
     max_images: int | None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """段3（短借连接）：第二道锁检查 + 配图（仅快 DB）+ 写回三份正文 + 清锁，单 session。
 
@@ -1114,6 +1121,7 @@ def _ai_format_write_back(
                 image_search_query=None,
                 max_images=max_images,
                 out_diagnostics=image_diag,
+                random_fill_missed=random_fill_missed,
             )
 
         new_html, new_text = _derive_html_and_text(new_content_json)
@@ -1181,6 +1189,7 @@ def _run_ai_format_web_fallback(
     builtin_variant: str,
     format_model_selected: str | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """web_fallback=True（AI配图 节点）多段式：慢 IO（LLM + 联网搜图下载）期间都不持 DB 连接（Task 1b）。
 
@@ -1263,6 +1272,7 @@ def _run_ai_format_web_fallback(
             image_search_query=prep.image_search_query,
             max_images=max_images,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -1382,6 +1392,7 @@ def _web_fallback_collect_and_write_back(
     image_search_query: str | None,
     max_images: int | None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """串起段3（决策，短借）→ 段4（下载，无连接）→ 段5（落库写回，短借）。
 
@@ -1452,6 +1463,7 @@ def _web_fallback_collect_and_write_back(
             max_images=max_images,
             prefetched_downloads=prefetched,
             out_diagnostics=image_diag,
+            random_fill_missed=random_fill_missed,
         )
 
         new_html, new_text = _derive_html_and_text(new_content_json_final)
