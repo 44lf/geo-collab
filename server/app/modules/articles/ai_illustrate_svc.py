@@ -26,7 +26,6 @@ from server.app.modules.image_library.cover import (
     CoverResult,
     set_random_cover_from_category,
 )
-from server.app.modules.image_library.fallback import apply_image_fallback
 
 _logger = logging.getLogger(__name__)
 
@@ -92,6 +91,7 @@ def _resolve_illustration_outcome(
     inserted = int(fmt_diag.get("inserted", images_inserted or 0) or 0)
     missed = int(fmt_diag.get("missed", 0) or 0)
     missed_games = list(fmt_diag.get("missed_games", []) or [])
+    random_filled = int(fmt_diag.get("random_filled", 0) or 0)
 
     format_error: str | None = raw_error
     warning: str | None = None
@@ -109,6 +109,11 @@ def _resolve_illustration_outcome(
     if warning is None and format_error is None and missed > 0:
         games = ("：" + "、".join(missed_games)) if missed_games else ""
         warning = f"partial_images: 应配 {requested} 张，实配 {inserted} 张，缺 {missed} 张{games}"
+
+    # 随机替补软提示：位置对、但图可能与正文不相关（不覆盖更高优先级的 skip/error/partial）
+    if random_filled > 0:
+        note = f"random_filled: {random_filled} 张为随机替补（位置对、图可能与正文不相关）"
+        warning = note if warning is None else f"{warning}；{note}"
 
     return format_error, warning, requested, missed, missed_games
 
@@ -191,6 +196,7 @@ def illustrate_one(
             min_spacing=min_spacing,
             builtin_variant=builtin_variant,
             out_diagnostics=fmt_diag,
+            random_fill_missed=True,
         )
     else:
         images_inserted = run_ai_format(
@@ -206,25 +212,12 @@ def illustrate_one(
             builtin_variant=builtin_variant,
             format_model_selected=options.format_model,
             out_diagnostics=fmt_diag,
+            random_fill_missed=True,
         )
 
-    fallback_inserted = 0
-    try:
-        # 用 anchored（实际锚定数）而非 requested（作者意图/清单长度）算兜底缺口：
-        # 锚定全失败时 anchored=0 → 兜底补 0，绝不灌满随机无关图（见 #1182）。
-        anchored = int(fmt_diag.get("anchored", 0) or 0)
-        category_ids = [
-            c["id"] for c in candidate_categories if isinstance(c, dict) and c.get("id")
-        ]
-        fallback_inserted = apply_image_fallback(
-            article_id=article_id,
-            anchored=anchored,
-            category_ids=category_ids,
-            max_images=max_images,
-            session_factory=session_factory,
-        )
-    except Exception:  # noqa: BLE001
-        _logger.exception("fallback random fill failed for article %s", article_id)
+    # 随机替补已并入 _maybe_insert_images（按锚点回填、不再全文撒点，见设计稿）：
+    # images_inserted 已含替补图，这里只回读诊断计数作可观测（其中多少张是随机替补）。
+    fallback_inserted = int(fmt_diag.get("random_filled", 0) or 0)
 
     # 阶段 2: 封面 (独立短 session)
     cover_status = "skipped"
@@ -257,7 +250,8 @@ def illustrate_one(
     finally:
         db.close()
 
-    total_inserted = (images_inserted or 0) + fallback_inserted
+    # images_inserted 已含随机替补图（在 _maybe_insert_images 里落图），不再叠加 fallback_inserted
+    total_inserted = images_inserted or 0
     format_error, warning, requested, missed, missed_games = _resolve_illustration_outcome(
         raw_error=raw_error,
         images_inserted=total_inserted,

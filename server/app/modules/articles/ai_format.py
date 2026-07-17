@@ -15,6 +15,7 @@ AI 自动排版：让格式模型识别正文里哪些段落该升级成小标�
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -584,6 +585,7 @@ def _maybe_insert_images(
     max_images: int | None = None,
     prefetched_downloads: dict[int, list[tuple[bytes, str, Any]]] | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> tuple[dict, int]:
     """按模型给的 image_positions 插图，返回 (新文档, 实插图数)。
 
@@ -633,6 +635,7 @@ def _maybe_insert_images(
     matched_refs: list[Any] = []
     matched_positions: list[int] = []
     used_ids: list[int] = []
+    random_filled = 0  # 随机替补落图数（random_fill_missed 时用）
     requested_labels: list[str] = []  # 每个"AI 点名且能定位到栏目"的位置（应该配上图的）
     missed_labels: list[str] = []  # requested 里最终没配上的（选不到图 + 联网也没补到）
     for idx, req_cat_id, game in positions:
@@ -667,12 +670,23 @@ def _maybe_insert_images(
                 else:
                     # 同步路径：就地联网搜图 + 下载 + 落库（旧行为，仅非多段式调用方走到）
                     image_id = _web_fallback_fill_category(db, category, image_search_query)
+        # 联网补图（web_fallback）尝试已在上方做完；仍无图时，若开了随机替补，
+        # 从候选栏目池随机取一张替补（best-effort），插在同一锚点。
+        used_random = False
+        if image_id is None and random_fill_missed:
+            image_id = pick_image_id(
+                ImageQuery(category_ids=list(valid_category_ids), excluded_ids=used_ids), db
+            )
+            used_random = image_id is not None
         if image_id is None:
-            missed_labels.append(label)  # 该配图但选不到/联网也没补到 → 记一笔 miss
+            missed_labels.append(label)  # 精准/联网/随机都没补到 → 记一笔 miss
             continue
 
         ref = fetch_image_by_id(image_id, db)
         if ref is not None:
+            if used_random:
+                random_filled += 1
+                ref = dataclasses.replace(ref, official_url=None)  # 替补不附来源 url
             used_ids.append(image_id)
             matched_refs.append(ref)
             matched_positions.append(idx)
@@ -690,6 +704,7 @@ def _maybe_insert_images(
         out_diagnostics["anchored"] = len(requested_labels)
         out_diagnostics["inserted"] = len(matched_refs)
         out_diagnostics["missed"] = len(requested_labels) - len(matched_refs)
+        out_diagnostics["random_filled"] = random_filled
         if missed_labels:
             out_diagnostics["missed_games"] = missed_labels
 
@@ -738,6 +753,7 @@ def run_ai_format(
     builtin_variant: str = "conservative",
     format_model_selected: str | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """识别正文小标题，并把更新后的 Tiptap 文档写回文章。返回实际插入并落库的图片数。
 
@@ -769,6 +785,7 @@ def run_ai_format(
             builtin_variant=builtin_variant,
             format_model_selected=format_model_selected,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
 
     # 段1（短借连接）：读 + 第一道锁检查 + 拼提示词，随即归还连接
@@ -825,6 +842,7 @@ def run_ai_format(
             heading_indices=heading_indices,
             max_images=max_images,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -843,6 +861,7 @@ def run_ai_format_from_game_list(
     min_spacing: int | None,
     builtin_variant: str,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """确定性配图：拿显式游戏清单落图，不调 ai_format LLM、不提升标题。
 
@@ -886,6 +905,7 @@ def run_ai_format_from_game_list(
             image_search_query=prep.image_search_query,
             max_images=max_images,
             out_diagnostics=fmt_diag,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -902,6 +922,7 @@ def run_ai_format_from_game_list(
         out_diagnostics["anchored"] = len(positions)
         out_diagnostics["inserted"] = inserted
         out_diagnostics["missed"] = max(0, expected - inserted)
+        out_diagnostics["random_filled"] = int(fmt_diag.get("random_filled", 0) or 0)
         missed_games = list(fmt_diag.get("missed_games", []) or [])
         missed_games += [u["game"] for u in unmatched]
         out_diagnostics["missed_games"] = missed_games
@@ -1070,6 +1091,7 @@ def _ai_format_write_back(
     heading_indices: set[int],
     max_images: int | None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """段3（短借连接）：第二道锁检查 + 配图（仅快 DB）+ 写回三份正文 + 清锁，单 session。
 
@@ -1099,6 +1121,7 @@ def _ai_format_write_back(
                 image_search_query=None,
                 max_images=max_images,
                 out_diagnostics=image_diag,
+                random_fill_missed=random_fill_missed,
             )
 
         new_html, new_text = _derive_html_and_text(new_content_json)
@@ -1166,6 +1189,7 @@ def _run_ai_format_web_fallback(
     builtin_variant: str,
     format_model_selected: str | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """web_fallback=True（AI配图 节点）多段式：慢 IO（LLM + 联网搜图下载）期间都不持 DB 连接（Task 1b）。
 
@@ -1248,6 +1272,7 @@ def _run_ai_format_web_fallback(
             image_search_query=prep.image_search_query,
             max_images=max_images,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -1367,6 +1392,7 @@ def _web_fallback_collect_and_write_back(
     image_search_query: str | None,
     max_images: int | None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """串起段3（决策，短借）→ 段4（下载，无连接）→ 段5（落库写回，短借）。
 
@@ -1437,6 +1463,7 @@ def _web_fallback_collect_and_write_back(
             max_images=max_images,
             prefetched_downloads=prefetched,
             out_diagnostics=image_diag,
+            random_fill_missed=random_fill_missed,
         )
 
         new_html, new_text = _derive_html_and_text(new_content_json_final)

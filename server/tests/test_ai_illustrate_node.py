@@ -86,6 +86,7 @@ def test_ai_illustrate_candidates_and_passthrough(monkeypatch):
             builtin_variant="conservative",
             format_model_selected=None,
             out_diagnostics=None,
+            random_fill_missed=False,
         ):
             captured["article_id"] = article_id
             captured["candidates"] = candidate_categories
@@ -95,6 +96,7 @@ def test_ai_illustrate_candidates_and_passthrough(monkeypatch):
             captured["max_images"] = max_images
             captured["min_spacing"] = min_spacing
             captured["builtin_variant"] = builtin_variant
+            captured["random_fill_missed"] = random_fill_missed
 
         monkeypatch.setattr("server.app.modules.articles.ai_illustrate_svc.run_ai_format", _stub)
 
@@ -120,6 +122,8 @@ def test_ai_illustrate_candidates_and_passthrough(monkeypatch):
         assert captured["max_images"] == 12
         assert captured["min_spacing"] == 1
         assert captured["preset_id"] is None
+        # illustrate_one 应对配图路径开启按锚点随机替补（goal + pipeline）
+        assert captured["random_fill_missed"] is True
     finally:
         app.cleanup()
 
