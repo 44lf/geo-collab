@@ -15,6 +15,7 @@ AI 自动排版：让格式模型识别正文里哪些段落该升级成小标�
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -584,6 +585,7 @@ def _maybe_insert_images(
     max_images: int | None = None,
     prefetched_downloads: dict[int, list[tuple[bytes, str, Any]]] | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> tuple[dict, int]:
     """按模型给的 image_positions 插图，返回 (新文档, 实插图数)。
 
@@ -633,6 +635,7 @@ def _maybe_insert_images(
     matched_refs: list[Any] = []
     matched_positions: list[int] = []
     used_ids: list[int] = []
+    random_filled = 0  # 随机替补落图数（random_fill_missed 时用）
     requested_labels: list[str] = []  # 每个"AI 点名且能定位到栏目"的位置（应该配上图的）
     missed_labels: list[str] = []  # requested 里最终没配上的（选不到图 + 联网也没补到）
     for idx, req_cat_id, game in positions:
@@ -667,12 +670,23 @@ def _maybe_insert_images(
                 else:
                     # 同步路径：就地联网搜图 + 下载 + 落库（旧行为，仅非多段式调用方走到）
                     image_id = _web_fallback_fill_category(db, category, image_search_query)
+        # 联网补图（web_fallback）尝试已在上方做完；仍无图时，若开了随机替补，
+        # 从候选栏目池随机取一张替补（best-effort），插在同一锚点。
+        used_random = False
+        if image_id is None and random_fill_missed:
+            image_id = pick_image_id(
+                ImageQuery(category_ids=list(valid_category_ids), excluded_ids=used_ids), db
+            )
+            used_random = image_id is not None
         if image_id is None:
-            missed_labels.append(label)  # 该配图但选不到/联网也没补到 → 记一笔 miss
+            missed_labels.append(label)  # 精准/联网/随机都没补到 → 记一笔 miss
             continue
 
         ref = fetch_image_by_id(image_id, db)
         if ref is not None:
+            if used_random:
+                random_filled += 1
+                ref = dataclasses.replace(ref, official_url=None)  # 替补不附来源 url
             used_ids.append(image_id)
             matched_refs.append(ref)
             matched_positions.append(idx)
@@ -690,6 +704,7 @@ def _maybe_insert_images(
         out_diagnostics["anchored"] = len(requested_labels)
         out_diagnostics["inserted"] = len(matched_refs)
         out_diagnostics["missed"] = len(requested_labels) - len(matched_refs)
+        out_diagnostics["random_filled"] = random_filled
         if missed_labels:
             out_diagnostics["missed_games"] = missed_labels
 
