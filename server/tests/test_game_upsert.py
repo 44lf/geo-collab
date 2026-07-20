@@ -3,7 +3,17 @@ import pytest
 from server.app.modules.game_library import types
 
 
-def _game(source, gid, name, tags, shots, score, comments=1):
+def _game(
+    source,
+    gid,
+    name,
+    tags,
+    shots,
+    score,
+    comments=1,
+    description="d",
+    icon_url="http://x/i.png",
+):
     return types.Game(
         source=source,
         game_id=gid,
@@ -12,9 +22,9 @@ def _game(source, gid, name, tags, shots, score, comments=1):
         tags=tags,
         platforms=["android"],
         comment_count=comments,
-        icon_url="http://x/i.png",
+        icon_url=icon_url,
         screenshot_urls=shots,
-        description="d",
+        description=description,
         raw={},
     )
 
@@ -99,6 +109,148 @@ def test_upsert_idempotent_same_source(monkeypatch):
                 )
                 s.commit()
             assert s.query(Game).count() == 1
+        finally:
+            s.close()
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_upsert_downloads_before_checking_out_db_connection(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.game_library import service
+        from server.app.modules.image_library import service as image_service
+        from server.app.modules.image_library import store as minio_store
+        from server.app.shared import image_download
+
+        monkeypatch.setattr(minio_store, "ensure_bucket", lambda *a, **k: None)
+        monkeypatch.setattr(minio_store, "upload_image", lambda *a, **k: None)
+
+        setup = app.session_factory()
+        try:
+            image_service.get_or_create_companion_category(setup, "连接探针")
+        finally:
+            setup.close()
+
+        checked_out: list[int] = []
+
+        def fake_download(url, **kwargs):
+            checked_out.append(app.engine.pool.checkedout())
+            return b"\xff\xd8\xff", "image/jpeg"
+
+        monkeypatch.setattr(image_download, "download_image", fake_download)
+
+        s = app.session_factory()
+        try:
+            service.upsert_game(
+                s,
+                _game("baidu", "1", "连接探针", ["经营"], ["http://x/a.jpg"], 8.0),
+            )
+            s.commit()
+        finally:
+            s.close()
+
+        assert checked_out == [0]
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_upsert_none_source_does_not_override_existing_values(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.game_library import service
+        from server.app.modules.game_library.models import Game
+        from server.app.modules.image_library import store as minio_store
+        from server.app.shared import image_download
+
+        monkeypatch.setattr(minio_store, "ensure_bucket", lambda *a, **k: None)
+        monkeypatch.setattr(minio_store, "upload_image", lambda *a, **k: None)
+        monkeypatch.setattr(image_download, "download_image", lambda *a, **k: None)
+
+        s = app.session_factory()
+        try:
+            service.upsert_game(
+                s,
+                _game(
+                    "baidu",
+                    "1",
+                    "空值合并",
+                    ["经营"],
+                    [],
+                    8.0,
+                    comments=12,
+                    description="已有完整描述",
+                    icon_url="http://x/icon-long.png",
+                ),
+            )
+            s.commit()
+            service.upsert_game(
+                s,
+                _game(
+                    "taptap",
+                    "2",
+                    "空值合并",
+                    ["养成"],
+                    [],
+                    None,
+                    comments=None,
+                    description=None,
+                    icon_url=None,
+                ),
+            )
+            s.commit()
+            row = s.query(Game).filter(Game.name_normalized == "空值合并").one()
+            assert row.score == 8.0
+            assert row.comment_count == 12
+            assert row.description == "已有完整描述"
+            assert row.icon_url == "http://x/icon-long.png"
+        finally:
+            s.close()
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_upsert_deduplicates_repeated_screenshot_url(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.game_library import service
+        from server.app.modules.image_library import store as minio_store
+        from server.app.modules.image_library.models import StockImage
+        from server.app.shared import image_download
+
+        monkeypatch.setattr(minio_store, "ensure_bucket", lambda *a, **k: None)
+        monkeypatch.setattr(minio_store, "upload_image", lambda *a, **k: None)
+        monkeypatch.setattr(
+            image_download,
+            "download_image",
+            lambda url, **k: (b"\xff\xd8\xff", "image/jpeg"),
+        )
+
+        s = app.session_factory()
+        try:
+            for _ in range(2):
+                service.upsert_game(
+                    s,
+                    _game(
+                        "baidu",
+                        "1",
+                        "截图去重",
+                        ["经营"],
+                        ["http://x/a.jpg", "http://x/a.jpg"],
+                        8.0,
+                    ),
+                )
+                s.commit()
+            assert s.query(StockImage).count() == 1
         finally:
             s.close()
     finally:

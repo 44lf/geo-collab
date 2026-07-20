@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.core.time import utcnow
@@ -33,6 +33,13 @@ class StockImage(Base):
     """图库单图。minio_key 是其在所属栏目 bucket 内的对象 key（全局唯一）。"""
 
     __tablename__ = "stock_images"
+    __table_args__ = (
+        UniqueConstraint(
+            "category_id",
+            "source_url_hash",
+            name="uq_stock_images_category_source_hash",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     category_id: Mapped[int] = mapped_column(ForeignKey("stock_categories.id"), index=True)

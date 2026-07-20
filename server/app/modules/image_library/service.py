@@ -58,7 +58,9 @@ def _unique_bucket_name(db: Session, base: str) -> str:
     return candidate
 
 
-def get_or_create_companion_category(db: Session, name: str) -> StockCategory | None:
+def get_or_create_companion_category(
+    db: Session, name: str, *, commit: bool = True
+) -> StockCategory | None:
     """按中文名取陪衬栏目，没有就新建（拼音 bucket + 建 MinIO 桶）。并发撞名时回退取已存在的。
 
     name 为空返回 None。已存在同名栏目直接复用（不论 kind）。
@@ -81,12 +83,15 @@ def get_or_create_companion_category(db: Session, name: str) -> StockCategory | 
     cat = StockCategory(name=name, bucket_name=bucket, kind="companion")
     db.add(cat)
     try:
-        db.commit()
+        if commit:
+            db.commit()
+            db.refresh(cat)
+        else:
+            db.flush()
     except IntegrityError:
         # 并发下别的线程已建同名栏目：回退取它
         db.rollback()
         return db.query(StockCategory).filter(StockCategory.name == name).first()
-    db.refresh(cat)
     logger.info("联网兜底新建陪衬栏目 name=%s bucket=%s id=%s", name, bucket, cat.id)
     return cat
 
@@ -135,12 +140,29 @@ def store_image_bytes(
         source_url=source_url or None,
         source_url_hash=url_hash,
     )
-    db.add(img)
+    nested = db.begin_nested()
+    try:
+        db.add(img)
+        db.flush()
+        nested.commit()
+    except IntegrityError:
+        nested.rollback()
+        if url_hash:
+            existing = (
+                db.query(StockImage)
+                .filter(
+                    StockImage.category_id == category.id,
+                    StockImage.source_url_hash == url_hash,
+                )
+                .first()
+            )
+            if existing is not None:
+                return existing
+        logger.warning("联网兜底入库图片撞唯一约束 category=%s", category.name)
+        return None
     if commit:
         db.commit()
         db.refresh(img)
-    else:
-        db.flush()
     logger.info("联网兜底入库图片 category=%s image_id=%s", category.name, img.id)
     return img
 

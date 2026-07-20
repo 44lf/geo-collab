@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from server.app.core.time import utcnow
@@ -32,11 +33,27 @@ def _prefer_longer(cur: str | None, new: str | None) -> str | None:
     return cur
 
 
-def upsert_game(db: Session, game: types.Game, *, max_screenshots: int = 6) -> Game:
-    """按 name_normalized 跨源并集合并；不 commit（调用方按游戏 commit）。"""
-    norm = _normalize_game_name(game.name) or game.name
+def _download_screenshots(
+    urls: list[str] | None,
+    max_screenshots: int,
+) -> list[tuple[str, bytes, str]]:
+    out: list[tuple[str, bytes, str]] = []
+    for url in list(dict.fromkeys(urls or []))[:max_screenshots]:
+        got = image_download.download_image(url)
+        if got is None:
+            continue
+        data, mime = got
+        out.append((url, data, mime))
+    return out
+
+
+def _get_or_create_game_row(db: Session, game: types.Game, norm: str) -> Game:
     row = db.query(Game).filter(Game.name_normalized == norm).first()
-    if row is None:
+    if row is not None:
+        return row
+
+    nested = db.begin_nested()
+    try:
         row = Game(
             name=game.name,
             name_normalized=norm,
@@ -49,6 +66,30 @@ def upsert_game(db: Session, game: types.Game, *, max_screenshots: int = 6) -> G
         )
         db.add(row)
         db.flush()
+        nested.commit()
+        return row
+    except IntegrityError:
+        nested.rollback()
+        return db.query(Game).filter(Game.name_normalized == norm).one()
+
+
+def _add_game_tag_if_missing(db: Session, game_id: int, tag: str) -> None:
+    nested = db.begin_nested()
+    try:
+        db.add(GameTag(game_id=game_id, tag=tag, axis=None))
+        db.flush()
+        nested.commit()
+    except IntegrityError:
+        nested.rollback()
+
+
+def upsert_game(db: Session, game: types.Game, *, max_screenshots: int = 6) -> Game:
+    """按 name_normalized 跨源并集合并；不 commit（调用方按游戏 commit）。"""
+    downloaded_screenshots = _download_screenshots(game.screenshot_urls, max_screenshots)
+
+    norm = _normalize_game_name(game.name) or game.name
+    cat = get_or_create_companion_category(db, game.name, commit=False)
+    row = _get_or_create_game_row(db, game, norm)
 
     row.score = _merge_scalar_max(row.score, game.score)
     row.comment_count = _merge_scalar_max(row.comment_count, game.comment_count)
@@ -67,17 +108,12 @@ def upsert_game(db: Session, game: types.Game, *, max_screenshots: int = 6) -> G
     existing_tags = {t.tag for t in db.query(GameTag).filter(GameTag.game_id == row.id)}
     for tag in game.tags or []:
         if tag and tag not in existing_tags:
-            db.add(GameTag(game_id=row.id, tag=tag, axis=None))
+            _add_game_tag_if_missing(db, row.id, tag)
             existing_tags.add(tag)
 
-    cat = get_or_create_companion_category(db, game.name)
     if cat is not None:
         row.stock_category_id = cat.id
-        for url in (game.screenshot_urls or [])[:max_screenshots]:
-            got = image_download.download_image(url)
-            if got is None:
-                continue
-            data, mime = got
+        for url, data, mime in downloaded_screenshots:
             store_image_bytes(db, cat, data, mime, source_url=url, commit=False)
 
     row.last_verified_at = utcnow()

@@ -49,3 +49,20 @@ def test_stock_image_has_usage_and_hash_columns(monkeypatch):
         } <= cols
     finally:
         app.cleanup()
+
+
+@pytest.mark.mysql
+def test_stock_image_source_url_hash_unique_constraint_in_orm_schema(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from sqlalchemy import inspect
+
+        uniques = {
+            tuple(u["column_names"])
+            for u in inspect(app.engine).get_unique_constraints("stock_images")
+        }
+        assert ("category_id", "source_url_hash") in uniques
+    finally:
+        app.cleanup()
