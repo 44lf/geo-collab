@@ -86,8 +86,9 @@ def test_migration_0064_creates_image_link_and_job_tables(monkeypatch):
         }
         assert ("job_id",) in job_uniques
 
-        # 幂等回滚重升：downgrade 应干净丢掉三张表，再 upgrade 应无错重建。
-        command.downgrade(cfg, "-1")
+        # 幂等回滚重升：显式退到 0064 之前，应干净丢掉三张表，再 upgrade 应无错重建。
+        # 不用 "-1"：head 之后可能继续新增迁移，退一步未必会退过 0064。
+        command.downgrade(cfg, "0063_qref_multi_category")
         insp2 = inspect(engine)
         table_names2 = set(insp2.get_table_names())
         assert not (
