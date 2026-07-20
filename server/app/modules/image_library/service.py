@@ -14,6 +14,7 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from server.app.core.time import utcnow
 from server.app.modules.image_library import store as minio_store
 from server.app.modules.image_library.models import StockCategory, StockImage
 
@@ -142,3 +143,38 @@ def store_image_bytes(
         db.flush()
     logger.info("联网兜底入库图片 category=%s image_id=%s", category.name, img.id)
     return img
+
+
+def bump_stock_image_usage(db: Session, image_ids: list[int], article_id: int) -> None:
+    """落图后回写图片级用量（不 commit）。"""
+    ids = [int(image_id) for image_id in (image_ids or []) if image_id]
+    if not ids:
+        return
+    db.query(StockImage).filter(StockImage.id.in_(ids)).update(
+        {
+            StockImage.use_count: StockImage.use_count + 1,
+            StockImage.last_used_at: utcnow(),
+            StockImage.last_used_article_id: article_id,
+        },
+        synchronize_session=False,
+    )
+
+
+def collect_stock_image_ids(content_json: dict) -> list[int]:
+    """从 Tiptap content 里收集所有 image 节点的 stockImageId。"""
+    out: list[int] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "image":
+                stock_image_id = (node.get("attrs") or {}).get("stockImageId")
+                if isinstance(stock_image_id, int):
+                    out.append(stock_image_id)
+            for child in node.get("content") or []:
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(content_json)
+    return out
