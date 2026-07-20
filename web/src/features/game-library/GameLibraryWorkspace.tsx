@@ -22,6 +22,7 @@ export function GameLibraryWorkspace() {
   const [seg, setSeg] = useState<Seg>("main");
   const [sort, setSort] = useState<SortKey>("score");
   const [loaded, setLoaded] = useState(false);
+  const [catsLoaded, setCatsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<GameDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -32,7 +33,9 @@ export function GameLibraryWorkspace() {
   useEffect(() => {
     listCategories("main")
       .then((cats) => setMainCatIds(new Set(cats.map((c) => c.id))))
-      .catch(() => {});
+      .catch(() => toast("加载分组信息失败，暂按陪衬展示", "error"))
+      .finally(() => setCatsLoaded(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 游戏列表：搜索变化时（服务端 name like）重拉，带竞态防护。
@@ -75,6 +78,12 @@ export function GameLibraryWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [raw, seg, sort, mainCatIds]);
 
+  const emptyHint = q.trim()
+    ? `没有匹配「${q.trim()}」的游戏，换个搜索词`
+    : raw.length === 0
+      ? "库为空，先在服务器跑 ingest_games 入库"
+      : `「${seg === "main" ? "主推游戏" : "陪衬游戏"}」分组暂无游戏，切到另一分组看看`;
+
   async function openDetail(id: number) {
     setSelectedId(id);
     const seq = ++detailSeq.current;
@@ -113,17 +122,24 @@ export function GameLibraryWorkspace() {
             mainCount={mainCount}
             companionCount={companionCount}
           />
-          <GameList games={games} selectedId={selectedId} onSelect={openDetail} loaded={loaded} />
+          <GameList
+            games={games}
+            selectedId={selectedId}
+            onSelect={openDetail}
+            loaded={loaded && catsLoaded}
+            emptyHint={emptyHint}
+          />
         </aside>
         <section className="glRight">
           {detailLoading && !detail && <div className="glDetailLoading">加载中…</div>}
-          {loaded && games.length === 0 && (
-            <div className="glDetailLoading">没有匹配的游戏；库为空时先跑 ingest_games</div>
+          {loaded && catsLoaded && games.length === 0 && (
+            <div className="glDetailLoading">{emptyHint}</div>
           )}
           {detail && <GameDetailCard detail={detail} />}
           {detail && (
             <div className="glMaterialRow">
               <GameMaterialPanel
+                key={detail.game_id}
                 categoryId={detail.stock_category_id}
                 screenshotUrlCount={detail.screenshot_urls.length}
               />

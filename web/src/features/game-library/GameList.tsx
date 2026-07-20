@@ -6,16 +6,17 @@ type Props = {
   selectedId: number | null;
   onSelect: (id: number) => void;
   loaded: boolean;
+  emptyHint: string;
 };
 
-export function GameList({ games, selectedId, onSelect, loaded }: Props) {
+export function GameList({ games, selectedId, onSelect, loaded, emptyHint }: Props) {
   return (
     <div className="glList">
       {loaded && games.length === 0 && (
         <div className="glListEmpty">
           <Gamepad2 size={30} strokeWidth={1.3} />
           <p>没有匹配的游戏</p>
-          <span>换个分组/搜索词；库为空时先跑 ingest_games</span>
+          <span>{emptyHint}</span>
         </div>
       )}
       {games.map((g) => (
