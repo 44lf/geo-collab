@@ -192,7 +192,7 @@ def ai_illustrate_article_mcp(
 
 
 class SelectedGame(BaseModel):
-    game_id: int
+    game_id: int | None = None
     name: str
 
 
@@ -292,7 +292,9 @@ def save_article_from_mcp(
         if payload.selected_games:
             from server.app.modules.game_library.service import bump_game_usage
 
-            bump_game_usage(db, [g.game_id for g in payload.selected_games], article.id)
+            bump_game_usage(
+                db, [g.game_id for g in payload.selected_games if g.game_id], article.id
+            )
         db.commit()
     except HTTPException:
         raise

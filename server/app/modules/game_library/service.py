@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
 from server.app.modules.articles.formatting.document import _normalize_game_name
@@ -165,7 +165,14 @@ def query_games_by_tags(
         return []
 
     admit = select(GameTag.game_id).where(GameTag.tag.in_(relevant_tags)).distinct()
-    stmt = select(Game).where(Game.id.in_(admit), Game.is_active.is_(True))
+    stmt = (
+        select(Game)
+        .options(selectinload(Game.tags))
+        .where(
+            Game.id.in_(admit),
+            Game.is_active.is_(True),
+        )
+    )
     if exclude_tags:
         excluded = select(GameTag.game_id).where(GameTag.tag.in_(exclude_tags)).distinct()
         stmt = stmt.where(~Game.id.in_(excluded))

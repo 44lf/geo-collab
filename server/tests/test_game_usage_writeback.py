@@ -82,3 +82,52 @@ def test_save_from_mcp_bumps_selected_games(monkeypatch):
             s.close()
     finally:
         app.cleanup()
+
+
+@pytest.mark.mysql
+def test_save_from_mcp_allows_selected_game_without_library_id(monkeypatch):
+    from server.tests.test_save_article_mcp import _seed_question_and_template
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+        from server.app.modules.articles.models import Article
+        from server.app.modules.game_library.models import Game
+
+        config.get_settings.cache_clear()
+        qid, tpl_id = _seed_question_and_template(app)
+
+        s = app.session_factory()
+        try:
+            game = Game(name="库内游戏", name_normalized="库内游戏", use_count=0, is_active=True)
+            s.add(game)
+            s.commit()
+            gid = game.id
+        finally:
+            s.close()
+
+        body = {
+            "question_item_id": qid,
+            "prompt_template_id": tpl_id,
+            "user_id": app.admin_id,
+            "title": "外部搜索游戏攻略",
+            "markdown_content": "正文...",
+            "selected_games": [{"game_id": None, "name": "外部搜索游戏"}],
+        }
+        r = app.client.post(
+            "/api/articles/save-from-mcp",
+            json=body,
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+
+        s = app.session_factory()
+        try:
+            assert s.query(Article).filter(Article.title == "外部搜索游戏攻略").count() == 1
+            assert s.get(Game, gid).use_count == 0
+        finally:
+            s.close()
+    finally:
+        app.cleanup()
