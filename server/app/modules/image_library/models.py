@@ -43,5 +43,13 @@ class StockImage(Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # ── 游戏库扩展：入库去重 + 图片级用量（2026-07 game-library）──
+    source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    source_url_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_article_id: Mapped[int | None] = mapped_column(
+        ForeignKey("articles.id", ondelete="SET NULL"), nullable=True
+    )
 
     category = relationship("StockCategory", back_populates="images")
