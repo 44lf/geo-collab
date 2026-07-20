@@ -49,7 +49,7 @@ export function MobileMorePage({
             title: "管理",
             rows: [
               { key: "admin" as NavKey, label: "用户管理", icon: Users },
-              { key: "audit-logs" as NavKey, label: "审计日志", icon: ScrollText },
+              { key: "audit-logs" as NavKey, label: "日志中心", icon: ScrollText },
             ],
           },
         ]
