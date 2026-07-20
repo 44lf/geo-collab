@@ -66,3 +66,19 @@ def test_stock_image_source_url_hash_unique_constraint_in_orm_schema(monkeypatch
         assert ("category_id", "source_url_hash") in uniques
     finally:
         app.cleanup()
+
+
+@pytest.mark.mysql
+def test_games_is_active_index_in_orm_schema(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from sqlalchemy import inspect
+
+        indexes = {
+            tuple(index["column_names"]) for index in inspect(app.engine).get_indexes("games")
+        }
+        assert ("is_active",) in indexes
+    finally:
+        app.cleanup()

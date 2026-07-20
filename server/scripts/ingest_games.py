@@ -28,6 +28,8 @@ def main(argv: list[str] | None = None) -> None:
     ]
     result = run_ingest_once(SessionLocal, targets=targets)
     print(f"入库完成：{result}")
+    if int(result.get("failed") or 0) > 0:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

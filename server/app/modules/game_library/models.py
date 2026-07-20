@@ -44,7 +44,7 @@ class Game(Base):
     )
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default="1"
+        Boolean, nullable=False, default=True, server_default="1", index=True
     )
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
