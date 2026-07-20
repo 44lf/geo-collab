@@ -1,10 +1,11 @@
 """通用截图下载器：限体积/类型/重定向，best-effort（失败返 None、不抛）。"""
 
-from __future__ import annotations
-
+import ipaddress
 import logging
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+import socket
+from urllib.error import HTTPError
+from urllib.parse import urljoin, urlparse
+from urllib.request import HTTPHandler, HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +17,84 @@ _MAGIC = {
     b"GIF89a": "image/gif",
 }
 _HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "image/*"}
+_MAX_REDIRECTS = 5
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = build_opener(_NoRedirect, HTTPHandler, HTTPSHandler)
+
+
+def _opener_open(req: Request, timeout: int):
+    return _OPENER.open(req, timeout=timeout)  # noqa: S310
+
+
+def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _validate_http_url(url: str):
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("unsupported url scheme")
+    if not parsed.hostname:
+        raise ValueError("missing url host")
+    return parsed
+
+
+def _ensure_public_host(host: str, port: int | None) -> None:
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _is_blocked_ip(literal):
+            raise ValueError("private ip rejected")
+        return
+
+    resolved = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    if not resolved:
+        raise ValueError("host resolve failed")
+    for item in resolved:
+        ip = ipaddress.ip_address(item[4][0])
+        if _is_blocked_ip(ip):
+            raise ValueError("private resolved ip rejected")
 
 
 def _urlopen_same_host(url: str, timeout: int):
-    """打开 URL，拒绝跨站重定向（默认 opener 会跟随；这里限制 host 不变）。"""
-    req = Request(url, headers=_HEADERS)
-    resp = urlopen(req, timeout=timeout)  # noqa: S310
-    if urlparse(resp.geturl()).hostname != urlparse(url).hostname:
-        resp.close()
-        raise ValueError("cross-host redirect rejected")
-    return resp
+    """打开 URL，手动跟随同 host 重定向，并在每跳请求前做 SSRF 校验。"""
+    current_url = url
+    initial = _validate_http_url(current_url)
+    initial_host = initial.hostname
+
+    for _ in range(_MAX_REDIRECTS + 1):
+        parsed = _validate_http_url(current_url)
+        if parsed.hostname != initial_host:
+            raise ValueError("cross-host redirect rejected")
+        _ensure_public_host(parsed.hostname, parsed.port)
+
+        req = Request(current_url, headers=_HEADERS)
+        try:
+            return _opener_open(req, timeout=timeout)
+        except HTTPError as exc:
+            if exc.code not in {301, 302, 303, 307, 308}:
+                raise
+            location = exc.headers.get("Location") if exc.headers is not None else None
+            if not location:
+                raise ValueError("redirect without location") from exc
+            current_url = urljoin(current_url, location)
+
+    raise ValueError("too many redirects")
 
 
 def _sniff(data: bytes, declared: str) -> str | None:
