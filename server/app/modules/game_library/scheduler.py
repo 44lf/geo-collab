@@ -39,37 +39,53 @@ def _load_targets() -> list[dict]:
 
 
 def run_ingest_once(session_factory: SessionFactory, *, targets: list[dict] | None = None) -> dict:
-    """扫一轮入库目标。逐目标隔离（一个失败不影响其它）。"""
+    """扫一轮入库目标。target/game 双层隔离，一个失败不影响后续。"""
     active_targets = targets if targets is not None else _load_targets()
     upserted = 0
     failed = 0
     for target in active_targets:
-        source = target["source"]
-        category = target["category"]
-        max_games = int(target.get("max_games", 30))
-        max_shots = int(target.get("max_shots", 6))
+        try:
+            source = target["source"]
+            category = target["category"]
+            max_games = int(target.get("max_games", 30))
+            max_shots = int(target.get("max_shots", 6))
+        except Exception:
+            failed += 1
+            logger.exception("入库目标配置失败 target=%s", target)
+            continue
+
         db = session_factory()
         try:
             pool = registry.collect_pool(source, category, max_games)
-            seen: set[tuple[str, str]] = set()
+        except Exception:
+            failed += 1
+            db.rollback()
+            logger.exception("入库目标失败 source=%s category=%s", source, category)
+            db.close()
+            continue
+
+        seen: set[tuple[str, str]] = set()
+        try:
             for game in pool:
                 key = (game.source, game.game_id)
                 if key in seen:
                     continue
                 seen.add(key)
-                if source == "taptap" and not game.screenshot_urls:
-                    try:
+                try:
+                    if source == "taptap" and not game.screenshot_urls:
                         game = taptap.get_detail(game.game_id)
-                    except Exception:
-                        logger.info("taptap get_detail 失败 game_id=%s", game.game_id)
-                        continue
-                service.upsert_game(db, game, max_screenshots=max_shots)
-                db.commit()
-                upserted += 1
-        except Exception:
-            failed += 1
-            db.rollback()
-            logger.exception("入库目标失败 source=%s category=%s", source, category)
+                    service.upsert_game(db, game, max_screenshots=max_shots)
+                    db.commit()
+                    upserted += 1
+                except Exception:
+                    failed += 1
+                    db.rollback()
+                    logger.exception(
+                        "入库游戏失败 source=%s category=%s game_id=%s",
+                        source,
+                        category,
+                        game.game_id,
+                    )
         finally:
             db.close()
     return {"targets": len(active_targets), "upserted": upserted, "failed": failed}
