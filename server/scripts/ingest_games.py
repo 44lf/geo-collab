@@ -12,7 +12,6 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="ingest_games")
     parser.add_argument("--source", required=True, choices=["taptap", "baidu"])
     parser.add_argument("--category", required=True)
-    parser.add_argument("--pages", type=int, default=2)
     parser.add_argument("--max-games", type=int, default=30)
     parser.add_argument("--max-shots", type=int, default=6)
     args = parser.parse_args(argv)
@@ -21,7 +20,6 @@ def main(argv: list[str] | None = None) -> None:
         {
             "source": args.source,
             "category": args.category,
-            "pages": args.pages,
             "max_games": args.max_games,
             "max_shots": args.max_shots,
         }

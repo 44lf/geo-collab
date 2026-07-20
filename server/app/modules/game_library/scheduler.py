@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -18,11 +19,12 @@ SessionFactory = Callable[[], Any]
 
 _thread: threading.Thread | None = None
 _stop = threading.Event()
+_TAPTAP_DETAIL_THROTTLE_SECONDS = 0.3
 
 SEED_TARGETS = [
-    {"source": "baidu", "category": "经营", "pages": 2, "max_games": 30, "max_shots": 6},
-    {"source": "taptap", "category": "养成", "pages": 2, "max_games": 30, "max_shots": 6},
-    {"source": "taptap", "category": "国风", "pages": 2, "max_games": 30, "max_shots": 6},
+    {"source": "baidu", "category": "经营", "max_games": 30, "max_shots": 6},
+    {"source": "taptap", "category": "养成", "max_games": 30, "max_shots": 6},
+    {"source": "taptap", "category": "国风", "max_games": 30, "max_shots": 6},
 ]
 
 
@@ -65,6 +67,7 @@ def run_ingest_once(session_factory: SessionFactory, *, targets: list[dict] | No
             continue
 
         seen: set[tuple[str, str]] = set()
+        detail_requests = 0
         try:
             for game in pool:
                 key = (game.source, game.game_id)
@@ -73,6 +76,9 @@ def run_ingest_once(session_factory: SessionFactory, *, targets: list[dict] | No
                 seen.add(key)
                 try:
                     if source == "taptap" and not game.screenshot_urls:
+                        if detail_requests > 0:
+                            time.sleep(_TAPTAP_DETAIL_THROTTLE_SECONDS)
+                        detail_requests += 1
                         game = taptap.get_detail(game.game_id)
                     service.upsert_game(db, game, max_screenshots=max_shots)
                     db.commit()
