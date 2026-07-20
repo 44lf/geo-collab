@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import uuid
@@ -24,6 +25,10 @@ _MIME_EXT = {
     "image/webp": "webp",
     "image/gif": "gif",
 }
+
+
+def source_url_sha256(url: str) -> str:
+    return hashlib.sha256((url or "").encode("utf-8")).hexdigest()
 
 
 def slugify_bucket(name: str) -> str:
@@ -94,8 +99,22 @@ def store_image_bytes(
     source_url: str = "",
     width: int | None = None,
     height: int | None = None,
+    commit: bool = True,
 ) -> StockImage | None:
     """把图片字节传 MinIO 并建 StockImage 记录。打 web_fallback 标签、description 存来源溯源。"""
+    url_hash = source_url_sha256(source_url) if source_url else None
+    if url_hash:
+        existing = (
+            db.query(StockImage)
+            .filter(
+                StockImage.category_id == category.id,
+                StockImage.source_url_hash == url_hash,
+            )
+            .first()
+        )
+        if existing is not None:
+            return existing
+
     ext = _MIME_EXT.get(content_type, "jpg")
     key = f"{uuid.uuid4().hex}.{ext}"
     try:
@@ -112,9 +131,14 @@ def store_image_bytes(
         tags=["web_fallback"],
         width=width or None,
         height=height or None,
+        source_url=source_url or None,
+        source_url_hash=url_hash,
     )
     db.add(img)
-    db.commit()
-    db.refresh(img)
+    if commit:
+        db.commit()
+        db.refresh(img)
+    else:
+        db.flush()
     logger.info("联网兜底入库图片 category=%s image_id=%s", category.name, img.id)
     return img
