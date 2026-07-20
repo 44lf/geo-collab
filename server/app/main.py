@@ -231,6 +231,9 @@ def create_app() -> FastAPI:
         prefix="/api/mcp",
         tags=["mcp-catalog"],
     )
+    from server.app.modules.game_library.router import game_library_mcp_router
+
+    app.include_router(game_library_mcp_router)
     # MCP 接入指引（前端「MCP 接入」tab 用）
     # user JWT 鉴权（与 system_router 等 user-JWT 路由同一组依赖）
     app.include_router(
