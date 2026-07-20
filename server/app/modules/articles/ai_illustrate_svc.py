@@ -219,26 +219,28 @@ def illustrate_one(
     # images_inserted 已含替补图，这里只回读诊断计数作可观测（其中多少张是随机替补）。
     fallback_inserted = int(fmt_diag.get("random_filled", 0) or 0)
 
-    # 阶段 1.5: 图片用量回写（扫最终 content 的 stockImageId，路径无关）
-    db = session_factory()
-    try:
-        article = db.get(Article, article_id)
-        if article is not None:
-            from server.app.modules.articles.formatting.document import loads_content_json
-            from server.app.modules.image_library.service import (
-                bump_stock_image_usage,
-                collect_stock_image_ids,
-            )
+    # 阶段 1.5: 图片用量回写（扫最终 content 的 stockImageId，路径无关）。
+    # run_ai_format no-op（如正文已有图）时不要重复 bump 旧图，否则会反向破坏软 LRU。
+    if images_inserted > 0:
+        db = session_factory()
+        try:
+            article = db.get(Article, article_id)
+            if article is not None:
+                from server.app.modules.articles.formatting.document import loads_content_json
+                from server.app.modules.image_library.service import (
+                    bump_stock_image_usage,
+                    collect_stock_image_ids,
+                )
 
-            image_ids = collect_stock_image_ids(loads_content_json(article.content_json))
-            if image_ids:
-                bump_stock_image_usage(db, image_ids, article.id)
-                db.commit()
-    except Exception:  # noqa: BLE001 — 用量回写失败不应让已完成配图回滚成失败
-        db.rollback()
-        _logger.warning("image usage writeback failed article=%s", article_id, exc_info=True)
-    finally:
-        db.close()
+                image_ids = collect_stock_image_ids(loads_content_json(article.content_json))
+                if image_ids:
+                    bump_stock_image_usage(db, image_ids, article.id)
+                    db.commit()
+        except Exception:  # noqa: BLE001 — 用量回写失败不应让已完成配图回滚成失败
+            db.rollback()
+            _logger.warning("image usage writeback failed article=%s", article_id, exc_info=True)
+        finally:
+            db.close()
 
     # 阶段 2: 封面 (独立短 session)
     cover_status = "skipped"
