@@ -148,3 +148,18 @@ def query_games_by_tags(
         rows.sort(key=lambda g: 0 if diversity_set & {tag.tag for tag in g.tags} else 1)
 
     return [_game_to_dict(g) for g in rows]
+
+
+def bump_game_usage(db: Session, game_ids: list[int], article_id: int) -> None:
+    """文章采用游戏后回写游戏级用量（不 commit，调用方同事务提交）。未知 id 天然跳过。"""
+    ids = [int(game_id) for game_id in (game_ids or []) if game_id]
+    if not ids:
+        return
+    db.query(Game).filter(Game.id.in_(ids)).update(
+        {
+            Game.use_count: Game.use_count + 1,
+            Game.last_used_at: utcnow(),
+            Game.last_used_article_id: article_id,
+        },
+        synchronize_session=False,
+    )

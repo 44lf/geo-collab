@@ -191,6 +191,11 @@ def ai_illustrate_article_mcp(
     )
 
 
+class SelectedGame(BaseModel):
+    game_id: int
+    name: str
+
+
 class SaveArticleFromMcpPayload(BaseModel):
     """主对话生成的 markdown 直接入库；不经 LiteLLM。
 
@@ -204,6 +209,7 @@ class SaveArticleFromMcpPayload(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     markdown_content: str = Field(min_length=1)
     model_label: str | None = Field(default=None, max_length=120)
+    selected_games: list[SelectedGame] | None = None
 
 
 class SaveArticleFromMcpResponse(BaseModel):
@@ -283,6 +289,10 @@ def save_article_from_mcp(
             existing = dict(article.metrics or {})
             existing["writer_model"] = payload.model_label
             article.metrics = existing
+        if payload.selected_games:
+            from server.app.modules.game_library.service import bump_game_usage
+
+            bump_game_usage(db, [g.game_id for g in payload.selected_games], article.id)
         db.commit()
     except HTTPException:
         raise

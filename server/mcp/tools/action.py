@@ -74,6 +74,7 @@ async def save_article(
     model_label: str | None = None,
     prompt_template_name: str | None = None,
     question_text_preview: str | None = None,
+    selected_games: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Save a Claude Code-generated article (markdown) into GEO.
 
@@ -110,6 +111,8 @@ async def save_article(
             (SaveArticleFromMcpPayload uses Pydantic default extra='ignore').
         question_text_preview: Optional display-only preview of question_text (recommend
             first ~40 chars). Same intent as prompt_template_name. Backend ignores.
+        selected_games: 库检索取材时选中的游戏 [{"game_id": int, "name": str}]，
+            用于回写取材均衡用量；回退 websearch 的游戏无 game_id，留空。
 
     Returns:
         {"ok": True, "data": {"article_id": N}, "error": None}
@@ -129,6 +132,8 @@ async def save_article(
         payload["prompt_template_name"] = prompt_template_name
     if question_text_preview:
         payload["question_text_preview"] = question_text_preview
+    if selected_games:
+        payload["selected_games"] = selected_games
     return await _apost("/api/articles/save-from-mcp", json=payload)
 
 
