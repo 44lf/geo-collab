@@ -63,12 +63,13 @@ game_library.service.upsert_game(db, game)  （幂等，game 须为已补详情�
 ```
 geo-article-writer 子代理（每篇全新上下文）:
    ① list_game_tags()                     # 知道可选什么标签（tag + game_count）
-   ② skill 逻辑按矩阵选标签: 1-2 相关 + 几个无关 → include_tags
-   ③ query_games_by_tags(include_tags, exclude_tags?, min_score?, limit)   # DB 聚合筛候选
-   ④ 候选数 ≥ 阈值 → 从候选里挑游戏、用其 description/score/tags/(语料) 写正文
+   ② skill 逻辑按矩阵选标签: relevant_tags(1-2 相关,准入) + diversity_tags(几个多样,只扩散)
+   ③ query_games_by_tags(relevant_tags, diversity_tags?, exclude_tags?, min_score?, limit)  # relevant 准入 + 均衡排序
+   ④ 候选数 ≥ 阈值(只数 relevant 命中池) → 从候选挑游戏、用 description/score/tags/(语料) 写正文、记下 game_id
       候选数 <  阈值 → 回退现有 WebSearch 验证路径（安全网）
    ⑤ report_event 打点区分「走库检索 / 回退 websearch」
-   ⑥ save_article(...)；返回 game_positions（游戏名对齐陪衬栏目名）
+   ⑥ save_article(..., selected_games=[{game_id,name}])  # 后端同事务 bump games 用量
+      返回 game_positions（游戏名对齐陪衬栏目名）
 ```
 
 ### 配图（零改动，复用现有链路）
@@ -140,13 +141,15 @@ orchestrator → ai_illustrate_article(game_positions=..., web_fallback=True)
 
 | 列 | 类型 | 约束/默认 | 用途 |
 |---|---|---|---|
-| `source_url` | str(1000) | nullable, index | **入库去重**：刷新时按 `(category_id, source_url)` 查，已存在则跳过、不重下重灌。补早稿「按 `minio_key` 去重」的洞——`minio_key` 每次是随机 uuid、天然不可能命中 |
+| `source_url` | str(1000) | nullable（**不建索引**） | 溯源原始 URL（人读/调试）。VARCHAR(1000) utf8mb4 = 4000B 超 InnoDB 索引键上限 3072B，不能直接建索引 |
+| `source_url_hash` | CHAR(64) | nullable | `sha256(source_url)` hex——去重键的可索引替身 |
 | `use_count` | int | not null, **default 0** | **配图用量**：这张图被插进过几篇 |
 | `last_used_at` | datetime | nullable | **短期去重**的时间窗判据 |
 | `last_used_article_id` | int FK→articles.id | nullable, ondelete SET NULL | 最近落在哪篇 |
 
+- **入库去重 = `UNIQUE(category_id, source_url_hash)`（二轮评审改正）**：普通索引挡不住并发重复，唯一约束才是硬去重闸；`source_url` 太长不能直接进唯一键，故 hash 一列做替身。仍补早稿「按 `minio_key` 去重」的洞（`minio_key` 每次随机 uuid、永不命中）。
 - `stock_categories` **完全不动**（仍扛 MinIO bucket + 「按游戏名精确命中」）。
-- `store_image_bytes` 已有 `source_url=` 入参（现塞在 description 文本里），改为**写入新列** `stock_images.source_url` + 入库前按 `(category_id, source_url)` 查重跳过。
+- `store_image_bytes` 已有 `source_url=` 入参（现塞在 description 文本里），改为写入 `source_url` + `source_url_hash` 两列；批量入库用**不主动 commit** 的底层写入变体（见第四节事务纪律），web_fallback 现有单图路径保持 commit-per-call 不变。
 
 ### 用量账本读写逻辑（游戏级 + 图片级双粒度）
 
@@ -193,13 +196,16 @@ server/scripts/ingest_games.py   # CLI 入口
 2. **并集插入 `game_tags`（不 delete-all）**：`INSERT IGNORE`（靠 `UNIQUE(game_id, tag)` 去重）把本源标签**并进**已有集合，**不删别源标签**；`axis=null`。
    - 取舍：只加不删 → 某源日后撤标签会**滞留**（stale，低伤害：多一个匹配面、不影响正确性）。要「源撤即消」需给 `game_tags` 加 `source` 列做按源归属（更重，v1 不做）。
 3. `cat = get_or_create_companion_category(db, game.name)`（复用 image_library service）。
-4. 逐 `game.screenshot_urls` 下载 → `store_image_bytes(db, cat, data, content_type, source_url=url, width, height)`；**去重=并集**：按 `stock_images.source_url` 查 `(category_id, source_url)`，已存在则跳过；两源截图 URL 不同 → **天然共存=并集**。
+4. 逐已下载的截图字节写入（**不主动 commit** 的底层变体）；**去重=并集**：按 `UNIQUE(category_id, source_url_hash)` 命中即跳过；两源截图 URL 不同 → **天然共存=并集**。每张限体积/类型/重定向（走通用下载器，见下）。
 5. 回写 `games.stock_category_id = cat.id`、`last_verified_at = utcnow()`。
 6. 出网/下载失败 best-effort：单图失败跳过、不整体失败（与 web_fallback 同风格）。
 
-> **用量列不由入库触碰**：`use_count`/`last_used_*`（游戏级与图片级）只在**生文消费**时回写（第七节），入库/刷新只管语料与截图、不动用量，避免刷新把均衡状态冲掉。
+> **用量列不由入库触碰**：`use_count`/`last_used_*`（游戏级与图片级）只在**生文消费**时回写（第六、七节），入库/刷新只管语料与截图、不动用量，避免刷新把均衡状态冲掉。
 
-> **出网**：sources 是 `http_direct`（urllib/requests），与现有 `shared/baidu.py` 千帆出网同类。运行环境为 GEO 后端（conda `geo_xzpt` + GEO settings 提供 DB/MinIO）。截图下载走短超时 + best-effort。
+> **事务与连接纪律（二轮评审）**：现有 `get_or_create_companion_category` / `store_image_bytes` **各自 `db.commit()`**——批量入库直接复用会把事务按图逐张切碎，且与「单目标失败 rollback」冲突。故：
+> - 抽**不主动 commit** 的底层写入函数供 `upsert_game` / 批量入图用，**commit 边界 = 每个游戏一次**（游戏是幂等单元）；web_fallback 现有单图路径不动。
+> - **HTTP 全在无 DB session 阶段做**：先 `sources.search` + `taptap.get_detail` + 下载截图字节到内存，**再**开 session 落库——避免慢网络长期占用连接池（GEO 踩过连接池耗尽）。
+> - **通用截图下载器**：抽 `shared/` 下载函数，限**体积上限 / content-type 白名单 / 拒绝跨站重定向**（复用现有百度下载器的 magic-bytes + 20MB 上限逻辑），入库与 web_fallback 共用。
 
 ### 定时入库（`scheduler.py`，复用 `sync_scheduler.py` 模式）
 
@@ -209,6 +215,7 @@ server/scripts/ingest_games.py   # CLI 入口
 - **启动位置**：`create_app()` 里与 `start_auto_sync` 并列启动（web 进程内，无需独立 worker；不依赖浏览器，与问题池同步同类）。
 - **入库目标清单**（抓哪些 source×category）：v1 走**配置/env 驱动**（如 `GEO_GAME_INGEST_TARGETS` JSON 或模块常量种子清单，覆盖矩阵题材：经营/养成/国风等）。DB 驱动的可编辑目标清单留给 L2 策展。
   - **分类词表按源不同**（实测爬包 `CATEGORIES`）：百度 40 类（带 tagId 映射，有「经营/策略经营」但**无「国风」**）、TapTap 27 精选（分类名直接当 tag、**有「国风」**，非精选词语义也能命中、非法词 404）。目标清单**必须按源配各自认的词**，不能一个分类名两源通用；`养成` 两源都有、`经营` 百度有 TapTap 靠语义、`国风` 只 TapTap 有。
+  - **N+1 与配额（二轮评审）**：TapTap 逐游戏 `get_detail` 是 N+1，目标配置必须带 **每目标页数上限 / 每目标游戏数上限 / 每游戏截图数上限**，并做**轮内 `(source, game_id)` 去重**（同轮别对同一游戏重复补详情 / 重复下图）。
 - **多进程 caveat**（照抄现有模式）：每个 web 进程各起一个入库线程，`upsert_game` 幂等、重复无害但浪费；生产建议单进程跑 web，或后续加进程级租约（与 `sync_scheduler` 同注意事项）。
 
 ### CLI `python -m server.scripts.ingest_games`（手动 seed / backfill）
@@ -233,17 +240,18 @@ server/scripts/ingest_games.py   # CLI 入口
 - `SELECT tag, COUNT(DISTINCT game_id) FROM game_tags JOIN games ON ... WHERE games.is_active GROUP BY tag ORDER BY game_count DESC LIMIT :limit`
 - 用途：writer 知道**可选什么标签**（不凭空编标签）。
 
-### `query_games_by_tags(include_tags, exclude_tags=None, min_score=None, limit=20) -> {games: [...]}`
+### `query_games_by_tags(relevant_tags, diversity_tags=None, exclude_tags=None, min_score=None, limit=20) -> {games: [...]}`
 
-- `include_tags`：**OR 命中**——游戏含任一即入池。
-- `exclude_tags`（可选）：游戏含任一即排除。
-- `min_score`（可选）：分数下限。
-- `limit`：返回上限。
-- 排序（取材均衡）：`ORDER BY last_used_at ASC（近期没用过的优先；MySQL NULL 最小 → 从没写过的排最前）, score DESC, comment_count DESC`（稳定可复现——均衡靠 `last_used_at`、质量靠 `score` 兜底；随机多样性由 writer 选「无关标签」带来，不靠 SQL 随机）。
-- 每项返回：`{game_id, name, score, tags, description, stock_category_id, icon_url, screenshot_urls, highlight_comments, related_hotspots, use_count, last_used_at}`（多回 `use_count`/`last_used_at`，让 skill 侧也能感知均衡、避开近期高频游戏）。
-- 「1-2 相关 + 几个无关」= skill 把这些标签一起塞进 `include_tags` 凑一池，Claude 再从池里挑。
+> **二轮评审：拆 relevant / diversity，别全 OR**——早稿把「相关 + 无关」标签全塞一个 `include_tags` 做 OR，只要无关标签够热门，候选几乎必然 ≥ 阈值、于是永不 WebSearch，但候选可能**多是离题游戏**、稀释主题。故拆两组：
 
-> `MCP_TOOLS_COUNT`：33 → **35**（`connect_router.py:MCP_TOOLS_COUNT` + CLAUDE.md 的 catalog 清单同步 +2）。
+- `relevant_tags`：**准入过滤（必须命中至少一个）**——候选池 = 命中任一相关标签的游戏。**阈值判定只数这个池**，离题游戏不能把阈值凑够。
+- `diversity_tags`（可选）：**只用于扩散/排序**，绝不放宽准入——让命中它的相关游戏排序靠前/带点多样，但从不让离题游戏入池。
+- `exclude_tags`（可选）：命中任一即排除。`min_score`（可选）：分数下限。`limit`：返回上限。
+- 排序（取材均衡）：`ORDER BY last_used_at ASC（近期没用过的优先；MySQL NULL 最小）, score DESC, comment_count DESC`；`diversity_tags` 命中作次级加权/打散（稳定可复现，不靠 SQL 随机）。
+- 每项返回：`{game_id, name, score, tags, description, stock_category_id, icon_url, screenshot_urls, highlight_comments, related_hotspots, use_count, last_used_at}`（多回 `use_count`/`last_used_at`，让 skill 侧也能感知均衡）。
+
+> `MCP_TOOLS_COUNT`：33 → **35**（`connect_router.py:MCP_TOOLS_COUNT` + CLAUDE.md catalog 清单同步 +2；`save_article` 只加可选参数、不新增工具）。
+> **顺带修既有漂移（二轮评审）**：`test_mcp_status_count.py:17` 与 `test_mcp_tools_registration.py:22` 仍断言 `== 31`（真值早已 33、因 `backend-test` 禁用未爆红），本功能一并改到 **35**。
 
 ---
 
@@ -254,12 +262,12 @@ server/scripts/ingest_games.py   # CLI 入口
 动笔前，把「自己 WebSearch 验游戏」替换为**库优先取材**：
 
 1. `list_game_tags()` 拿可选标签。
-2. skill 逻辑按矩阵选标签：**1-2 个相关标签**（矩阵题材，如餐厅养成记→经营/养成）+ **几个多样性标签**，合成 `include_tags`。选标签策略是 skill 层规则、可迭代。
-3. `query_games_by_tags(include_tags, exclude_tags?, min_score?, limit)` 拿候选真实游戏 + 语料。
-4. **候选数 ≥ 阈值**（默认建议 `>=4`，skill 常量可调）→ 从候选里挑游戏、用 `description/score/tags/(highlight_comments 等语料)` 写正文；**不 websearch**。
+2. skill 逻辑按矩阵选标签，**分两组**：`relevant_tags`＝**1-2 个相关标签**（矩阵题材，如餐厅养成记→经营/养成，准入）+ `diversity_tags`＝**几个多样性标签**（只扩散/打散，不放宽准入）。选标签策略是 skill 层规则、可迭代。
+3. `query_games_by_tags(relevant_tags, diversity_tags?, exclude_tags?, min_score?, limit)` 拿候选真实游戏 + 语料。
+4. **候选数 ≥ 阈值**（默认建议 `>=4`，skill 常量可调；**阈值只数 `relevant_tags` 命中池**）→ 从候选里挑游戏、用 `description/score/tags/(语料)` 写正文；**不 websearch**。**记下选中的 game_id**。
 5. **候选数 < 阈值** → 回退现有 WebSearch 验证路径（安全网，不移除）。
-6. `report_event` 打点，`event_type` 区分 `games_from_library` / `games_fallback_websearch`，payload 记候选数、选中标签、命中游戏 —— 让「这篇走了库还是回退了搜」成为可查事实。
-7. `save_article(...)`；正文结构判定与 `game_positions` 返回**沿用现有约定**（每款各占 `##` 小标题 → 收 game_positions，游戏名与陪衬栏目名对齐；散文 → None）。
+6. `report_event` 打点，`event_type` 区分 `games_from_library` / `games_fallback_websearch`，payload 记候选数、选中标签、命中游戏。
+7. `save_article(..., selected_games=[{game_id, name}, ...])`——**把选中游戏透传给后端**，后端在保存同事务里**原子 bump `games` 用量**（第七/十节）；正文结构判定与 `game_positions` 返回沿用现有约定（每款各占 `##` 小标题 → 收 game_positions；散文 → None）。库里没命中、回退 websearch 的游戏无 game_id，`selected_games` 相应留空。
 
 ---
 
@@ -271,6 +279,7 @@ server/scripts/ingest_games.py   # CLI 入口
 - **落图回写用量（本次新增）**：图插进文章后 bump 该 `stock_image` 的 `use_count`/`last_used_at`/`last_used_article_id`（文章 id 从配图上下文取）。
 - 库里没有的游戏仍走 web_fallback 联网兜底（行为与现状一致）。
 - **命中键零改动**：真实截图入库用的就是配图同一套栏目命中键（精确游戏名）与 `store_image_bytes`，天然对齐；只有**选图排序 + 落图回写**两处是本次新增的小改，栏目/桶机制不动。
+- **游戏级用量走另一条路（不在配图里）**：配图这里只 bump **图片级**用量；**游戏级**用量由 `save_article(selected_games=...)` 在文章保存同事务里 bump（二轮评审）——因为候选 ≠ 选中（不能查询时 bump）、散文/未进配图的文章也没有 `game_positions`（不能从配图反推），只有 writer 自己知道真正选了哪些游戏，必须显式透传。
 
 ---
 
@@ -279,9 +288,10 @@ server/scripts/ingest_games.py   # CLI 入口
 | 单元 | 职责 | 依赖 | 可独立测试点 |
 |---|---|---|---|
 | `game_library/sources/*` + `registry`/`types` | 抓 TapTap/百度 → 统一 `Game` | 出网（http_direct） | 解析真实响应样例 → Game 字段 |
-| `game_library/service.upsert_game` | 幂等 upsert + 标签重建 + 截图入 MinIO + 回写栏目 | image_library service、MinIO | upsert 幂等/去重、截图去重、栏目回写 |
-| `game_library/service.query_*` / `list_game_tags` | 聚合检索（取材均衡排序） | DB | OR 命中、exclude、min_score、`last_used_at` 均衡排序 |
-| image_library 选图/回写（配图侧小改） | 软 LRU 选图 + 落图 bump 用量 | `stock_images` 用量列 | 桶内 LRU 取图、用量回写、不卡死 |
+| `game_library/service.upsert_game` | 幂等 upsert + 标签并集 + 截图入 MinIO（不主动 commit）+ 回写栏目 | image_library（no-commit 变体）、MinIO、通用下载器 | upsert 幂等/并集、截图 hash 去重、批量事务回滚、栏目回写 |
+| `game_library/service.query_*` / `list_game_tags` | 聚合检索（relevant 准入 + 取材均衡排序） | DB | relevant 准入、diversity 只排序、min_score、`last_used_at` 均衡排序 |
+| image_library 选图/回写（配图侧小改） | 软 LRU 选图 + 落图 bump 图片级用量 | `stock_images` 用量列 | 桶内 LRU 取图、用量回写、不卡死 |
+| `save_article` + 后端 `save-from-mcp` | 保存文章 + 原子 bump 游戏级用量 | `selected_games`、`games` 用量列 | selected_games 落 `use_count`/`last_used_*`、未知 game_id 跳过 |
 | `game_library/router` | MCP-token 只读端点（+可选入库触发） | require_mcp_token | 鉴权、返回结构 |
 | `server/scripts/ingest_games` | CLI 编排 | service、SessionLocal | 端到端灌一批（mysql mark） |
 | MCP 工具 `list_game_tags`/`query_games_by_tags` | LLM-facing schema | router 端点 | 工具 schema/透传 |
@@ -294,11 +304,13 @@ server/scripts/ingest_games.py   # CLI 入口
 - `run_ingest_once` 扫一轮：monkeypatch `sources.*.search` 返回假 Game，断言 upsert 计数、单目标失败隔离（一个目标抛错不影响其它目标）。
 - `upsert_game` 幂等 + 跨源并集合并：同 `name_normalized` 重跑只更新不增重；**两个不同 source 的同名游戏合并入一行**、`score`/`comment_count` 取 `max`、`sources`/`screenshot_urls` 累积；**`game_tags` 取两源并集**（先 taptap 再 baidu，taptap 标签**不被删**、并集去重）。
 - TapTap 补详情：断言 upsert 前对 taptap 游戏调 `get_detail` 拿到非空 `screenshot_urls`/真标签（可 mock `get_detail` 验证被调用、且 by-tag 占位标签被真标签取代）。
-- 截图入库去重：同 `source_url` 重跑不重复灌图（按 `(category_id, source_url)` 查）；`stock_category_id` 正确回写。
-- `query_games_by_tags`：OR 命中、`exclude_tags`、`min_score`、`is_active` 过滤，**排序按 `last_used_at ASC`（取材均衡）→ `score DESC` 兜底**；返回含 `use_count`/`last_used_at`。
+- 截图入库去重：同 `source_url` 重跑不重复灌图（`UNIQUE(category_id, source_url_hash)` 命中即跳过）；`stock_category_id` 正确回写。
+- 批量入库事务（**commit 边界＝每游戏一次**）：单个游戏中途写失败 → **该游戏的部分写入（它的图）回滚**、跳过该游戏；**同目标已 commit 的前序游戏保留、别的目标不受影响**（game 级 + target 级双隔离）。
+- `query_games_by_tags`：**`relevant_tags` 准入**（只命中 diversity 的离题游戏**不入池、不撑阈值**）、`diversity_tags` 只影响排序、`exclude_tags`/`min_score`/`is_active` 过滤，排序 `last_used_at ASC → score DESC`；返回含 `use_count`/`last_used_at`。
 - `list_game_tags`：计数正确、按 game_count 降序。
-- **用量回写**：配图落图后 `stock_image` 的 `use_count += 1`/`last_used_at`/`last_used_article_id` 正确；游戏采用后 `games` 三列同理。
+- **用量回写**：配图落图后 `stock_image` 三列正确 bump；`save_article(selected_games=...)` 保存成功后 `games` 三列在**同事务**原子 bump、未知 game_id 跳过（散文/无配图文章也能记账）。
 - **软 LRU 选图**：同桶多图，重复配图时优先取 `last_used_at` 最旧/`use_count` 最小的；桶内全用过时仍能出图（退用最久没碰的、不卡死）。
+- MCP 工具数：`MCP_TOOLS_COUNT == 35`，`test_mcp_status_count` / `test_mcp_tools_registration` 断言同步改 35（修既有 31 漂移）。
 - MCP 端点鉴权：无 token 401；有 token 返回结构正确。
 - 配图命中：预灌某游戏截图后，走 `game_positions` 配图命中真截图、不触网（可 mock 千帆断言未调用）。
 - MinIO：测试环境按现有 image_library 测试约定（若无 MinIO 则相应用例跳过/mock store）。
@@ -307,8 +319,11 @@ server/scripts/ingest_games.py   # CLI 入口
 
 ## 十、迁移与文档
 
-- **Alembic**：新增迁移 ① 建 `games`（`name_normalized` **UNIQUE**）/ `game_tags`；② `ALTER stock_images` 加 4 列（`source_url` + index、`use_count` not null default 0、`last_used_at`、`last_used_article_id`）（跟随当前迁移头，不写死版本号）。FK：`games.stock_category_id`→`stock_categories` ondelete SET NULL、`games.last_used_article_id` / `stock_images.last_used_article_id`→`articles` ondelete SET NULL、`game_tags.game_id`→`games` ondelete CASCADE。
-- **image_library `store_image_bytes` 小改**：已有 `source_url=` 入参，改为写入新列 `stock_images.source_url`（并在入库前按 `(category_id, source_url)` 查重跳过）；`pick_image_id` 选图排序改软 LRU + 落图回写用量（第七节）。
+- **Alembic**：新增迁移 ① 建 `games`（`name_normalized` **UNIQUE**）/ `game_tags`（`UNIQUE(game_id, tag)`）；② `ALTER stock_images` 加 **5 列**（`source_url` **不索引**、`source_url_hash` CHAR(64)、`use_count` not null default 0、`last_used_at`、`last_used_article_id`）+ **`UNIQUE(category_id, source_url_hash)`**（跟随当前迁移头，不写死版本号）。FK：`games.stock_category_id`→`stock_categories` SET NULL、`games.last_used_article_id` / `stock_images.last_used_article_id`→`articles` SET NULL、`game_tags.game_id`→`games` CASCADE。
+- **image_library 改动**：`store_image_bytes` 写 `source_url`+`source_url_hash`；抽**不主动 commit** 的批量写入变体（web_fallback 单图路径不变）；`pick_image_id` 选图排序改软 LRU + 落图回写图片级用量（第七节）。
+- **通用截图下载器**：抽 `shared/` 下载函数（体积上限 / content-type 白名单 / 拒跨站重定向，复用现有百度下载器 magic-bytes+20MB 逻辑），入库与 web_fallback 共用。
+- **`save_article` + 后端 `save-from-mcp`**：新增可选 `selected_games`（`SaveArticleFromMcpPayload` 加字段），保存成功在**同事务**原子 bump `games` 用量（未知 game_id 跳过）。MCP 工具签名 +1 可选参数，**不新增工具**（工具数仍 +2=35）。
+- **修既有测试漂移**：`test_mcp_status_count.py` / `test_mcp_tools_registration.py` 的 `== 31` 改 `== 35`。
 - **新增 env（`GEO_` 前缀，pydantic-settings）**：
   - `GEO_GAME_INGEST_SCHEDULER_ENABLED`（默认 `false`，与其它调度器同风格：默认关，生产显式开）
   - `GEO_GAME_INGEST_INTERVAL_SECONDS`（默认 `21600` = 6h，代码 `max()` 下限保护）
@@ -334,6 +349,12 @@ server/scripts/ingest_games.py   # CLI 入口
 
 以上均为脊梁日后可插的路线图，不影响 L1 落地。
 
+### 已知限制（L1 明确接受，二轮评审登记）
+
+- **`name_normalized` 不是实体消歧**：现归一化只去书名号/引号/`游戏N、`前缀，**同名不同游戏会误合并、改名或版本后缀会拆行**。L1 接受此近似；真消歧（别名表/人工合并）留 L2。
+- **一游戏一 MinIO bucket 的规模上限**：几百游戏可沿用；**数千~数万**时 bucket 数会成运维负担，届时改共享 bucket + key 前缀分区（L2）。
+- **第三方截图＝公开发布（产品已定 2026-07-20）**：游戏截图与现有图片库**同用途 / 同风险姿态**——插入文章、随文公开发布。运营接受与现图片库一致的版权姿态；与自有 stock 的唯一区别是来源为第三方官方宣传图，用法无差、不作额外合规闸。
+
 ---
 
 ## 十二、开放项 / 待实现计划细化
@@ -345,3 +366,4 @@ server/scripts/ingest_games.py   # CLI 入口
 - 可选 HTTP 入库触发端点是否 v1 就做（有定时任务后优先级下降，默认后置）。
 - 用量均衡权重公式（`last_used_at` 时间窗 vs `use_count` 谁主谁次、是否加「近 N 天」软阈值）——落地可调；`ORDER BY last_used_at ASC, use_count ASC` 是默认起点。
 - 取材均衡由谁执行：`query_games_by_tags` SQL 侧已按 `last_used_at` 排序打底，skill 侧是否再依 `use_count`/`last_used_at` 二次挑——skill 常量，落地定。
+- **版权 / 站点条款（产品已拍板 2026-07-20）**：截图定为**公开可随文发布**，与现有图片库同用途 / 同风险姿态——**不再作上线前的额外合规闸**。（来源为第三方官方宣传图，姿态与自有 stock 略异，运营已接受。）
