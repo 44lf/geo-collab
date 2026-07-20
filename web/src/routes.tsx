@@ -15,8 +15,8 @@ const AgentManagementWorkspace = lazy(() =>
 const AiGenerationWorkspace = lazy(() =>
   import("./features/ai-generation/AiGenerationWorkspace").then((m) => ({ default: m.AiGenerationWorkspace })),
 );
-const ImageLibraryWorkspace = lazy(() =>
-  import("./features/image-library/ImageLibraryWorkspace").then((m) => ({ default: m.ImageLibraryWorkspace })),
+const GameLibraryWorkspace = lazy(() =>
+  import("./features/game-library/GameLibraryWorkspace").then((m) => ({ default: m.GameLibraryWorkspace })),
 );
 const ContentWorkspace = lazy(() =>
   import("./features/content/ContentWorkspace").then((m) => ({ default: m.ContentWorkspace })),
@@ -125,7 +125,8 @@ export const router = createBrowserRouter([
       { path: "prompts", element: <PromptsRoute /> },
       { path: "prompts/:scope", element: <PromptsRoute /> },
       { path: "quality-reference", element: <QualityReferenceWorkspace /> },
-      { path: "image-library", element: <ImageLibraryWorkspace /> },
+      { path: "image-library", element: <GameLibraryWorkspace /> },
+      { path: "game-library", element: <Navigate to="/image-library" replace /> },
       { path: "videos", element: <VideosWorkspace /> },
       { path: "media", element: <AccountsWorkspace isActive /> },
       { path: "tasks", element: <TasksWorkspace isActive /> },

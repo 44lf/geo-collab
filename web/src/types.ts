@@ -1,7 +1,7 @@
-import { Bot, FileText, Film, Gem, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
+import { Bot, FileText, Film, Gamepad2, Gem, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "agents" | "ai" | "content" | "prompts" | "quality-reference" | "image-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
+export type NavKey = "agents" | "ai" | "content" | "prompts" | "quality-reference" | "image-library" | "game-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -510,6 +510,49 @@ export type StockImage = {
   created_at: string;
 };
 
+// ── 游戏库（game library，前台只读浏览取材语料）───────────────────────────────
+export type GameTagCount = { tag: string; game_count: number };
+
+export type GameListItem = {
+  game_id: number;
+  name: string;
+  score: number | null;
+  tags: string[];
+  icon_url: string | null;
+  screenshot_count: number;
+  use_count: number;
+  last_used_at: string | null;
+  stock_category_id: number | null;
+  sources: string[];
+};
+
+export type GameListResponse = { items: GameListItem[]; total: number };
+
+export type GameSource = { source?: string; source_game_id?: string; url?: string };
+
+export type GameDetail = {
+  game_id: number;
+  name: string;
+  name_normalized: string;
+  score: number | null;
+  comment_count: number | null;
+  tags: string[];
+  platforms: string[];
+  sources: GameSource[];
+  icon_url: string | null;
+  screenshot_urls: string[];
+  description: string | null;
+  stock_category_id: number | null;
+  use_count: number;
+  last_used_at: string | null;
+  last_used_article_id: number | null;
+  first_seen_at: string | null;
+  last_verified_at: string | null;
+  highlight_comments: unknown[] | null;
+  related_hotspots: unknown[] | null;
+  is_active: boolean;
+};
+
 export type TaskCreatePayload = {
   name: string;
   client_request_id: string;
@@ -617,7 +660,7 @@ export const navItems: {
     ],
   },
   { key: "quality-reference", label: "高质量库", icon: Gem },
-  { key: "image-library", label: "图片库", icon: Images },
+  { key: "image-library", label: "游戏库", icon: Gamepad2 },
   { key: "videos", label: "视频库", icon: Film },
   { key: "media", label: "媒体矩阵", icon: RadioTower },
   { key: "tasks", label: "分发引擎", icon: Send },

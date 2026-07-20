@@ -5135,3 +5135,370 @@ option, optgroup {
   background-size: 200% 100%;
   animation: imgSkeletonShimmer 1.4s ease-in-out infinite;
 }
+
+/* ── 游戏库（game library · 前台取材语料浏览，master-detail 视觉照 demo.pen）──── */
+.gameLib {
+  display: flex; flex-direction: column; height: 100%; gap: 22px; color: #F5F7FF;
+  --gl-panel: #151827; --gl-tile: #191D2D; --gl-border: #2A2E45;
+  --gl-accent: #8B5CF6; --gl-accent2: #A99BFF; --gl-muted: #8D94AE; --gl-faint: #596179;
+}
+.gameLib .mono { font-family: var(--mono); }
+
+/* 头部 */
+.gameLibHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.gameLibCrumb {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 14px;
+  font-family: var(--mono); font-size: 12px; color: #707894;
+}
+.gameLibCrumb::before { content: ""; width: 22px; height: 1px; background: #555D78; }
+.gameLibTitleRow { display: flex; align-items: center; gap: 14px; }
+.gameLibTitle { margin: 0; font-size: 38px; font-weight: 800; letter-spacing: -0.5px; color: #F5F7FF; }
+.gameLibCount {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 6px;
+  background: #24283B; border: 1px solid var(--gl-border); font-size: 12px; color: var(--gl-muted);
+}
+.gameLibCount b { font-family: var(--mono); font-weight: 700; color: var(--gl-accent2); }
+
+.gameLibActions { display: flex; align-items: center; gap: 10px; }
+.gameLibSearch {
+  display: inline-flex; align-items: center; gap: 9px; height: 42px; padding: 0 14px; min-width: 300px;
+  border-radius: 8px; background: #141827; border: 1px solid var(--gl-border); color: var(--gl-faint);
+}
+.gameLibSearch input {
+  flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: #F5F7FF; font-size: 13px;
+}
+.gameLibSearch input::placeholder { color: var(--gl-faint); }
+.gameLibSelect {
+  height: 42px; padding: 0 12px; border-radius: 8px; cursor: pointer;
+  background: #161A29; border: 1px solid var(--gl-border); color: #B9C0D8; font-size: 13px;
+}
+.gameLibSelect:focus { outline: none; border-color: var(--gl-accent); }
+
+/* 主体 */
+.gameLibBody { display: flex; gap: 18px; flex: 1; min-height: 0; }
+
+/* 左侧列表面板 */
+.gameLibListPane { width: 264px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; }
+.gameLibSeg { display: flex; gap: 6px; padding: 4px; border-radius: 10px; background: #151827; border: 1px solid var(--gl-border); }
+.gameLibSegBtn {
+  flex: 1; height: 34px; border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 600;
+  background: transparent; border: 1px solid transparent; color: #9FA8C7;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.gameLibSegBtn.active { background: #2B2650; border-color: #6B5CE7; color: #F5F7FF; }
+.gameLibList {
+  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+  padding: 10px; border-radius: 10px; background: var(--gl-panel); border: 1px solid var(--gl-border);
+  scrollbar-width: thin; scrollbar-color: var(--gl-border) transparent;
+}
+.gameLibList::-webkit-scrollbar { width: 5px; }
+.gameLibList::-webkit-scrollbar-thumb { background: var(--gl-border); border-radius: 3px; }
+.gameRow {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; text-align: left; cursor: pointer;
+  border-radius: 8px; background: transparent; border: 1px solid #22283C; color: #F5F7FF;
+  transition: border-color 0.15s, background 0.15s;
+}
+.gameRow:hover { border-color: #3A4166; }
+.gameRow.active { background: #2B2650; border-color: #6B5CE7; }
+.gameRowIcon {
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: 8px; object-fit: cover;
+  border: 1px solid #39405B; background: #252A3E;
+}
+.gameRowIconFallback { display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: var(--gl-accent2); }
+.gameRowMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.gameRowTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gameRowName { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gameRowScore { flex-shrink: 0; font-family: var(--mono); font-size: 10px; color: var(--gl-accent2); }
+.gameRow:not(.active) .gameRowScore { color: #AAB3D0; }
+.gameRowBottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gameRowTags { font-size: 11px; color: var(--gl-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gameRowUse { flex-shrink: 0; font-family: var(--mono); font-size: 10px; color: var(--gl-faint); }
+.gameLibListEmpty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 40px 12px; text-align: center; color: var(--gl-faint); }
+.gameLibListEmpty p { margin: 4px 0 0; font-size: 13px; color: var(--gl-muted); }
+.gameLibListEmpty span { font-size: 11px; }
+
+/* 右侧详情面板 */
+.gameLibDetailPane { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
+.gameLibDetailLoading { padding: 60px; text-align: center; color: var(--gl-muted); font-size: 14px; }
+
+/* 详情大卡片 */
+.gameCardBig {
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 22px; border-radius: 12px; background: var(--gl-panel); border: 1px solid var(--gl-border);
+}
+.gameCardBigTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.gameCardBigId { display: flex; gap: 16px; min-width: 0; }
+.gameCardBigIcon { width: 64px; height: 64px; flex-shrink: 0; border-radius: 12px; object-fit: cover; border: 1px solid #424864; background: #252A3E; }
+.gameCardBigIcon.gameRowIconFallback { font-size: 26px; }
+.gameCardBigIdText { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.gameCardBigNameRow { display: flex; align-items: center; gap: 10px; }
+.gameCardBigNameRow h2 { margin: 0; font-size: 24px; font-weight: 800; color: #F5F7FF; }
+.gameBadgeInactive { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: #3A1C2A; color: #F87171; border: 1px solid #7F2D46; }
+.gameCardBigTags { display: flex; flex-wrap: wrap; gap: 6px; }
+.gameChip { font-size: 11px; padding: 2px 9px; border-radius: 6px; background: #201D3B; color: #DED9FF; border: 1px solid #35306A; }
+.gameCardBigScore { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.gameBigScore { font-family: var(--mono); font-size: 60px; font-weight: 700; line-height: 0.9; color: var(--gl-accent2); }
+.gameScoreCap { font-size: 12px; color: var(--gl-muted); }
+.gameScoreMetrics { display: flex; gap: 14px; margin-top: 2px; }
+.gameScoreMetrics span { font-family: var(--mono); font-size: 11px; color: var(--gl-muted); }
+
+.gameStatusBar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border-radius: 8px; background: #11172A; border: 1px solid #303854;
+}
+.gameStatusLeft { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #D9D4FF; }
+.gameStatusLeft svg { color: var(--gl-accent2); flex-shrink: 0; }
+.gameStatusRight { font-size: 11px; color: var(--gl-faint); flex-shrink: 0; }
+
+.gameMetricRow { display: flex; gap: 10px; }
+.gameMetricTile {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
+  padding: 12px; border-radius: 8px; background: var(--gl-tile); border: 1px solid var(--gl-border);
+}
+.gameMetricLabel { font-size: 12px; font-weight: 700; color: #AEB7D4; }
+.gameMetricValue { font-size: 15px; font-weight: 800; color: #F5F7FF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gameMetricSub { font-size: 11px; color: var(--gl-faint); }
+
+.gameDesc { margin: 0; font-size: 14px; line-height: 1.6; color: #C3CAE1; }
+
+.gameCardBottom {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding-top: 14px; border-top: 1px solid #252B40;
+}
+.gameCardBottomLeft { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.gameCardBottomLeft .mono, .gameCardVendor { font-size: 11px; color: var(--gl-faint); }
+.gamePill { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 6px; background: #201D3B; color: #DED9FF; border: 1px solid #6556D9; }
+
+/* 素材 + 来源表 */
+.gameMaterialRow { display: flex; gap: 18px; align-items: stretch; }
+.gameShots { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.gameSectionHead { display: flex; align-items: center; gap: 8px; }
+.gameSectionTitle { font-size: 15px; font-weight: 800; color: #F5F7FF; }
+.gameSectionBadge { font-family: var(--mono); font-size: 11px; padding: 1px 8px; border-radius: 6px; background: #222638; color: var(--gl-muted); }
+.gameShotsGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 12px; }
+.gameShotCard { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-radius: 8px; background: var(--gl-tile); border: 1px solid var(--gl-border); }
+.gameShotCard img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 6px; background: #0D1020; }
+.gameShotName { font-size: 10px; color: var(--gl-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gameShotsEmpty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px; border-radius: 10px; background: var(--gl-tile); border: 1px dashed var(--gl-border); color: var(--gl-faint); font-size: 12px; text-align: center; }
+
+.gameSourceTable { width: 400px; flex-shrink: 0; overflow: hidden; border-radius: 10px; background: var(--gl-panel); border: 1px solid var(--gl-border); }
+.gameSourceTableHead { padding: 12px 14px; font-size: 14px; font-weight: 800; color: #F5F7FF; background: #1A1E2E; }
+.gameSourceRow { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid #252B40; }
+.gameSourceKey { width: 150px; flex-shrink: 0; font-size: 11px; color: var(--gl-faint); }
+.gameSourceVal { flex: 1; min-width: 0; font-size: 12px; color: #CDD4EE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 游戏库 v2（gl* 命名，对齐 demo.pen）───────────────────────────── */
+.glPage {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-height: 100%;
+  padding: 48px 52px 40px;
+  background: #0D1020;
+  color: #F5F7FF;
+}
+.glHeader { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+.glTitleZone { display: flex; flex-direction: column; gap: 14px; }
+.glCrumb { margin: 0; font-size: 13px; color: #8D94AE; }
+.glTitleRow { display: flex; align-items: center; gap: 14px; }
+.glTitle { margin: 0; font-size: 52px; font-weight: 800; line-height: 1; color: #F5F7FF; }
+.glCount {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border-radius: 6px;
+  background: #24283B; border: 1px solid #2A2E45;
+  font-size: 12px; color: #8D94AE;
+}
+.glCount b { font-size: 13px; font-weight: 700; color: #A99BFF; }
+.glActions { display: flex; align-items: center; gap: 10px; }
+.glSearch {
+  display: flex; align-items: center; gap: 9px;
+  width: 380px; height: 46px; padding: 0 16px;
+  background: #141827; border: 1px solid #2A2E45; border-radius: 8px;
+  color: #8D94AE;
+}
+.glSearch input {
+  flex: 1; min-width: 0; border: none; background: transparent;
+  color: #F5F7FF; font-size: 14px; outline: none;
+}
+.glSearch input::placeholder { color: #596179; }
+.glSortSelect {
+  height: 46px; padding: 0 16px; border-radius: 8px;
+  background: #161A29; border: 1px solid #2A2E45; color: #F5F7FF;
+  font-size: 13px; cursor: pointer;
+}
+.glBody { display: flex; gap: 18px; flex: 1; min-height: 0; }
+.glLeft { display: flex; flex-direction: column; gap: 14px; width: 245px; flex-shrink: 0; }
+.glRight { display: flex; flex-direction: column; gap: 18px; flex: 1; min-width: 0; }
+.glDetailLoading {
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45; color: #8D94AE; font-size: 14px;
+}
+
+.glGroupSwitch {
+  display: flex; gap: 6px; height: 44px; padding: 4px; flex-shrink: 0;
+  background: #151827; border: 1px solid #2A2E45; border-radius: 10px;
+}
+.glSegBtn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid #242A40; border-radius: 7px; background: #111523;
+  color: #9FA8C7; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.glSegBtn.active { background: #2B2650; border-color: #6B5CE7; color: #F5F7FF; }
+.glSegCount { font-size: 11px; opacity: 0.8; }
+.glList {
+  display: flex; flex-direction: column; gap: 2px;
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 12px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45;
+}
+.glRow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer; text-align: left;
+  background: transparent; border: 1px solid #22283C;
+}
+.glRow.active { background: #2B2650; border-color: #6B5CE7; }
+.glRowIcon {
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: 8px;
+  object-fit: cover; border: 1px solid #39405B; background: #252A3E;
+}
+.glRowIconFallback {
+  display: flex; align-items: center; justify-content: center;
+  color: #F5F7FF; font-size: 16px; font-weight: 700;
+}
+.glRowMain { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.glRowTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.glRowName {
+  font-size: 13px; font-weight: 800; color: #F5F7FF;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glRowScore { font-size: 10px; color: #A99BFF; flex-shrink: 0; }
+.glRowBottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.glRowTags {
+  font-size: 11px; color: #8D94AE;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glRowUse { font-size: 10px; color: #596179; flex-shrink: 0; }
+.glListEmpty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 40px 12px; color: #8D94AE; text-align: center;
+}
+.glListEmpty p { margin: 0; font-size: 14px; }
+.glListEmpty span { font-size: 12px; color: #596179; }
+
+.glCard {
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 22px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45;
+}
+.glCardTop { display: flex; justify-content: space-between; gap: 16px; }
+.glCardId { display: flex; gap: 16px; min-width: 0; }
+.glCardIcon {
+  width: 64px; height: 64px; flex-shrink: 0; border-radius: 12px;
+  object-fit: cover; border: 1px solid #424864; background: #252A3E; font-size: 24px;
+}
+.glCardIdText { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.glCardNameRow { display: flex; align-items: center; gap: 8px; }
+.glCardNameRow h2 { margin: 0; font-size: 22px; font-weight: 800; color: #F5F7FF; }
+.glBadgeInactive {
+  padding: 2px 8px; border-radius: 6px; font-size: 11px;
+  background: #3A1C2A; border: 1px solid #7F2D46; color: #F87171;
+}
+.glCardTags { display: flex; flex-wrap: wrap; gap: 6px; }
+.glChip {
+  padding: 3px 10px; border-radius: 6px; font-size: 11px;
+  background: #222638; color: #B9C0D8;
+}
+.glCardScore { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+.glBigScore { font-size: 64px; font-weight: 700; line-height: 1; color: #A99BFF; }
+.glScoreCap { font-size: 12px; color: #8D94AE; }
+.glScoreMetrics { display: flex; gap: 14px; font-size: 11px; color: #8D94AE; }
+.glStatusBar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  height: 38px; padding: 0 12px; border-radius: 8px;
+  background: #11172A; border: 1px solid #303854;
+}
+.glStatusLeft { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #D9D4FF; }
+.glStatusLeft svg { color: #A99BFF; flex-shrink: 0; }
+.glStatusRight { font-size: 11px; color: #596179; }
+.glMetricRow { display: flex; gap: 10px; }
+.glMetricTile {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border-radius: 8px;
+  background: #191D2D; border: 1px solid #2A2E45;
+}
+.glMetricLabel { font-size: 12px; font-weight: 700; color: #AEB7D4; }
+.glMetricValue {
+  font-size: 16px; font-weight: 800; color: #F5F7FF;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glMetricSub { font-size: 11px; color: #596179; }
+.glDesc { margin: 0; font-size: 14px; line-height: 1.5; color: #C3CAE1; }
+.glCardBottom {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-top: 14px; border-top: 1px solid #252B40;
+}
+.glCardBottomLeft { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.glPill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700;
+  background: #201D3B; border: 1px solid #6556D9; color: #DED9FF;
+}
+.glMeta { font-size: 11px; color: #596179; }
+
+.glMaterialRow { display: flex; gap: 18px; align-items: stretch; }
+.glShots {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px;
+  padding: 18px; border-radius: 10px; background: #151827; border: 1px solid #2A2E45;
+}
+.glShotsHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.glShotsTitle { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; color: #F5F7FF; }
+.glShotsBadge { padding: 1px 8px; border-radius: 6px; font-size: 11px; background: #222638; color: #B9C0D8; }
+.glUploadBtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 14px; border-radius: 8px; border: none;
+  background: #8B5CF6; color: #F5F7FF; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.glUploadBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.glShotsGrid { display: flex; flex-wrap: wrap; gap: 12px; }
+.glShotCard {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 148px; padding: 8px; border-radius: 8px;
+  background: #191D2D; border: 1px solid #2A2E45;
+}
+.glShotThumb { position: relative; height: 70px; border-radius: 6px; overflow: hidden; cursor: pointer; }
+.glShotThumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.glShotDel {
+  position: absolute; top: 4px; right: 4px;
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px; border: none;
+  background: rgba(10,12,20,0.7); color: #F87171; cursor: pointer;
+}
+.glShotName {
+  font-size: 10px; color: #8D94AE;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glShotsEmpty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 30px; color: #8D94AE; text-align: center; font-size: 12px;
+}
+.glSourceTable {
+  width: 420px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-radius: 10px; overflow: hidden; background: #151827; border: 1px solid #2A2E45;
+}
+.glSourceHead { height: 44px; display: flex; align-items: center; padding: 0 14px; background: #1A1E2E; font-size: 14px; font-weight: 800; color: #F5F7FF; }
+.glSourceRow { display: flex; align-items: center; min-height: 38px; padding: 8px 14px; gap: 10px; border-top: 1px solid #252B40; }
+.glSourceKey { width: 145px; flex-shrink: 0; font-size: 11px; color: #596179; }
+.glSourceVal { flex: 1; min-width: 0; font-size: 12px; color: #CDD4EE; word-break: break-all; }
+.glLightbox {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(6,8,16,0.86); padding: 40px;
+}
+.glLightboxImg { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+.glLightboxClose {
+  position: absolute; top: 24px; right: 24px;
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.08); color: #F5F7FF; cursor: pointer;
+}
