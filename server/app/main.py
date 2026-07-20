@@ -488,6 +488,15 @@ def create_app() -> FastAPI:
 
         _logging.getLogger(__name__).exception("start_pipeline_scheduler failed")
 
+    try:
+        from server.app.modules.game_library.scheduler import start_game_ingest
+
+        start_game_ingest(SessionLocal)
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).exception("start_game_ingest failed")
+
     # TapTap cookie 体检：GEO_TAPTAP_COOKIE_CHECK_ENABLED=true 时启动后台线程，纯 HTTP 探
     # account-profile/v1/me，失效则置 expired + 飞书喊人重登（不自动登录）。失败只记日志、不致命。
     try:

@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     pipeline_scheduler_enabled: bool = False  # GEO_PIPELINE_SCHEDULER_ENABLED
     pipeline_scheduler_interval_seconds: int = 60  # GEO_PIPELINE_SCHEDULER_INTERVAL_SECONDS
     scheduler_tz: str = "Asia/Shanghai"  # GEO_SCHEDULER_TZ
+    # 游戏库定时入库（应用内后台线程）。默认关闭，避免本地 / 测试打真实爬包源。
+    game_ingest_scheduler_enabled: bool = False  # GEO_GAME_INGEST_SCHEDULER_ENABLED
+    game_ingest_interval_seconds: int = 21600  # GEO_GAME_INGEST_INTERVAL_SECONDS（6 小时）
+    game_ingest_targets: str = ""  # GEO_GAME_INGEST_TARGETS（JSON，空则回落种子常量）
     # TapTap cookie 体检（应用内后台线程，纯 HTTP 探测 account-profile/v1/me）。默认关闭。
     taptap_cookie_check_enabled: bool = False  # GEO_TAPTAP_COOKIE_CHECK_ENABLED
     taptap_cookie_check_interval_seconds: int = (
