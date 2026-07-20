@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from server.app.core.time import utcnow
@@ -82,3 +83,68 @@ def upsert_game(db: Session, game: types.Game, *, max_screenshots: int = 6) -> G
     row.last_verified_at = utcnow()
     db.flush()
     return row
+
+
+def list_game_tags(db: Session, limit: int = 200) -> list[dict]:
+    count_expr = func.count(func.distinct(GameTag.game_id))
+    stmt = (
+        select(GameTag.tag, count_expr.label("game_count"))
+        .join(Game, Game.id == GameTag.game_id)
+        .where(Game.is_active.is_(True))
+        .group_by(GameTag.tag)
+        .order_by(count_expr.desc())
+        .limit(max(1, min(1000, limit)))
+    )
+    return [{"tag": tag, "game_count": game_count} for tag, game_count in db.execute(stmt).all()]
+
+
+def _game_to_dict(g: Game) -> dict:
+    return {
+        "game_id": g.id,
+        "name": g.name,
+        "score": g.score,
+        "tags": [t.tag for t in g.tags],
+        "description": g.description,
+        "stock_category_id": g.stock_category_id,
+        "icon_url": g.icon_url,
+        "screenshot_urls": g.screenshot_urls or [],
+        "highlight_comments": g.highlight_comments,
+        "related_hotspots": g.related_hotspots,
+        "use_count": g.use_count,
+        "last_used_at": g.last_used_at.isoformat() if g.last_used_at else None,
+    }
+
+
+def query_games_by_tags(
+    db: Session,
+    relevant_tags: list[str],
+    diversity_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    min_score: float | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """relevant_tags=准入（命中任一）；diversity_tags 只排序不放宽准入。"""
+    relevant_tags = [tag for tag in relevant_tags if tag]
+    if not relevant_tags:
+        return []
+
+    admit = select(GameTag.game_id).where(GameTag.tag.in_(relevant_tags)).distinct()
+    stmt = select(Game).where(Game.id.in_(admit), Game.is_active.is_(True))
+    if exclude_tags:
+        excluded = select(GameTag.game_id).where(GameTag.tag.in_(exclude_tags)).distinct()
+        stmt = stmt.where(~Game.id.in_(excluded))
+    if min_score is not None:
+        stmt = stmt.where(Game.score >= min_score)
+
+    stmt = stmt.order_by(
+        Game.last_used_at.asc(),
+        func.coalesce(Game.score, -1).desc(),
+        func.coalesce(Game.comment_count, -1).desc(),
+    ).limit(max(1, min(100, limit)))
+    rows = list(db.execute(stmt).scalars().all())
+
+    if diversity_tags:
+        diversity_set = set(diversity_tags)
+        rows.sort(key=lambda g: 0 if diversity_set & {tag.tag for tag in g.tags} else 1)
+
+    return [_game_to_dict(g) for g in rows]
