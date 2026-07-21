@@ -255,3 +255,34 @@ def test_upsert_deduplicates_repeated_screenshot_url(monkeypatch):
             s.close()
     finally:
         app.cleanup()
+
+
+@pytest.mark.mysql
+def test_upsert_with_category_id_skips_name_resolve(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.game_library import service, types
+        from server.app.modules.image_library.models import StockCategory
+
+        s = app.session_factory()
+        try:
+            cat = StockCategory(name="餐厅养成记", bucket_name="canting", kind="companion")
+            s.add(cat)
+            s.flush()
+            g = types.Game(
+                source="taptap",
+                game_id="1",
+                name="餐厅养成记",
+                tags=["经营"],
+                score=8.0,
+                screenshot_urls=[],
+            )
+            row = service.upsert_game(s, g, category_id=cat.id, pre_downloaded=[])
+            s.commit()
+            assert row.stock_category_id == cat.id
+        finally:
+            s.close()
+    finally:
+        app.cleanup()

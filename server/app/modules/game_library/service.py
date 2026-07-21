@@ -84,12 +84,27 @@ def _add_game_tag_if_missing(db: Session, game_id: int, tag: str) -> None:
         nested.rollback()
 
 
-def upsert_game(db: Session, game: types.Game, *, max_screenshots: int = 6) -> Game:
-    """按 name_normalized 跨源并集合并；不 commit（调用方按游戏 commit）。"""
-    downloaded_screenshots = _download_screenshots(game.screenshot_urls, max_screenshots)
+def upsert_game(
+    db: Session,
+    game: types.Game,
+    *,
+    max_screenshots: int = 6,
+    pre_downloaded: list | None = None,
+    category_id: int | None = None,
+) -> Game:
+    """跨源并集合并；下载已在 session 外做好经 pre_downloaded 传入，session 内只写库。
+    category_id 非空 = 直接用该桶，不按名 re-resolve(迁移集游戏)。不 commit（调用方按游戏 commit）。"""
+    shots = (
+        pre_downloaded
+        if pre_downloaded is not None
+        else _download_screenshots(game.screenshot_urls, max_screenshots)
+    )
 
     norm = _normalize_game_name(game.name) or game.name
-    cat = get_or_create_companion_category(db, game.name, commit=False)
+    if category_id is not None:
+        cat = db.get(StockCategory, category_id)
+    else:
+        cat = get_or_create_companion_category(db, game.name, commit=False)
     row = _get_or_create_game_row(db, game, norm)
 
     row.score = _merge_scalar_max(row.score, game.score)
@@ -114,7 +129,7 @@ def upsert_game(db: Session, game: types.Game, *, max_screenshots: int = 6) -> G
 
     if cat is not None:
         row.stock_category_id = cat.id
-        for url, data, mime in downloaded_screenshots:
+        for url, data, mime in shots:
             store_image_bytes(db, cat, data, mime, source_url=url, commit=False)
 
     row.last_verified_at = utcnow()
