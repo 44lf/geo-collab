@@ -555,6 +555,49 @@ export type GameDetail = {
   is_active: boolean;
 };
 
+// ── 游戏库 ingest 配置(陪衬定时抓取)────────────────────────────────────────
+export type GameIngestConfig = {
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  batch_size: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+  source_order: string;
+  max_shots: number;
+  running: boolean;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  last_run_summary: Record<string, unknown> | null;
+  last_run_trigger: string | null;
+};
+
+export type GameIngestConfigPatch = Partial<{
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  batch_size: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+  source_order: string;
+  max_shots: number;
+}>;
+
+export type GameIngestRunStartResponse = { started: boolean; status: GameIngestConfig };
+
+export type ImageCategoryImportRequest = Partial<{
+  kind: "main" | "companion" | null;
+  only_with_images: boolean;
+  limit: number | null;
+}>;
+
+export type ImageCategoryImportResponse = {
+  scanned: number;
+  created: number;
+  attached: number;
+  skipped: number;
+};
+
 export type TaskCreatePayload = {
   name: string;
   client_request_id: string;

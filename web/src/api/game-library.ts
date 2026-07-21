@@ -1,5 +1,14 @@
 import { api } from "./core";
-import type { GameDetail, GameListResponse, GameTagCount } from "../types";
+import type {
+  GameDetail,
+  GameIngestConfig,
+  GameIngestConfigPatch,
+  GameIngestRunStartResponse,
+  GameListResponse,
+  GameTagCount,
+  ImageCategoryImportRequest,
+  ImageCategoryImportResponse,
+} from "../types";
 
 export function listGameTags(limit = 200): Promise<GameTagCount[]> {
   return api<GameTagCount[]>(`/api/game-library/tags?limit=${limit}`);
@@ -26,4 +35,28 @@ export function listGames(params?: {
 
 export function getGame(gameId: number): Promise<GameDetail> {
   return api<GameDetail>(`/api/game-library/games/${gameId}`);
+}
+
+export function getIngestConfig(): Promise<GameIngestConfig> {
+  return api<GameIngestConfig>("/api/game-library/ingest/config");
+}
+
+export function patchIngestConfig(patch: GameIngestConfigPatch): Promise<GameIngestConfig> {
+  return api<GameIngestConfig>("/api/game-library/ingest/config", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function startIngestRun(): Promise<GameIngestRunStartResponse> {
+  return api<GameIngestRunStartResponse>("/api/game-library/ingest/run", { method: "POST" });
+}
+
+export function importImageCategories(
+  payload?: ImageCategoryImportRequest,
+): Promise<ImageCategoryImportResponse> {
+  return api<ImageCategoryImportResponse>("/api/game-library/import-image-categories", {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
 }
