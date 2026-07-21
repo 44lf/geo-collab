@@ -27,3 +27,30 @@ class QueryGamesRequest(BaseModel):
     exclude_tags: list[str] | None = None
     min_score: float | None = None
     limit: int = Field(default=20, ge=1, le=100)
+
+
+class GameIngestConfigRead(BaseModel):
+    enabled: bool
+    window_start: str
+    window_end: str
+    batch_size: int
+    min_gap_seconds: int
+    max_gap_seconds: int
+    source_order: str
+    max_shots: int
+    running: bool = False
+    last_run_started_at: str | None = None
+    last_run_finished_at: str | None = None
+    last_run_summary: dict | None = None
+    last_run_trigger: str | None = None
+
+
+class GameIngestConfigPatch(BaseModel):
+    enabled: bool | None = None
+    window_start: str | None = None
+    window_end: str | None = None
+    batch_size: int | None = Field(default=None, ge=1)
+    min_gap_seconds: int | None = Field(default=None, ge=1)
+    max_gap_seconds: int | None = Field(default=None, ge=1)
+    source_order: str | None = None
+    max_shots: int | None = Field(default=None, ge=1)
