@@ -40,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 
 import server.app.modules.quality_reference.models  # noqa: F401  (register QualityReference table)
 import server.app.modules.video.models  # noqa: F401  (register VideoJob table)
+import server.app.modules.xhs_cards.models  # noqa: F401  (register XhsRenderJob table)
 from server.app.core.config import get_settings
 from server.app.core.limiter import limiter
 from server.app.core.logging import configure_logging
