@@ -82,9 +82,10 @@ def test_migration_0065_creates_game_library_tables_and_columns(monkeypatch):
         game_id_fk = next(fk for fk in game_tag_fks if fk["constrained_columns"] == ["game_id"])
         assert game_id_fk["options"].get("ondelete") == "CASCADE"
 
-        # 幂等回滚重升：downgrade 应干净丢掉两张新表 + stock_images 的 5 个新列，
-        # 再 upgrade 应无错重建。
-        command.downgrade(cfg, "-1")
+        # 幂等回滚重升：downgrade 到 0065 之前（显式 0064）应干净丢掉两张新表 + stock_images
+        # 的 5 个新列。用显式 revision 而非 "-1"——在 0065 之上叠了 0066 后，"-1" 只回退最新
+        # 一版（0066）、留下 0065 的表，故必须指名回退目标。再 upgrade 应无错重建。
+        command.downgrade(cfg, "0064_qref_external_ingestion")
         insp2 = inspect(engine)
         table_names2 = set(insp2.get_table_names())
         assert not ({"games", "game_tags"} & table_names2)
