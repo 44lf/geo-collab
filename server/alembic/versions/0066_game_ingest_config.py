@@ -1,11 +1,13 @@
 """game_ingest_config singleton"""
-from alembic import op
+
 import sqlalchemy as sa
 
-revision = "0066_game_ingest_config"
-down_revision = "0065_game_library"
-branch_labels = None
-depends_on = None
+from alembic import op
+
+revision: str = "0066_game_ingest_config"
+down_revision: str | None = "0065_game_library"
+branch_labels: str | None = None
+depends_on: str | None = None
 
 
 def upgrade() -> None:
