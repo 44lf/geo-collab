@@ -108,6 +108,16 @@ export function GameLibraryWorkspace() {
         sort={sort}
         onSort={setSort}
         onGamesChanged={reloadGames}
+        selectedGame={detail}
+        onGameSaved={(updated) => {
+          setDetail(updated);
+          void reloadGames();
+        }}
+        onGameDeleted={() => {
+          setSelectedId(null);
+          setDetail(null);
+          void reloadGames();
+        }}
       />
       <div className="glBody">
         <aside className="glLeft">

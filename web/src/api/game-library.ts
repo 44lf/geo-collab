@@ -6,6 +6,7 @@ import type {
   GameIngestRunStartResponse,
   GameListResponse,
   GameTagCount,
+  GameUpdateRequest,
   ImageCategoryImportRequest,
   ImageCategoryImportResponse,
 } from "../types";
@@ -59,4 +60,15 @@ export function importImageCategories(
     method: "POST",
     body: JSON.stringify(payload ?? {}),
   });
+}
+
+export function updateGame(gameId: number, patch: GameUpdateRequest): Promise<GameDetail> {
+  return api<GameDetail>(`/api/game-library/games/${gameId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteGame(gameId: number): Promise<void> {
+  return api<void>(`/api/game-library/games/${gameId}`, { method: "DELETE" });
 }

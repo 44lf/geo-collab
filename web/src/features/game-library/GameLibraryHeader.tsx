@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { CalendarClock, Search, SquarePen, Trash2 } from "lucide-react";
-import { getIngestConfig, patchIngestConfig } from "../../api/game-library";
-import type { GameIngestConfig } from "../../types";
+import { deleteGame, getIngestConfig, patchIngestConfig } from "../../api/game-library";
+import type { GameDetail, GameIngestConfig } from "../../types";
 import { useToast } from "../../components/Toast";
 import type { SortKey } from "./GameLibraryWorkspace";
 import { GameIngestSettingsModal } from "./GameIngestSettingsModal";
+import { GameEditModal } from "./GameEditModal";
 
 type Props = {
   total: number;
@@ -12,8 +13,14 @@ type Props = {
   onQ: (v: string) => void;
   sort: SortKey;
   onSort: (s: SortKey) => void;
-  /** 「从图片库导入」等操作完成后通知父级重拉游戏列表；编辑/删除游戏（H2）也会复用它。 */
+  /** 「从图片库导入」等操作完成后通知父级重拉游戏列表。 */
   onGamesChanged?: () => void;
+  /** 当前详情面板选中的游戏（编辑/删除的操作目标）；未选中任何游戏时为 null。 */
+  selectedGame: GameDetail | null;
+  /** 编辑保存成功后，把最新 GameDetail 回传父级更新详情面板。 */
+  onGameSaved?: (updated: GameDetail) => void;
+  /** 删除成功后通知父级清空选中并重拉列表。 */
+  onGameDeleted?: () => void;
 };
 
 function formatTimestamp(iso: string): string {
@@ -27,13 +34,25 @@ function formatTimestamp(iso: string): string {
   });
 }
 
-export function GameLibraryHeader({ total, q, onQ, sort, onSort, onGamesChanged }: Props) {
+export function GameLibraryHeader({
+  total,
+  q,
+  onQ,
+  sort,
+  onSort,
+  onGamesChanged,
+  selectedGame,
+  onGameSaved,
+  onGameDeleted,
+}: Props) {
   const { toast } = useToast();
   const [flyoutOpen, setFlyoutOpen] = useState(false);
   const [ingest, setIngest] = useState<GameIngestConfig | null>(null);
   const [ingestLoading, setIngestLoading] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const flyoutWrapRef = useRef<HTMLDivElement>(null);
 
   // 首次展开浮层时拉一次配置；已有数据不重复拉（配置弹窗保存后会直接更新本地状态）。
@@ -68,6 +87,21 @@ export function GameLibraryHeader({ total, q, onQ, sort, onSort, onGamesChanged 
       toast(e instanceof Error ? e.message : "更新抓取开关失败", "error");
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function onDeleteGame() {
+    if (!selectedGame || deleting) return;
+    if (!window.confirm(`确定删除游戏「${selectedGame.name}」？此操作不可撤销。`)) return;
+    setDeleting(true);
+    try {
+      await deleteGame(selectedGame.game_id);
+      toast("已删除游戏", "success");
+      onGameDeleted?.();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "删除游戏失败", "error");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -107,9 +141,8 @@ export function GameLibraryHeader({ total, q, onQ, sort, onSort, onGamesChanged 
         <button
           type="button"
           className="glHeaderBtn glHeaderBtnEdit"
-          onClick={() => {
-            /* TODO(H2): 打开编辑信息弹窗（GameEditModal） */
-          }}
+          disabled={!selectedGame}
+          onClick={() => setEditOpen(true)}
         >
           <SquarePen size={16} />
           编辑信息
@@ -177,12 +210,11 @@ export function GameLibraryHeader({ total, q, onQ, sort, onSort, onGamesChanged 
         <button
           type="button"
           className="glHeaderBtnDelete glHeaderBtn"
-          onClick={() => {
-            /* TODO(H2): 确认后删除当前选中游戏 */
-          }}
+          disabled={!selectedGame || deleting}
+          onClick={() => void onDeleteGame()}
         >
           <Trash2 size={16} color="#FF9CAA" aria-hidden />
-          删除游戏
+          {deleting ? "删除中…" : "删除游戏"}
         </button>
       </div>
 
@@ -192,6 +224,14 @@ export function GameLibraryHeader({ total, q, onQ, sort, onSort, onGamesChanged 
           onClose={() => setSettingsOpen(false)}
           onSaved={(cfg) => setIngest(cfg)}
           onImported={onGamesChanged}
+        />
+      )}
+
+      {editOpen && selectedGame && (
+        <GameEditModal
+          game={selectedGame}
+          onClose={() => setEditOpen(false)}
+          onSaved={(updated) => onGameSaved?.(updated)}
         />
       )}
     </header>

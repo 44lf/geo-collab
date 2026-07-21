@@ -598,6 +598,13 @@ export type ImageCategoryImportResponse = {
   skipped: number;
 };
 
+export type GameUpdateRequest = Partial<{
+  name: string;
+  score: number | null;
+  description: string | null;
+  tags: string[];
+}>;
+
 export type TaskCreatePayload = {
   name: string;
   client_request_id: string;
