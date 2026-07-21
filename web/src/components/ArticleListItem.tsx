@@ -88,6 +88,11 @@ export const ArticleListItem = React.memo(function ArticleListItem({
           ) : null}
         </span>
         <span className="articleSourceLine">智能体：{article.source_agent_name || "—"}</span>
+        {article.content_type === "xhs_image_text" ? (
+          <span className="articleSourceLine">
+            <span className="badge">小红书图文</span>
+          </span>
+        ) : null}
         <span className="articleSourceRow">
           <span className="articleSourceLine">{formatArticleTemplateSource(article)}</span>
           <small>

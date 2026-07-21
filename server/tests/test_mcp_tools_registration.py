@@ -19,7 +19,7 @@ def test_registered_count_meets_floor():
     from server.mcp.server import mcp
 
     assert len(mcp._tool_manager._tools) >= MCP_TOOLS_COUNT
-    assert MCP_TOOLS_COUNT == 31
+    assert MCP_TOOLS_COUNT == 36
 
 
 def test_search_articles_by_title_tool_registered():
