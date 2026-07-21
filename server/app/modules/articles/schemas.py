@@ -109,6 +109,7 @@ class ArticleListRead(BaseModel):
     source_agent_name: str | None = None  # 生成此文的「智能体」(pipeline) 名，手动/历史为 None
     source_template_name: str | None = None  # 生成此文的提示词「模板」名，手动/历史为 None
     source_template_id: int | None = None
+    content_type: str | None = None  # 内容形态，如 "xhs_image_text"（小红书图文），历史文章为 None
     # MCP loop/goal 生文的自评分显示串（auto_review_decisions 最新一条派生）。
     # 只有 MCP 路径经 submit_review_decision 写这张表 → 手动/pipeline/方案文章恒为 None。
     # 过线 / 老数据 = 纯数字 "84"；没过线（score_total < pass_line）= "65 _ 80"（前端拆成 65 / 80 标红）。

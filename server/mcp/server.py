@@ -44,6 +44,7 @@ from server.mcp.tools import action as _action  # noqa: F401,E402
 from server.mcp.tools import catalog as _catalog  # noqa: F401,E402
 from server.mcp.tools import meta as _meta  # noqa: F401,E402
 from server.mcp.tools import video as _video  # noqa: F401,E402
+from server.mcp.tools import xhs as _xhs  # noqa: F401,E402
 
 
 def _assert_tools_registered(context: str) -> None:

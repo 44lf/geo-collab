@@ -4,8 +4,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0066_game_ingest_config"
-down_revision: str | None = "0065_game_library"
+revision: str = "0068_game_ingest_config"
+down_revision: str | None = "0067_game_library"
 branch_labels: str | None = None
 depends_on: str | None = None
 

@@ -145,6 +145,8 @@ class Article(Base):
     # MCP 回流写入：发布后的阅读 / 互动指标
     # JSON 结构示例: {"views": 1234, "likes": 56, "comments": 7, "shares": 3, "recorded_at": "2026-06-18T..."}
     metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 内容类型标记：默认 NULL；值 "xhs_image_text" 标识小红书图文
+    content_type: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
     cover_asset = relationship("Asset", foreign_keys=[cover_asset_id])
     stock_category = relationship("StockCategory", foreign_keys=[stock_category_id])

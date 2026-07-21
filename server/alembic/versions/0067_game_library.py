@@ -5,8 +5,8 @@ games 是跨源合并的游戏户口本（name_normalized 唯一去重），game
 做入库去重（UNIQUE(category_id, source_url_hash)）+ use_count/last_used_at/
 last_used_article_id 做图片级用量软 LRU。
 
-Revision ID: 0065_game_library
-Revises: 0064_qref_external_ingestion
+Revision ID: 0067_game_library
+Revises: 0066_article_content_type
 Create Date: 2026-07-20
 """
 
@@ -18,8 +18,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0065_game_library"
-down_revision: str | None = "0064_qref_external_ingestion"
+revision: str = "0067_game_library"
+down_revision: str | None = "0066_article_content_type"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

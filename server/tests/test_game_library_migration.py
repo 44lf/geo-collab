@@ -1,4 +1,4 @@
-"""游戏库迁移 0065 的真跑验证：games/game_tags 新表 + stock_images 扩 5 列。
+"""游戏库迁移 0067 的真跑验证：games/game_tags 新表 + stock_images 扩 5 列。
 
 真跑 alembic upgrade（而非只用 create_all）是为了让 revision id / DDL 本身的错误（写错
 down_revision、外键指错表、约束名冲突）能在测试里暴露，光靠 ORM create_all 测不出来。
@@ -34,7 +34,7 @@ def _new_temp_data_dir() -> Path:
 
 
 @pytest.mark.mysql
-def test_migration_0065_creates_game_library_tables_and_columns(monkeypatch):
+def test_migration_0067_creates_game_library_tables_and_columns(monkeypatch):
     data_dir = _new_temp_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     engine = create_engine(get_test_database_url(), pool_pre_ping=True)
@@ -82,10 +82,11 @@ def test_migration_0065_creates_game_library_tables_and_columns(monkeypatch):
         game_id_fk = next(fk for fk in game_tag_fks if fk["constrained_columns"] == ["game_id"])
         assert game_id_fk["options"].get("ondelete") == "CASCADE"
 
-        # 幂等回滚重升：downgrade 到 0065 之前（显式 0064）应干净丢掉两张新表 + stock_images
-        # 的 5 个新列。用显式 revision 而非 "-1"——在 0065 之上叠了 0066 后，"-1" 只回退最新
-        # 一版（0066）、留下 0065 的表，故必须指名回退目标。再 upgrade 应无错重建。
-        command.downgrade(cfg, "0064_qref_external_ingestion")
+        # 幂等回滚重升：downgrade 到游戏库三版之前（其父 0066_article_content_type）应干净丢掉
+        # 两张新表 + stock_images 的 5 个新列。用显式 revision 而非 "-1"——游戏库自身叠了三版
+        # （0067/0068/0069），"-1" 只回退最新一版，故必须指名回退目标；回退到父版而非更早的 0064，
+        # 避免连带拆掉与本测试无关的上游 xhs 迁移（0065/0066）。再 upgrade 应无错重建。
+        command.downgrade(cfg, "0066_article_content_type")
         insp2 = inspect(engine)
         table_names2 = set(insp2.get_table_names())
         assert not ({"games", "game_tags"} & table_names2)

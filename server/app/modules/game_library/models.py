@@ -47,7 +47,7 @@ class Game(Base):
         Boolean, nullable=False, default=True, server_default="1", index=True
     )
     # 连续几轮「全源都没匹配到」计数：全源 miss +1、任一 hit 归 0、有 error 不动。
-    # 达阈值且无源级证据 → 自动软删（is_active=False）。见 0067 迁移。
+    # 达阈值且无源级证据 → 自动软删（is_active=False）。见 0069 迁移。
     not_found_streak: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )

@@ -41,6 +41,7 @@ from fastapi.staticfiles import StaticFiles
 import server.app.modules.game_library.models  # noqa: F401  (register Game/GameTag tables)
 import server.app.modules.quality_reference.models  # noqa: F401  (register QualityReference table)
 import server.app.modules.video.models  # noqa: F401  (register VideoJob table)
+import server.app.modules.xhs_cards.models  # noqa: F401  (register XhsRenderJob table)
 from server.app.core.config import get_settings
 from server.app.core.limiter import limiter
 from server.app.core.logging import configure_logging
@@ -94,6 +95,7 @@ from server.app.modules.system.system_router import router as system_router
 from server.app.modules.system.users_router import router as users_router
 from server.app.modules.tasks.router import publish_records_router, tasks_mcp_router, tasks_router
 from server.app.modules.video.router import video_files_router, video_list_router, video_mcp_router
+from server.app.modules.xhs_cards.router import xhs_files_router, xhs_mcp_router
 from server.app.shared.errors import AccountError, ClientError, ConflictError, ValidationError
 
 # PyInstaller 打包后 sys._MEIPASS 指向解压目录
@@ -293,6 +295,12 @@ def create_app() -> FastAPI:
         tags=["video-mcp"],
         # 不挂 get_current_user — MCP token 在 endpoint 内单独校验（router 自带 dependency）
     )
+    app.include_router(
+        xhs_mcp_router,
+        prefix="/api/xhs-cards",
+        tags=["xhs-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验（router 自带 dependency）
+    )
     # auto_review 走 /api/articles 前缀（与现有 article 路由同前缀，由 MCP token 单独鉴权）
     app.include_router(
         auto_review_router,
@@ -418,6 +426,7 @@ def create_app() -> FastAPI:
     app.include_router(stock_files_router, prefix="/api/stock-images", tags=["stock-images"])
     app.include_router(video_files_router, prefix="/api/videos", tags=["video-files"])
     app.include_router(video_list_router, prefix="/api/videos", tags=["videos"])
+    app.include_router(xhs_files_router, prefix="/api/xhs-cards", tags=["xhs-files"])
     app.include_router(h5_public_router, prefix="/api/feishu", tags=["feishu"])
     app.include_router(
         h5_auth_router,
@@ -470,6 +479,11 @@ def create_app() -> FastAPI:
     import server.app.modules.video.service as _video_service
 
     _video_service.bg_session_factory = SessionLocal
+
+    # 为小红书卡片渲染后台线程提供 SessionLocal（spawn_render_job 读的是 service 里这个变量）
+    import server.app.modules.xhs_cards.service as _xhs_service
+
+    _xhs_service.bg_session_factory = SessionLocal
 
     # qref 外部参考导入后台线程（spawn_import_job 读 import_job 里这个变量）
     import server.app.modules.quality_reference.import_job as _qref_import_job

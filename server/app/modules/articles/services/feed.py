@@ -243,6 +243,7 @@ def serialize_article_summaries(db: Session, articles: list[Article]) -> dict[in
             source_agent_name=a.source_agent_name,
             source_template_name=a.source_template_name,
             source_template_id=a.source_template_id,
+            content_type=a.content_type,
             auto_review_score=score_map.get(a.id),
             adversarial_score=a.adversarial_score,
             created_at=a.created_at,
