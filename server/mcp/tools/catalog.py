@@ -51,6 +51,18 @@ async def _aget(path: str, *, params: dict[str, Any] | None = None) -> dict[str,
     return await anyio.to_thread.run_sync(_impl)
 
 
+async def _apost(path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
+    """同步 POST 丢线程池跑，避免阻塞事件循环（见模块 docstring 的自调用死锁说明）。"""
+
+    def _impl() -> dict[str, Any]:
+        try:
+            return _ok(_client().post(path, json=json))
+        except ApiError as exc:
+            return _fail(str(exc))
+
+    return await anyio.to_thread.run_sync(_impl)
+
+
 @mcp.tool()
 async def list_articles(
     status: str | None = None,
@@ -286,3 +298,39 @@ async def search_articles_by_title(
         "limit": max(1, min(100, limit)),
     }
     return await _aget("/api/mcp/articles/search", params=params)
+
+
+@mcp.tool()
+async def list_game_tags(limit: int = 200) -> dict[str, Any]:
+    """List available game tags (with game_count) to pick topical取材 tags from.
+
+    Use before query_games_by_tags so you choose real tags, not invented ones.
+    """
+    return await _aget("/api/mcp/game-library/tags", params={"limit": max(1, min(1000, limit))})
+
+
+@mcp.tool()
+async def query_games_by_tags(
+    relevant_tags: list[str],
+    diversity_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    min_score: float | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Query real games from the library by tags, for on-topic取材.
+
+    relevant_tags gate admission (a game must match at least one). diversity_tags
+    only diversify ordering — they never admit off-topic games. Threshold checks
+    (>=N to skip WebSearch) count only the relevant-matched pool.
+    """
+    body: dict[str, Any] = {
+        "relevant_tags": relevant_tags,
+        "limit": max(1, min(100, limit)),
+    }
+    if diversity_tags:
+        body["diversity_tags"] = diversity_tags
+    if exclude_tags:
+        body["exclude_tags"] = exclude_tags
+    if min_score is not None:
+        body["min_score"] = min_score
+    return await _apost("/api/mcp/game-library/query", json=body)

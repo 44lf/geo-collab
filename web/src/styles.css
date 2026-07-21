@@ -5135,3 +5135,337 @@ option, optgroup {
   background-size: 200% 100%;
   animation: imgSkeletonShimmer 1.4s ease-in-out infinite;
 }
+
+/* ── 游戏库 v2（gl* 命名，对齐 demo.pen）───────────────────────────── */
+.glPage {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-height: 100%;
+  padding: 48px 52px 40px;
+  background: #0D1020;
+  color: #F5F7FF;
+}
+.glHeader { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+.glTitleZone { display: flex; flex-direction: column; gap: 14px; }
+.glCrumb { margin: 0; font-size: 13px; color: #8D94AE; }
+.glTitleRow { display: flex; align-items: center; gap: 14px; }
+.glTitle { margin: 0; font-size: 52px; font-weight: 800; line-height: 1; color: #F5F7FF; }
+.glCount {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border-radius: 6px;
+  background: #24283B; border: 1px solid #2A2E45;
+  font-size: 12px; color: #8D94AE;
+}
+.glCount b { font-size: 13px; font-weight: 700; color: #A99BFF; }
+.glActions { display: flex; align-items: center; gap: 10px; }
+.glSearch {
+  display: flex; align-items: center; gap: 9px;
+  width: 380px; height: 46px; padding: 0 16px;
+  background: #141827; border: 1px solid #2A2E45; border-radius: 8px;
+  color: #8D94AE;
+}
+.glSearch input {
+  flex: 1; min-width: 0; border: none; background: transparent;
+  color: #F5F7FF; font-size: 14px; outline: none;
+}
+.glSearch input::placeholder { color: #596179; }
+.glSortSelect {
+  height: 46px; padding: 0 16px; border-radius: 8px;
+  background: #161A29; border: 1px solid #2A2E45; color: #F5F7FF;
+  font-size: 13px; cursor: pointer;
+}
+
+.glHeaderBtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 46px; padding: 0 16px; border-radius: 8px;
+  font-size: 14px; font-weight: 700; white-space: nowrap;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.glHeaderBtn:hover:not(:disabled) { background: #232A40; }
+.glHeaderBtn:disabled { cursor: not-allowed; opacity: .6; }
+/* 新建 / 编辑 / 陪衬抓取 共用同一中性底；删除是唯一的破坏性强调色 */
+.glHeaderBtnDelete { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glHeaderBtnDelete:hover:not(:disabled) { background: #351B2B; }
+
+.glIngestFlyoutWrap { position: relative; }
+.glIngestFlyout {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 588px; height: 54px; padding: 0 14px;
+  background: #151827; border: 1px solid #2A2E45; border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .33);
+}
+.glIngestFlyoutLeft { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.glIngestFlyoutTextGroup { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.glIngestFlyoutTitle { font-size: 13px; font-weight: 800; color: #F5F7FF; }
+.glIngestFlyoutSub { font-size: 11px; color: #8D94AE; white-space: nowrap; }
+.glIngestFlyoutRight { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.glIngestToggle {
+  position: relative; display: flex; align-items: center;
+  width: 36px; height: 20px; padding: 2px; justify-content: flex-start;
+  background: #2A2E45; border: none; border-radius: 10px; cursor: pointer;
+  transition: background .15s;
+}
+.glIngestToggle:disabled { cursor: not-allowed; opacity: .7; }
+.glIngestToggleOn { background: #4F46E5; justify-content: flex-end; }
+.glIngestToggleKnob { width: 16px; height: 16px; border-radius: 50%; background: #fff; display: block; }
+.glIngestFlyoutTime { font-size: 11px; color: #C8CFFF; white-space: nowrap; }
+.glIngestFlyoutSummary {
+  font-size: 11px; color: #8D94AE; white-space: nowrap;
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis;
+}
+.glIngestConfigBtn {
+  height: 28px; padding: 0 10px; border-radius: 6px;
+  background: #262145; border: 1px solid #5B45BC; color: #E6E0FF;
+  font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
+}
+.glIngestConfigBtn:hover { background: #2E2856; }
+
+.glIngestModalBody { display: flex; flex-direction: column; gap: 16px; padding: 18px 20px; }
+.glIngestModalToggleRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.glIngestModalGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.glIngestModalRunRow { display: flex; gap: 10px; }
+.glIngestModalRunRow button { flex: 1; }
+.glIngestModalSummary {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-top: 12px; border-top: 1px solid var(--hair);
+}
+.glIngestModalSummaryText { margin: 0; font-size: 12px; color: var(--fg-3); word-break: break-all; }
+
+.glBody { display: flex; gap: 18px; flex: 1; min-height: 0; }
+.glLeft { display: flex; flex-direction: column; gap: 14px; width: 245px; flex-shrink: 0; }
+.glRight { display: flex; flex-direction: column; gap: 18px; flex: 1; min-width: 0; }
+.glDetailLoading {
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45; color: #8D94AE; font-size: 14px;
+}
+
+.glGroupSwitch {
+  display: flex; gap: 6px; height: 44px; padding: 4px; flex-shrink: 0;
+  background: #151827; border: 1px solid #2A2E45; border-radius: 10px;
+}
+.glSegBtn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid #242A40; border-radius: 7px; background: #111523;
+  color: #9FA8C7; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.glSegBtn.active { background: #2B2650; border-color: #6B5CE7; color: #F5F7FF; }
+.glSegCount { font-size: 11px; opacity: 0.8; }
+.glList {
+  display: flex; flex-direction: column; gap: 2px;
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 12px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45;
+}
+.glRow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer; text-align: left;
+  background: transparent; border: 1px solid #22283C;
+}
+.glRow.active { background: #2B2650; border-color: #6B5CE7; }
+.glRowIcon {
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: 8px;
+  object-fit: cover; border: 1px solid #39405B; background: #252A3E;
+}
+.glRowIconFallback {
+  display: flex; align-items: center; justify-content: center;
+  color: #F5F7FF; font-size: 16px; font-weight: 700;
+}
+.glRowMain { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.glRowTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.glRowName {
+  font-size: 13px; font-weight: 800; color: #F5F7FF;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glRowScore { font-size: 10px; color: #A99BFF; flex-shrink: 0; }
+.glRowBottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.glRowTags {
+  font-size: 11px; color: #8D94AE;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glRowUse { font-size: 10px; color: #596179; flex-shrink: 0; }
+.glListEmpty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 40px 12px; color: #8D94AE; text-align: center;
+}
+.glListEmpty p { margin: 0; font-size: 14px; }
+.glListEmpty span { font-size: 12px; color: #596179; }
+.glPager {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 8px 6px 2px;
+}
+.glPagerBtn {
+  height: 30px; padding: 0 12px; border-radius: 7px;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glPagerBtn:hover:not(:disabled) { background: #232A40; }
+.glPagerBtn:disabled { cursor: not-allowed; opacity: .45; }
+.glPagerInfo { font-size: 12px; color: #8D94AE; min-width: 56px; text-align: center; }
+
+/* 抓取运行日志弹窗 */
+.glLogBody { display: flex; flex-direction: column; gap: 10px; }
+.glLogEmpty {
+  padding: 32px 16px; text-align: center; font-size: 13px; color: #8D94AE;
+  border: 1px dashed #2A2E45; border-radius: 10px;
+}
+.glLogCard {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px; border-radius: 10px;
+  background: #171B2A; border: 1px solid #262B40;
+}
+.glLogCardHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.glLogBadge {
+  padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: #23263C; border: 1px solid #3A3E5C; color: #C9CFEA;
+}
+.glLogTime { font-size: 12px; color: #8D94AE; }
+.glLogMsg { font-size: 13px; color: #DDE2F5; line-height: 1.5; }
+.glLogChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.glLogChip {
+  padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 700;
+  background: #1B2032; border: 1px solid #2A2E45; color: #B7BEDA;
+}
+.glLogChip-refreshed { background: #14261C; border-color: #2E6B45; color: #9AE6B4; }
+.glLogChip-created { background: #14261C; border-color: #2E6B45; color: #9AE6B4; }
+.glLogChip-not_found { background: #2A2413; border-color: #6B5A2E; color: #E6D79A; }
+.glLogChip-culled { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogChip-error { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogChip-cap { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogToggle {
+  align-self: flex-start; padding: 0; background: none; border: none;
+  color: #A99BFF; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glLogDetailRow {
+  display: flex; gap: 8px; align-items: baseline;
+  padding-top: 6px; border-top: 1px dashed #262B40;
+}
+.glLogDetailLabel { flex: 0 0 auto; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+.glLogDetailNames { font-size: 12px; color: #B7BEDA; line-height: 1.6; word-break: break-all; }
+.glLogMore {
+  align-self: center; height: 30px; padding: 0 16px; border-radius: 7px;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glLogMore:hover:not(:disabled) { background: #232A40; }
+.glLogMore:disabled { cursor: not-allowed; opacity: .5; }
+
+.glCard {
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 22px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45;
+}
+.glCardTop { display: flex; justify-content: space-between; gap: 16px; }
+.glCardId { display: flex; gap: 16px; min-width: 0; }
+.glCardIcon {
+  width: 64px; height: 64px; flex-shrink: 0; border-radius: 12px;
+  object-fit: cover; border: 1px solid #424864; background: #252A3E; font-size: 24px;
+}
+.glCardIdText { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.glCardNameRow { display: flex; align-items: center; gap: 8px; }
+.glCardNameRow h2 { margin: 0; font-size: 22px; font-weight: 800; color: #F5F7FF; }
+.glBadgeInactive {
+  padding: 2px 8px; border-radius: 6px; font-size: 11px;
+  background: #3A1C2A; border: 1px solid #7F2D46; color: #F87171;
+}
+.glCardTags { display: flex; flex-wrap: wrap; gap: 6px; }
+.glChip {
+  padding: 3px 10px; border-radius: 6px; font-size: 11px;
+  background: #222638; color: #B9C0D8;
+}
+.glCardScore { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+.glBigScore { font-size: 64px; font-weight: 700; line-height: 1; color: #A99BFF; }
+.glScoreCap { font-size: 12px; color: #8D94AE; }
+.glScoreMetrics { display: flex; gap: 14px; font-size: 11px; color: #8D94AE; }
+.glStatusBar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  height: 38px; padding: 0 12px; border-radius: 8px;
+  background: #11172A; border: 1px solid #303854;
+}
+.glStatusLeft { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #D9D4FF; }
+.glStatusLeft svg { color: #A99BFF; flex-shrink: 0; }
+.glStatusRight { font-size: 11px; color: #596179; }
+.glMetricRow { display: flex; gap: 10px; }
+.glMetricTile {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border-radius: 8px;
+  background: #191D2D; border: 1px solid #2A2E45;
+}
+.glMetricLabel { font-size: 12px; font-weight: 700; color: #AEB7D4; }
+.glMetricValue {
+  font-size: 16px; font-weight: 800; color: #F5F7FF;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glMetricSub { font-size: 11px; color: #596179; }
+.glDesc { margin: 0; font-size: 14px; line-height: 1.5; color: #C3CAE1; }
+.glCardBottom {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-top: 14px; border-top: 1px solid #252B40;
+}
+.glCardBottomLeft { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.glPill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700;
+  background: #201D3B; border: 1px solid #6556D9; color: #DED9FF;
+}
+.glMeta { font-size: 11px; color: #596179; }
+
+.glMaterialRow { display: flex; gap: 18px; align-items: stretch; }
+.glShots {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px;
+  padding: 18px; border-radius: 10px; background: #151827; border: 1px solid #2A2E45;
+}
+.glShotsHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.glShotsTitle { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; color: #F5F7FF; }
+.glShotsBadge { padding: 1px 8px; border-radius: 6px; font-size: 11px; background: #222638; color: #B9C0D8; }
+.glUploadBtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 14px; border-radius: 8px; border: none;
+  background: #8B5CF6; color: #F5F7FF; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.glUploadBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.glShotsGrid { display: flex; flex-wrap: wrap; gap: 12px; }
+.glShotCard {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 148px; padding: 8px; border-radius: 8px;
+  background: #191D2D; border: 1px solid #2A2E45;
+}
+.glShotThumb { position: relative; height: 70px; border-radius: 6px; overflow: hidden; cursor: pointer; }
+.glShotThumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.glShotDel {
+  position: absolute; top: 4px; right: 4px;
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px; border: none;
+  background: rgba(10,12,20,0.7); color: #F87171; cursor: pointer;
+}
+.glShotName {
+  font-size: 10px; color: #8D94AE;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glShotsEmpty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 30px; color: #8D94AE; text-align: center; font-size: 12px;
+}
+.glSourceTable {
+  width: 420px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-radius: 10px; overflow: hidden; background: #151827; border: 1px solid #2A2E45;
+}
+.glSourceHead { height: 44px; display: flex; align-items: center; padding: 0 14px; background: #1A1E2E; font-size: 14px; font-weight: 800; color: #F5F7FF; }
+.glSourceRow { display: flex; align-items: center; min-height: 38px; padding: 8px 14px; gap: 10px; border-top: 1px solid #252B40; }
+.glSourceKey { width: 145px; flex-shrink: 0; font-size: 11px; color: #596179; }
+.glSourceVal { flex: 1; min-width: 0; font-size: 12px; color: #CDD4EE; word-break: break-all; }
+.glLightbox {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(6,8,16,0.86); padding: 40px;
+}
+.glLightboxImg { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+.glLightboxClose {
+  position: absolute; top: 24px; right: 24px;
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.08); color: #F5F7FF; cursor: pointer;
+}

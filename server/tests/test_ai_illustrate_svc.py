@@ -141,6 +141,78 @@ def test_illustrate_one_happy_path_returns_images_and_set_cover(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_illustrate_one_noop_does_not_recount_existing_stock_image(monkeypatch):
+    """文章已有图时 run_ai_format no-op，不应把旧图再次计入 LRU 用量。"""
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.articles.ai_illustrate_svc import (
+            IllustrateOptions,
+            illustrate_one,
+        )
+        from server.app.modules.image_library.models import StockCategory, StockImage
+
+        db = test_app.session_factory()
+        try:
+            cat = StockCategory(name="旧图栏目", bucket_name="old-img", kind="companion")
+            db.add(cat)
+            db.flush()
+            img = StockImage(
+                category_id=cat.id,
+                minio_key="old-k",
+                filename="old.jpg",
+                use_count=1,
+            )
+            db.add(img)
+            db.flush()
+            image_id = img.id
+            db.commit()
+        finally:
+            db.close()
+
+        aid = _mk_article(
+            test_app,
+            content_json={
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "heading",
+                        "attrs": {"level": 2},
+                        "content": [{"type": "text", "text": "标题"}],
+                    },
+                    {
+                        "type": "image",
+                        "attrs": {
+                            "src": f"/api/stock-images/{image_id}/file",
+                            "stockImageId": image_id,
+                        },
+                    },
+                ],
+            },
+        )
+        _mk_stock_category(test_app, cat_id=42)
+        _patch_run_ai_format(monkeypatch, return_value=0)
+
+        result = illustrate_one(
+            article_id=aid,
+            main_category_id=42,
+            user_id=test_app.admin_id,
+            options=IllustrateOptions(set_cover=False),
+            session_factory=test_app.session_factory,
+        )
+
+        assert result.images_inserted == 0
+        db = test_app.session_factory()
+        try:
+            got = db.get(StockImage, image_id)
+            assert got.use_count == 1
+            assert got.last_used_article_id is None
+        finally:
+            db.close()
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
 def test_illustrate_one_article_missing_returns_format_error(monkeypatch):
     """article_id 不存在 → format_error="article not found or deleted"。"""
     test_app = build_test_app(monkeypatch)

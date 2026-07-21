@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import server.app.modules.game_library.models  # noqa: F401  (register Game/GameTag tables)
 import server.app.modules.quality_reference.models  # noqa: F401  (register QualityReference table)
 import server.app.modules.video.models  # noqa: F401  (register VideoJob table)
 import server.app.modules.xhs_cards.models  # noqa: F401  (register XhsRenderJob table)
@@ -232,6 +233,15 @@ def create_app() -> FastAPI:
         prefix="/api/mcp",
         tags=["mcp-catalog"],
     )
+    from server.app.modules.game_library.router import game_library_mcp_router
+
+    app.include_router(game_library_mcp_router)
+    # 游戏库前台只读浏览 + 导入/抓取配置（user JWT 鉴权）
+    from server.app.modules.game_library import router_web as _game_library_web
+    from server.app.modules.game_library.router_web import game_library_web_router
+
+    _game_library_web.bg_session_factory = SessionLocal
+    app.include_router(game_library_web_router)
     # MCP 接入指引（前端「MCP 接入」tab 用）
     # user JWT 鉴权（与 system_router 等 user-JWT 路由同一组依赖）
     app.include_router(
@@ -500,6 +510,15 @@ def create_app() -> FastAPI:
         import logging as _logging
 
         _logging.getLogger(__name__).exception("start_pipeline_scheduler failed")
+
+    try:
+        from server.app.modules.game_library.scheduler import start_game_ingest
+
+        start_game_ingest(SessionLocal)
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).exception("start_game_ingest failed")
 
     # TapTap cookie 体检：GEO_TAPTAP_COOKIE_CHECK_ENABLED=true 时启动后台线程，纯 HTTP 探
     # account-profile/v1/me，失效则置 expired + 飞书喊人重登（不自动登录）。失败只记日志、不致命。

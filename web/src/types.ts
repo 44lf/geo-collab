@@ -1,7 +1,7 @@
-import { Bot, FileText, Film, Gem, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
+import { Bot, FileText, Film, Gamepad2, Gem, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "agents" | "ai" | "content" | "prompts" | "quality-reference" | "image-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
+export type NavKey = "agents" | "ai" | "content" | "prompts" | "quality-reference" | "image-library" | "game-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -512,6 +512,133 @@ export type StockImage = {
   created_at: string;
 };
 
+// ── 游戏库（game library，前台只读浏览取材语料）───────────────────────────────
+export type GameTagCount = { tag: string; game_count: number };
+
+export type GameListItem = {
+  game_id: number;
+  name: string;
+  score: number | null;
+  tags: string[];
+  icon_url: string | null;
+  screenshot_count: number;
+  use_count: number;
+  last_used_at: string | null;
+  stock_category_id: number | null;
+  sources: string[];
+  kind: "main" | "companion" | null;
+};
+
+export type GameListResponse = { items: GameListItem[]; total: number };
+
+export type GameSource = { source?: string; source_game_id?: string; url?: string };
+
+export type GameDetail = {
+  game_id: number;
+  name: string;
+  name_normalized: string;
+  score: number | null;
+  comment_count: number | null;
+  tags: string[];
+  platforms: string[];
+  sources: GameSource[];
+  icon_url: string | null;
+  screenshot_urls: string[];
+  description: string | null;
+  stock_category_id: number | null;
+  kind: "main" | "companion" | null;
+  use_count: number;
+  last_used_at: string | null;
+  last_used_article_id: number | null;
+  first_seen_at: string | null;
+  last_verified_at: string | null;
+  highlight_comments: unknown[] | null;
+  related_hotspots: unknown[] | null;
+  is_active: boolean;
+};
+
+// ── 游戏库 ingest 配置(陪衬定时抓取)────────────────────────────────────────
+export type GameIngestConfig = {
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  batch_size: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+  source_order: string;
+  max_shots: number;
+  cull_after_misses: number;
+  cull_enabled: boolean;
+  running: boolean;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  last_run_summary: Record<string, unknown> | null;
+  last_run_trigger: string | null;
+};
+
+export type GameIngestConfigPatch = Partial<{
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  batch_size: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+  source_order: string;
+  max_shots: number;
+  cull_after_misses: number;
+  cull_enabled: boolean;
+}>;
+
+export type GameIngestRunStartResponse = { started: boolean; status: GameIngestConfig };
+
+export type ImageCategoryImportRequest = Partial<{
+  kind: "main" | "companion" | null;
+  only_with_images: boolean;
+  limit: number | null;
+}>;
+
+export type ImageCategoryImportResponse = {
+  scanned: number;
+  created: number;
+  attached: number;
+  skipped: number;
+};
+
+export type GameIngestLogGame = { id: number | null; name: string | null };
+
+export type GameIngestLogEvent = {
+  id: number;
+  created_at: string;
+  event_type: string;
+  level: string;
+  message: string;
+  payload_json: {
+    trigger?: string;
+    counts?: Record<string, number | boolean>;
+    games?: Record<string, GameIngestLogGame[]>;
+  } | null;
+};
+
+export type GameIngestLogList = {
+  items: GameIngestLogEvent[];
+  next_cursor: number | null;
+};
+
+export type GameUpdateRequest = Partial<{
+  name: string;
+  score: number | null;
+  description: string | null;
+  tags: string[];
+}>;
+
+export type GameCreateRequest = {
+  name: string;
+  score?: number | null;
+  description?: string | null;
+  tags?: string[];
+  kind?: "main" | "companion";
+};
+
 export type TaskCreatePayload = {
   name: string;
   client_request_id: string;
@@ -619,7 +746,7 @@ export const navItems: {
     ],
   },
   { key: "quality-reference", label: "高质量库", icon: Gem },
-  { key: "image-library", label: "图片库", icon: Images },
+  { key: "image-library", label: "游戏库", icon: Gamepad2 },
   { key: "videos", label: "视频库", icon: Film },
   { key: "media", label: "媒体矩阵", icon: RadioTower },
   { key: "tasks", label: "分发引擎", icon: Send },

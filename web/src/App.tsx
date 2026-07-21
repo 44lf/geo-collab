@@ -16,7 +16,7 @@ import "./styles.css";
 
 // 所有合法的顶级导航 key（= URL 首段）。
 const KNOWN_NAV: NavKey[] = [
-  "agents", "ai", "content", "prompts", "quality-reference", "image-library", "videos", "media", "tasks",
+  "agents", "ai", "content", "prompts", "quality-reference", "image-library", "game-library", "videos", "media", "tasks",
   "system", "mcp-connect", "admin", "audit-logs", "ai-models",
 ];
 
@@ -24,7 +24,7 @@ const KNOWN_NAV: NavKey[] = [
 const TAB_TITLES: Record<NavKey, string> = {
   agents: "智能体管理", ai: "AI 生文", content: "内容管理", prompts: "提示词管理",
   "quality-reference": "高质量库",
-  "image-library": "图片库", videos: "视频库", media: "媒体矩阵", tasks: "分发引擎", system: "系统状态",
+  "image-library": "游戏库", "game-library": "游戏库", videos: "视频库", media: "媒体矩阵", tasks: "分发引擎", system: "系统状态",
   "mcp-connect": "MCP 接入", admin: "用户管理", "audit-logs": "日志中心",
   "ai-models": "AI 模型管理",
 };

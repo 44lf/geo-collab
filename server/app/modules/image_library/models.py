@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.core.time import utcnow
@@ -33,6 +33,13 @@ class StockImage(Base):
     """图库单图。minio_key 是其在所属栏目 bucket 内的对象 key（全局唯一）。"""
 
     __tablename__ = "stock_images"
+    __table_args__ = (
+        UniqueConstraint(
+            "category_id",
+            "source_url_hash",
+            name="uq_stock_images_category_source_hash",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     category_id: Mapped[int] = mapped_column(ForeignKey("stock_categories.id"), index=True)
@@ -43,5 +50,13 @@ class StockImage(Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # ── 游戏库扩展：入库去重 + 图片级用量（2026-07 game-library）──
+    source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    source_url_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_article_id: Mapped[int | None] = mapped_column(
+        ForeignKey("articles.id", ondelete="SET NULL"), nullable=True
+    )
 
     category = relationship("StockCategory", back_populates="images")
