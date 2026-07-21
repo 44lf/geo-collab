@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
 import re
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from server.app.modules.game_library.models import GameIngestConfig
+from server.app.core.time import utcnow
+from server.app.modules.game_library.models import Game, GameIngestConfig
+from server.app.modules.image_library.models import StockCategory
 from server.app.shared.errors import ValidationError
+
+logger = logging.getLogger(__name__)
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _WRITABLE = {
@@ -68,3 +74,94 @@ def ingest_config_to_dict(cfg, *, running: bool) -> dict:
         "last_run_summary": cfg.last_run_summary,
         "last_run_trigger": cfg.last_run_trigger,
     }
+
+
+def select_due_games(db: Session, *, limit: int) -> list[int]:
+    """选出待巡检的 companion-only 游戏 id，按 last_verified_at 升序（未巡检的 NULL 优先）。
+
+    只挂在 kind='companion' 栏目下的游戏才自动巡检；main 栏目手工维护，不进这条自动化。
+    注意：不用 `.nullsfirst()`——MySQL（含 8.0.46）不支持 `ORDER BY ... NULLS FIRST` 语法
+    （会报 1064 语法错误）。MySQL 对 ASC 排序里 NULL 的默认语义就是排最前，因此裸 `.asc()`
+    已经等价于 NULLS FIRST，不需要（也不能用）显式子句。
+    """
+    comp = select(StockCategory.id).where(StockCategory.kind == "companion")
+    stmt = (
+        select(Game.id)
+        .where(Game.is_active.is_(True), Game.stock_category_id.in_(comp))
+        .order_by(Game.last_verified_at.asc())
+        .limit(max(1, int(limit)))
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def _search_by_name(source_order: str, name: str):
+    """按 source_order（逗号分隔，如 "taptap,baidu"）依次尝试，命中即停。"""
+    from server.app.modules.game_library.sources import baidu, taptap
+
+    srcs = {"baidu": baidu, "taptap": taptap}
+    for key in [s.strip() for s in (source_order or "").split(",") if s.strip()]:
+        mod = srcs.get(key)
+        if mod is None:
+            continue
+        try:
+            hit = mod.search_by_name(name)
+        except Exception:
+            logger.warning("search_by_name failed source=%s name=%s", key, name, exc_info=True)
+            hit = None
+        if hit is not None:
+            # taptap 的 search_by_name 命中时不带截图（brand 搜索接口没有该字段），
+            # 需要再调 get_detail 补齐 screenshot_urls。
+            if key == "taptap" and not hit.screenshot_urls:
+                try:
+                    hit = taptap.get_detail(hit.game_id)
+                except Exception:
+                    logger.warning("taptap get_detail failed name=%s", name, exc_info=True)
+            return hit
+    return None
+
+
+def refresh_one_game(session_factory, game_id: int, *, source_order: str, max_shots: int) -> str:
+    """巡检单个游戏：短读 session 取名字/桶 → session 外联网+下载 → 短写 session 落库。
+
+    per-game 隔离：任何异常都吞掉记日志，返回 'refreshed' / 'not_found' / 'error'，
+    绝不向上抛——一个游戏巡检失败不能拖垮整批。
+    """
+    from server.app.modules.game_library import service
+    from server.app.shared import image_download
+
+    db = session_factory()
+    try:
+        game = db.get(Game, game_id)
+        if game is None:
+            return "error"
+        name, category_id = game.name, game.stock_category_id
+    finally:
+        db.close()
+
+    hit = _search_by_name(source_order, name)  # 无 session：联网 + 下载
+    shots: list[tuple[str, bytes, str]] = []
+    if hit is not None:
+        for url in list(dict.fromkeys(hit.screenshot_urls or []))[:max_shots]:
+            got = image_download.download_image(url)
+            if got:
+                shots.append((url, got[0], got[1]))
+
+    db = session_factory()
+    try:
+        if hit is None:
+            g = db.get(Game, game_id)
+            if g is not None:
+                g.last_verified_at = utcnow()
+            db.commit()
+            return "not_found"
+        service.upsert_game(
+            db, hit, max_screenshots=max_shots, pre_downloaded=shots, category_id=category_id
+        )
+        db.commit()
+        return "refreshed"
+    except Exception:
+        db.rollback()
+        logger.warning("refresh_one_game failed id=%s", game_id, exc_info=True)
+        return "error"
+    finally:
+        db.close()
