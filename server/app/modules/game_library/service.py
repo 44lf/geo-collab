@@ -16,6 +16,7 @@ from server.app.modules.image_library.service import (
     store_image_bytes,
 )
 from server.app.shared import image_download
+from server.app.shared.errors import ConflictError
 
 
 def _merge_scalar_max(cur, new):
@@ -341,9 +342,23 @@ def update_game(db: Session, game_id: int, patch: dict) -> Game | None:
     tags = patch.get("tags")
     if tags is not None:
         deduped = list(dict.fromkeys(tag.strip() for tag in tags if tag and tag.strip()))
-        game.tags = [GameTag(tag=tag) for tag in deduped]
+        # 差量替换：只删掉不再需要的、只追加新增的。不能整体重赋值 game.tags——
+        # unit-of-work 对同一 mapper 先 INSERT 后 DELETE，新旧 tag 重叠时会撞
+        # uq_game_tags_game_tag（最终 review C1）。差量后同一 (game_id,tag) 绝不同时删+插。
+        desired = set(deduped)
+        existing = {gt.tag: gt for gt in game.tags}
+        for tag_val, gt in list(existing.items()):
+            if tag_val not in desired:
+                game.tags.remove(gt)  # delete-orphan 负责删行
+        for tag_val in deduped:
+            if tag_val not in existing:
+                game.tags.append(GameTag(tag=tag_val))
 
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ConflictError("游戏名已存在") from exc
     return game
 
 

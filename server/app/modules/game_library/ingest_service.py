@@ -162,6 +162,18 @@ def refresh_one_game(session_factory, game_id: int, *, source_order: str, max_sh
     except Exception:
         db.rollback()
         logger.warning("refresh_one_game failed id=%s", game_id, exc_info=True)
+        # 即便失败也推进 last_verified_at：否则该游戏在 last_verified_at ASC 里永远排最前、
+        # 每个 tick 都重选，饿死整批轮转（最终 review I2）。失败游戏被推到队尾、下一整轮才重试。
+        try:
+            g = db.get(Game, game_id)
+            if g is not None:
+                g.last_verified_at = utcnow()
+                db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning(
+                "refresh_one_game: bump last_verified_at failed id=%s", game_id, exc_info=True
+            )
         return "error"
     finally:
         db.close()

@@ -82,6 +82,71 @@ def test_start_configured_ingest_locks_against_reentry(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_refresh_one_game_error_path_still_advances_last_verified_at(monkeypatch):
+    """error 路径也要推进 last_verified_at，否则该游戏在 last_verified_at ASC 里永远排
+    最前、每个 tick 都被重选，饿死整批软-LRU 轮转（最终 review I2）。"""
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.game_library import ingest_service, service, types
+        from server.app.modules.game_library.models import Game
+        from server.app.modules.image_library.models import StockCategory
+
+        s = app.session_factory()
+        try:
+            comp = StockCategory(name="c-err", bucket_name="c-err", kind="companion")
+            s.add(comp)
+            s.flush()
+            g = Game(
+                name="巡检必炸",
+                name_normalized="巡检必炸",
+                stock_category_id=comp.id,
+                is_active=True,
+            )
+            s.add(g)
+            s.commit()
+            game_id = g.id
+            assert g.last_verified_at is None
+        finally:
+            s.close()
+
+        hit = types.Game(
+            source="baidu",
+            game_id="1",
+            name="巡检必炸",
+            score=8.0,
+            tags=[],
+            platforms=[],
+            comment_count=1,
+            icon_url=None,
+            screenshot_urls=[],
+            description="d",
+            raw={},
+        )
+        monkeypatch.setattr(ingest_service, "_search_by_name", lambda source_order, name: hit)
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("upsert boom")
+
+        monkeypatch.setattr(service, "upsert_game", _boom)
+
+        result = ingest_service.refresh_one_game(
+            app.session_factory, game_id, source_order="baidu", max_shots=6
+        )
+        assert result == "error"
+
+        s2 = app.session_factory()
+        try:
+            refreshed = s2.get(Game, game_id)
+            assert refreshed.last_verified_at is not None
+        finally:
+            s2.close()
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
 def test_select_due_games_companion_only_lru(monkeypatch):
     from server.tests.utils import build_test_app
 

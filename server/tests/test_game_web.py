@@ -181,6 +181,64 @@ def test_web_update_game(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_web_update_game_overlapping_tags_does_not_500(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        s = app.session_factory()
+        try:
+            seeded = _seed(s)
+        finally:
+            s.close()
+
+        # companion_game_id 初始有标签 ["经营"]；传入含旧标签的重叠集合曾触发
+        # UNIQUE(game_id, tag) 违约 → 未捕获 500（最终 review C1）。差量替换后应 200。
+        game_id = seeded["companion_game_id"]
+        r = app.client.patch(
+            f"/api/game-library/games/{game_id}",
+            json={"tags": ["经营", "卡牌"]},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert sorted(body["tags"]) == ["卡牌", "经营"]
+
+        # 100% 重叠（原样传回）同样不能 500。
+        r2 = app.client.patch(
+            f"/api/game-library/games/{game_id}",
+            json={"tags": ["经营", "卡牌"]},
+        )
+        assert r2.status_code == 200
+        assert sorted(r2.json()["tags"]) == ["卡牌", "经营"]
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_web_update_game_rename_conflict_returns_409(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        s = app.session_factory()
+        try:
+            seeded = _seed(s)
+        finally:
+            s.close()
+
+        # 把 companion_game_id 改名成 main_game_id 已存在的 name → 撞
+        # uq_games_name_normalized → 未捕获 500（最终 review I1）。修复后应 409。
+        game_id = seeded["companion_game_id"]
+        r = app.client.patch(
+            f"/api/game-library/games/{game_id}",
+            json={"name": "主推游戏B"},
+        )
+        assert r.status_code == 409
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
 def test_web_update_game_partial_only_touches_given_fields(monkeypatch):
     from server.tests.utils import build_test_app
 
