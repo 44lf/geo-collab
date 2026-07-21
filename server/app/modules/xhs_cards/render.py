@@ -7,11 +7,14 @@ Playwright 截图编排在 Task 2 的模块内实现，不在本文件。
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from pathlib import Path
 
 import markdown
 import yaml
+from playwright.async_api import async_playwright
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 THEMES_DIR = ASSETS_DIR / "themes"
@@ -322,3 +325,57 @@ def generate_card_html(content: str, theme: str, page_number: int, width: int, h
 </body>
 </html>"""
     return html
+
+
+async def render_html_to_png_bytes(html: str, width: int, height: int, dpr: int) -> bytes:
+    """用 headless Chromium 把一段 HTML 截图成 PNG bytes。"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(args=["--no-sandbox"])
+        page = await browser.new_page(
+            viewport={"width": width, "height": height}, device_scale_factor=dpr
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as f:
+            f.write(html)
+            path = f.name
+        try:
+            await page.goto(f"file://{path}")
+            await page.wait_for_timeout(200)
+            png = await page.screenshot(full_page=True)
+        finally:
+            await browser.close()
+            os.unlink(path)
+        return png
+
+
+async def render_markdown_to_card_bytes(
+    md: str,
+    *,
+    theme: str,
+    mode: str,
+    width: int = 1080,
+    height: int = 1440,
+    dpr: int = 2,
+) -> dict:
+    """把整篇 markdown 编排渲染成封面 + 正文卡片的 PNG bytes。"""
+    if theme not in AVAILABLE_THEMES:
+        theme = "sketch"
+    if mode not in PAGING_MODES:
+        mode = "auto-split"
+    parsed = parse_markdown_string(md)
+    metadata, body = parsed["metadata"], parsed["body"]
+
+    cover_html = generate_cover_html(metadata, theme, width, height)
+    cover_png = await render_html_to_png_bytes(cover_html, width, height, dpr)
+
+    if mode == "separator":
+        chunks = split_content_by_separator(body)
+    else:
+        # auto-split / auto-fit / dynamic：MVP 先按 separator 语义 + 无分隔时整体一张。
+        # 后续如需精确 auto-split，移植原 auto_split_content（@529，依赖真实渲染高度）。
+        chunks = split_content_by_separator(body) if "---" in body else [body]
+
+    cards: list[bytes] = []
+    for i, chunk in enumerate(chunks, start=1):
+        card_html = generate_card_html(chunk, theme, i, width, height)
+        cards.append(await render_html_to_png_bytes(card_html, width, height, dpr))
+    return {"cover": cover_png, "cards": cards}

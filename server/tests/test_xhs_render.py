@@ -1,6 +1,12 @@
 """xhs_cards.render 纯函数测试（不触 Playwright）。"""
 
+import asyncio
+import os
+
+import pytest
+
 from server.app.modules.xhs_cards import render
+from server.app.modules.xhs_cards import render as R
 
 
 def test_parse_frontmatter_and_body():
@@ -31,3 +37,26 @@ def test_cover_html_contains_title():
         {"emoji": "🔥", "title": "标题X", "subtitle": "副X"}, "default", 1080, 1440
     )
     assert "标题X" in html and "<html" in html.lower()
+
+
+def test_render_markdown_orchestration_separator(monkeypatch):
+    # 用假的截图函数：返回可辨识的 bytes，避免起 chromium
+    async def fake_shot(html, width, height, dpr):
+        return b"PNG:" + (b"cover" if "cover" in html.lower() else b"card")
+
+    monkeypatch.setattr(R, "render_html_to_png_bytes", fake_shot)
+    md = '---\ntitle: "T"\nsubtitle: "S"\nemoji: "🔥"\n---\n\nA\n\n---\n\nB'
+    out = asyncio.run(R.render_markdown_to_card_bytes(md, theme="default", mode="separator"))
+    assert out["cover"].startswith(b"PNG:")
+    assert len(out["cards"]) == 2  # A / B 两张
+
+
+@pytest.mark.skipif(
+    os.environ.get("GEO_XHS_RENDER_LIVE") != "1",
+    reason="需容器内 chromium；设 GEO_XHS_RENDER_LIVE=1 启用",
+)
+def test_live_render_produces_png():
+    md = '---\ntitle: "真渲染"\nsubtitle: "冒烟"\nemoji: "✅"\n---\n\n正文\n\n---\n\n第二张'
+    out = asyncio.run(R.render_markdown_to_card_bytes(md, theme="sketch", mode="separator"))
+    assert out["cover"][:8] == b"\x89PNG\r\n\x1a\n"
+    assert all(c[:8] == b"\x89PNG\r\n\x1a\n" for c in out["cards"])
