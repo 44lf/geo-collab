@@ -105,6 +105,21 @@ function PromptsRoute() {
   );
 }
 
+// 「日志中心」子页（审计日志 / 打点日志）由 URL 段驱动：/audit-logs/:tab。
+function AuditLogsRoute() {
+  const { tab } = useParams();
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const active: "audit" | "events" = tab === "events" ? "events" : "audit";
+  return (
+    <AuditLogsWorkspace
+      tab={active}
+      isMobile={isMobile}
+      onTabChange={(t) => navigate(`/audit-logs/${t}`)}
+    />
+  );
+}
+
 // AI 生文里「打开文章」跳转到内容管理。
 function AiRoute() {
   const navigate = useNavigate();
@@ -144,7 +159,15 @@ export const router = createBrowserRouter([
         path: "audit-logs",
         element: (
           <RequireAdmin>
-            <AuditLogsWorkspace />
+            <AuditLogsRoute />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: "audit-logs/:tab",
+        element: (
+          <RequireAdmin>
+            <AuditLogsRoute />
           </RequireAdmin>
         ),
       },

@@ -110,27 +110,36 @@ function truncate(value: string | null | undefined, max: number): string {
   return `${value.slice(0, max)}…`;
 }
 
-export function AuditLogsWorkspace() {
-  const [subTab, setSubTab] = useState<"audit" | "report">("audit");
+export function AuditLogsWorkspace({
+  tab,
+  onTabChange,
+  isMobile,
+}: {
+  tab: "audit" | "events";
+  onTabChange: (t: "audit" | "events") => void;
+  isMobile?: boolean;
+}) {
   return (
     <>
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <button
-          className={subTab === "audit" ? "primaryButton" : "secondaryButton"}
-          type="button"
-          onClick={() => setSubTab("audit")}
-        >
-          审计日志
-        </button>
-        <button
-          className={subTab === "report" ? "primaryButton" : "secondaryButton"}
-          type="button"
-          onClick={() => setSubTab("report")}
-        >
-          打点日志
-        </button>
-      </div>
-      {subTab === "audit" ? <AuditLogPanel /> : <ReportEventPanel />}
+      {isMobile && (
+        <div className="reviewTabs">
+          <button
+            type="button"
+            className={`reviewTabBtn ${tab === "audit" ? "active" : ""}`}
+            onClick={() => onTabChange("audit")}
+          >
+            审计日志
+          </button>
+          <button
+            type="button"
+            className={`reviewTabBtn ${tab === "events" ? "active" : ""}`}
+            onClick={() => onTabChange("events")}
+          >
+            打点日志
+          </button>
+        </div>
+      )}
+      {tab === "audit" ? <AuditLogPanel /> : <ReportEventPanel />}
     </>
   );
 }
