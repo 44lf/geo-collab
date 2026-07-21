@@ -150,7 +150,7 @@ export function GameLibraryHeader({
 
         <button
           type="button"
-          className="glHeaderBtn glHeaderBtnEdit"
+          className="glHeaderBtn"
           disabled={!selectedGame}
           onClick={() => setEditOpen(true)}
         >
@@ -161,7 +161,7 @@ export function GameLibraryHeader({
         <div className="glIngestFlyoutWrap" ref={flyoutWrapRef}>
           <button
             type="button"
-            className="glHeaderBtn glHeaderBtnIngest"
+            className="glHeaderBtn"
             aria-expanded={flyoutOpen}
             onClick={() => setFlyoutOpen((v) => !v)}
           >
@@ -219,7 +219,7 @@ export function GameLibraryHeader({
 
         <button
           type="button"
-          className="glHeaderBtnDelete glHeaderBtn"
+          className="glHeaderBtn glHeaderBtnDelete"
           disabled={!selectedGame || deleting}
           onClick={() => void onDeleteGame()}
         >

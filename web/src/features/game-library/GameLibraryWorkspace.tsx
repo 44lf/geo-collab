@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getGame, listGames } from "../../api/game-library";
 import type { GameDetail, GameListItem } from "../../types";
 import { useToast } from "../../components/Toast";
@@ -12,16 +12,17 @@ import { GameSourceTable } from "./GameSourceTable";
 export type Seg = "main" | "companion";
 export type SortKey = "score" | "least_used" | "recent";
 
-// 主推 = kind === "main"（服务端按 stock_category.kind 判定）；陪衬 = 其余（含 kind 为空），保证没有游戏消失。
-const isMain = (g: GameListItem) => g.kind === "main";
+const PAGE_SIZE = 100;
 
 export function GameLibraryWorkspace() {
   const { toast } = useToast();
-  const [raw, setRaw] = useState<GameListItem[]>([]);
-  const [total, setTotal] = useState(0);
+  const [raw, setRaw] = useState<GameListItem[]>([]); // 当前分组的一页（服务端已按 kind 过滤）
+  const [mainCount, setMainCount] = useState(0);
+  const [companionCount, setCompanionCount] = useState(0);
   const [q, setQ] = useState("");
   const [seg, setSeg] = useState<Seg>("main");
   const [sort, setSort] = useState<SortKey>("score");
+  const [page, setPage] = useState(0); // 0-based，当前分组内翻页
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<GameDetail | null>(null);
@@ -29,14 +30,26 @@ export function GameLibraryWorkspace() {
   const seqRef = useRef(0);
   const detailSeq = useRef(0);
 
-  // 立即重拉游戏列表（不防抖）：供搜索防抖 effect 和「从图片库导入」等操作后手动触发复用。
+  // 拉当前分组的一页(kind+sort+分页都在服务端)展示，另一分组只取总数(limit 1)。计数一律用
+  // 服务端 total，保证「主推 + 陪衬 == 顶部总数」；排序落 SQL，翻页跨页顺序才正确。
   const reloadGames = useCallback(() => {
     const seq = ++seqRef.current;
-    return listGames({ q: q.trim() || undefined, limit: 200 })
-      .then((res) => {
+    const query = q.trim() || undefined;
+    const other: Seg = seg === "main" ? "companion" : "main";
+    return Promise.all([
+      listGames({ q: query, kind: seg, sort, limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
+      listGames({ q: query, kind: other, limit: 1 }),
+    ])
+      .then(([cur, oth]) => {
         if (seq !== seqRef.current) return;
-        setRaw(res.items);
-        setTotal(res.total);
+        setRaw(cur.items);
+        if (seg === "main") {
+          setMainCount(cur.total);
+          setCompanionCount(oth.total);
+        } else {
+          setCompanionCount(cur.total);
+          setMainCount(oth.total);
+        }
         setLoaded(true);
       })
       .catch((e) => {
@@ -44,32 +57,29 @@ export function GameLibraryWorkspace() {
         toast(e instanceof Error ? e.message : "加载游戏失败", "error");
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, [q, seg, sort, page]);
 
-  // 游戏列表：搜索变化时（服务端 name like）重拉，带竞态防护 + 防抖。
+  // 过滤键（搜索/分组/排序）变化时回到第 1 页，避免停在越界页码上。
+  useEffect(() => {
+    setPage(0);
+  }, [q, seg, sort]);
+
+  // 列表重拉：过滤键或页码变化时触发（服务端 name like + kind + sort + 分页），竞态防护 + 防抖。
   useEffect(() => {
     const timer = setTimeout(() => void reloadGames(), q ? 250 : 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, [q, seg, sort, page]);
 
-  const mainCount = useMemo(() => raw.filter(isMain).length, [raw]);
-  const companionCount = raw.length - mainCount;
-
-  const games = useMemo(() => {
-    const list = raw.filter((g) => (seg === "main" ? isMain(g) : !isMain(g)));
-    const sorted = [...list];
-    if (sort === "score") sorted.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-    else if (sort === "least_used") sorted.sort((a, b) => a.use_count - b.use_count);
-    else if (sort === "recent")
-      sorted.sort((a, b) => (b.last_used_at ?? "").localeCompare(a.last_used_at ?? ""));
-    return sorted;
-  }, [raw, seg, sort]);
+  const total = mainCount + companionCount;
+  const segCount = seg === "main" ? mainCount : companionCount;
+  const totalPages = Math.max(1, Math.ceil(segCount / PAGE_SIZE));
+  const games = raw; // 服务端已按 kind 过滤 + 排序 + 分页，直接用
 
   const emptyHint = q.trim()
     ? `没有匹配「${q.trim()}」的游戏，换个搜索词`
-    : raw.length === 0
-      ? "库为空，先在服务器跑 ingest_games 入库"
+    : total === 0
+      ? "库为空，先在服务器跑 ingest 入库"
       : `「${seg === "main" ? "主推游戏" : "陪衬游戏"}」分组暂无游戏，切到另一分组看看`;
 
   async function openDetail(id: number) {
@@ -135,6 +145,29 @@ export function GameLibraryWorkspace() {
             loaded={loaded}
             emptyHint={emptyHint}
           />
+          {totalPages > 1 && (
+            <div className="glPager">
+              <button
+                type="button"
+                className="glPagerBtn"
+                disabled={page <= 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                ‹ 上一页
+              </button>
+              <span className="glPagerInfo mono">
+                {page + 1} / {totalPages}
+              </span>
+              <button
+                type="button"
+                className="glPagerBtn"
+                disabled={page >= totalPages - 1}
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              >
+                下一页 ›
+              </button>
+            </div>
+          )}
         </aside>
         <section className="glRight">
           {detailLoading && !detail && <div className="glDetailLoading">加载中…</div>}

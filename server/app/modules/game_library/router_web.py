@@ -43,12 +43,13 @@ def web_list_games(
     min_score: float | None = None,
     q: str | None = None,
     kind: str | None = None,
+    sort: str = Query("score", pattern="^(score|least_used|recent)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     return service.list_games(
-        db, tag=tag, min_score=min_score, q=q, kind=kind, limit=limit, offset=offset
+        db, tag=tag, min_score=min_score, q=q, kind=kind, sort=sort, limit=limit, offset=offset
     )
 
 

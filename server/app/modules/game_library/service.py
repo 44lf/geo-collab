@@ -35,6 +35,31 @@ def _prefer_longer(cur: str | None, new: str | None) -> str | None:
     return cur
 
 
+COVER_CATEGORY_NAME = "游戏封面"  # 封面统一转存这个专用桶，不进游戏自己的截图桶（素材面板才干净）
+
+
+def _apply_icon(
+    db: Session,
+    row: Game,
+    source_icon: str | None,
+    pre_downloaded_icon: tuple[str, bytes, str] | None,
+) -> None:
+    """封面持久化。拿到下好的图标字节 → 转存自家 MinIO（专用封面桶）、icon_url 指本地代理，
+    永不外链盗链失效。已是本地地址 → 保留不动（幂等，且不被后续外链用 _prefer_longer 覆盖回去）。
+    转存不可用（无字节 / 建桶失败 / 上传失败）→ 退回外链 best-effort，不比原先差。"""
+    if row.icon_url and row.icon_url.startswith("/api/stock-images/"):
+        return
+    if pre_downloaded_icon is not None:
+        url, data, mime = pre_downloaded_icon
+        cover_cat = get_or_create_companion_category(db, COVER_CATEGORY_NAME, commit=False)
+        if cover_cat is not None:
+            img = store_image_bytes(db, cover_cat, data, mime, source_url=url, commit=False)
+            if img is not None:
+                row.icon_url = f"/api/stock-images/{img.id}/file"
+                return
+    row.icon_url = _prefer_longer(row.icon_url, source_icon)
+
+
 def _download_screenshots(
     urls: list[str] | None,
     max_screenshots: int,
@@ -93,6 +118,7 @@ def upsert_game(
     pre_downloaded: list | None = None,
     category_id: int | None = None,
     game_row: Game | None = None,
+    pre_downloaded_icon: tuple[str, bytes, str] | None = None,
 ) -> Game:
     """跨源并集合并；下载已在 session 外做好经 pre_downloaded 传入，session 内只写库。
     category_id 非空 = 直接用该桶，不按名 re-resolve(迁移集游戏)。
@@ -117,7 +143,7 @@ def upsert_game(
     row.score = _merge_scalar_max(row.score, game.score)
     row.comment_count = _merge_scalar_max(row.comment_count, game.comment_count)
     row.description = _prefer_longer(row.description, game.description)
-    row.icon_url = _prefer_longer(row.icon_url, game.icon_url)
+    _apply_icon(db, row, game.icon_url, pre_downloaded_icon)
 
     src_entry = {"source": game.source, "source_game_id": game.game_id}
     row.sources = list(row.sources or [])
@@ -170,7 +196,7 @@ def _game_to_dict(g: Game) -> dict:
         "highlight_comments": g.highlight_comments,
         "related_hotspots": g.related_hotspots,
         "use_count": g.use_count,
-        "last_used_at": g.last_used_at.isoformat() if g.last_used_at else None,
+        "last_used_at": _iso(g.last_used_at),
     }
 
 
@@ -217,7 +243,11 @@ def query_games_by_tags(
 
 
 def _iso(dt):
-    return dt.isoformat() if dt else None
+    # 与 main.py 全局 datetime 补丁一致：无时区(naive UTC) 补 "Z"。否则这里预先 isoformat 成字符串，
+    # 会绕过那个只认 datetime 对象的补丁 → 前端 new Date 把裸 UTC 当本地时区解析、差 8 小时。
+    if dt is None:
+        return None
+    return dt.isoformat() + ("Z" if dt.tzinfo is None else "")
 
 
 def _source_names(sources) -> list[str]:
@@ -285,6 +315,7 @@ def list_games(
     min_score=None,
     q=None,
     kind=None,
+    sort="score",
     is_active=True,
     limit=50,
     offset=0,
@@ -309,11 +340,15 @@ def list_games(
     stmt = select(Game).options(selectinload(Game.tags))
     if conds:
         stmt = stmt.where(*conds)
-    stmt = (
-        stmt.order_by(func.coalesce(Game.score, -1).desc(), Game.id.asc())
-        .limit(max(1, min(200, limit)))
-        .offset(max(0, offset))
-    )
+    # 服务端排序：翻页要跨页正确，排序键必须落在 SQL（客户端只排单页会算错跨页顺序）。
+    # recent 用 last_used_at DESC —— MySQL DESC 默认把 NULL（从未取材）排在最后，符合「最近取材优先」。
+    if sort == "least_used":
+        stmt = stmt.order_by(Game.use_count.asc(), Game.id.asc())
+    elif sort == "recent":
+        stmt = stmt.order_by(Game.last_used_at.desc(), Game.id.asc())
+    else:  # score（默认）
+        stmt = stmt.order_by(func.coalesce(Game.score, -1).desc(), Game.id.asc())
+    stmt = stmt.limit(max(1, min(200, limit))).offset(max(0, offset))
     rows = list(db.execute(stmt).scalars().all())
     return {"items": [_game_to_list_item(db, g) for g in rows], "total": total}
 

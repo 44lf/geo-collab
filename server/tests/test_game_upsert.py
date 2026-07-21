@@ -258,6 +258,45 @@ def test_upsert_deduplicates_repeated_screenshot_url(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_upsert_rehosts_cover_and_keeps_it_idempotent(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.game_library import service
+        from server.app.modules.image_library import store as minio_store
+
+        monkeypatch.setattr(minio_store, "ensure_bucket", lambda *a, **k: None)
+        monkeypatch.setattr(minio_store, "upload_image", lambda *a, **k: None)
+
+        s = app.session_factory()
+        try:
+            row = service.upsert_game(
+                s,
+                _game("taptap", "1", "封面转存", ["养成"], [], 8.0),
+                pre_downloaded=[],
+                pre_downloaded_icon=("http://cdn/icon.png", b"\xff\xd8\xff", "image/jpeg"),
+            )
+            s.commit()
+            # 封面转存自家 MinIO → icon_url 指本地代理，不再是外链。
+            assert row.icon_url.startswith("/api/stock-images/")
+            local = row.icon_url
+            # 已本地 → 再来一轮新外链/新字节都不覆盖（幂等，防外链盗链回填）。
+            row2 = service.upsert_game(
+                s,
+                _game("taptap", "1", "封面转存", ["养成"], [], 8.0),
+                pre_downloaded=[],
+                pre_downloaded_icon=("http://cdn/icon2.png", b"\xff\xd8\xff", "image/jpeg"),
+            )
+            s.commit()
+            assert row2.icon_url == local
+        finally:
+            s.close()
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
 def test_upsert_with_category_id_skips_name_resolve(monkeypatch):
     from server.tests.utils import build_test_app
 

@@ -5179,16 +5179,15 @@ option, optgroup {
 .glHeaderBtn {
   display: inline-flex; align-items: center; gap: 8px;
   height: 46px; padding: 0 16px; border-radius: 8px;
-  font-size: 14px; font-weight: 800; white-space: nowrap;
-  border: 1px solid transparent; cursor: pointer;
+  font-size: 14px; font-weight: 700; white-space: nowrap;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  cursor: pointer; transition: background .15s, border-color .15s;
 }
+.glHeaderBtn:hover:not(:disabled) { background: #232A40; }
 .glHeaderBtn:disabled { cursor: not-allowed; opacity: .6; }
-.glHeaderBtnEdit { background: #211D3C; border-color: #5B45BC; color: #F2EEFF; }
-.glHeaderBtnEdit:hover:not(:disabled) { background: #29244A; }
-.glHeaderBtnIngest { background: #161A29; border-color: #2A2E45; color: #DDE2F5; }
-.glHeaderBtnIngest:hover:not(:disabled) { background: #1D2233; }
-.glHeaderBtnDelete { background: #3A1C2A; border-color: #7F2D46; color: #FFBAC4; }
-.glHeaderBtnDelete:hover:not(:disabled) { background: #45212F; }
+/* 新建 / 编辑 / 陪衬抓取 共用同一中性底；删除是唯一的破坏性强调色 */
+.glHeaderBtnDelete { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glHeaderBtnDelete:hover:not(:disabled) { background: #351B2B; }
 
 .glIngestFlyoutWrap { position: relative; }
 .glIngestFlyout {
@@ -5294,6 +5293,18 @@ option, optgroup {
 }
 .glListEmpty p { margin: 0; font-size: 14px; }
 .glListEmpty span { font-size: 12px; color: #596179; }
+.glPager {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 8px 6px 2px;
+}
+.glPagerBtn {
+  height: 30px; padding: 0 12px; border-radius: 7px;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glPagerBtn:hover:not(:disabled) { background: #232A40; }
+.glPagerBtn:disabled { cursor: not-allowed; opacity: .45; }
+.glPagerInfo { font-size: 12px; color: #8D94AE; min-width: 56px; text-align: center; }
 
 .glCard {
   display: flex; flex-direction: column; gap: 18px;

@@ -40,6 +40,10 @@ _thread: threading.Thread | None = None
 _stop = threading.Event()
 _TAPTAP_DETAIL_THROTTLE_SECONDS = 0.3
 
+# 尝试上限 = batch_size × 此倍数。搜不到的游戏不占名额（只有 refreshed 计入 batch_size），
+# 但整池都搜不到时用它兜底，避免一晚把全库刷一遍、猛打源站。
+_ATTEMPT_MULTIPLIER = 4
+
 # 进程内锁：定时 tick 与手动「立即抓一批」互斥，同一时刻只允许一条抓取活动在跑。
 _run_lock = threading.Lock()
 _running = False
@@ -261,11 +265,16 @@ def run_configured_ingest_once(
     win_start = window_start_instant(start, now_local)
     if state.get("window_start") != win_start:
         state["window_start"] = win_start
-        state["processed_this_window"] = 0
+        state["refreshed_this_window"] = 0
+        state["attempts_this_window"] = 0
 
-    processed_this_window = state.get("processed_this_window", 0)
-    if processed_this_window >= batch_size:
+    # 名额=batch_size，只数刷新成功；搜不到/错误不占。尝试上限兜底，防整池搜不到时猛刷。
+    refreshed = state.get("refreshed_this_window", 0)
+    attempts = state.get("attempts_this_window", 0)
+    if refreshed >= batch_size:
         return {"processed": False, "reason": "batch_size_reached"}
+    if attempts >= batch_size * _ATTEMPT_MULTIPLIER:
+        return {"processed": False, "reason": "attempt_cap_reached"}
 
     db = session_factory()
     try:
@@ -285,11 +294,13 @@ def run_configured_ingest_once(
         cull_after_misses=cull_after_misses,
         cull_enabled=cull_enabled,
     )
-    state["processed_this_window"] = processed_this_window + 1
+    state["attempts_this_window"] = attempts + 1
+    if result.get("outcome") == "refreshed":
+        state["refreshed_this_window"] = refreshed + 1
 
     win_end = window_end_instant(end, now_local)
     remaining_window_s = (win_end - _to_utc_naive(now_local)).total_seconds()
-    remaining_due = max(1, batch_size - state["processed_this_window"])
+    remaining_due = max(1, batch_size - state["refreshed_this_window"])
     gap = compute_next_gap(remaining_window_s, remaining_due, min_gap, max_gap, rng)
     return {
         "processed": True,
@@ -319,18 +330,22 @@ def _run_configured_batch(session_factory: SessionFactory, *, trigger: str) -> N
             max_gap = cfg.max_gap_seconds
             cull_after_misses = cfg.cull_after_misses
             cull_enabled = cfg.cull_enabled
-            due = ingest_service.select_due_games(db, limit=batch_size)
+            attempt_cap = batch_size * _ATTEMPT_MULTIPLIER
+            due = ingest_service.select_due_games(db, limit=attempt_cap)
         finally:
             db.close()
 
+        # 名额=batch_size，只数 refreshed；搜不到/错误不占，继续往下取，直到攒够或触顶。
         summary: dict[str, int] = {
-            "batch": len(due),
+            "batch": batch_size,
+            "attempts": 0,
             "refreshed": 0,
             "not_found": 0,
             "error": 0,
             "culled": 0,
         }
-        for i, game_id in enumerate(due):
+        cap_reached = False
+        for game_id in due:
             result = ingest_service.refresh_one_game(
                 session_factory,
                 game_id,
@@ -342,8 +357,15 @@ def _run_configured_batch(session_factory: SessionFactory, *, trigger: str) -> N
             outcome = result["outcome"]
             key = outcome if outcome in summary else "error"
             summary[key] += 1
-            if i < len(due) - 1:
+            summary["attempts"] += 1
+            if summary["refreshed"] >= batch_size:
+                break
+            if summary["attempts"] < len(due):
                 time.sleep(rng.uniform(min_gap, max_gap))
+        else:
+            # for 未 break：整个候选池跑完仍没攒够 → 只有真到尝试上限才算触顶（否则只是池子不够）。
+            cap_reached = summary["refreshed"] < batch_size and len(due) >= attempt_cap
+        summary["cap_reached"] = cap_reached
 
         db = session_factory()
         try:

@@ -29,6 +29,24 @@ def _game(**kw):
 # ── 纯逻辑（无 DB）────────────────────────────────────────────────────────────
 
 
+def test_iso_appends_z_for_naive_utc():
+    """游戏时间戳预先 isoformat 成字符串会绕过 main.py 只认 datetime 的全局补丁，
+    必须自己补 "Z"，否则前端 new Date 把裸 UTC 当本地时区、差 8 小时。"""
+    from datetime import UTC, datetime
+
+    from server.app.modules.game_library.ingest_service import _iso as ing_iso
+    from server.app.modules.game_library.service import _iso as svc_iso
+
+    naive = datetime(2026, 7, 20, 9, 47, 24)  # naive UTC
+    assert svc_iso(naive) == "2026-07-20T09:47:24Z"
+    assert ing_iso(naive) == "2026-07-20T09:47:24Z"
+    # tz-aware 不重复加 Z（isoformat 已带 +00:00）
+    aware = datetime(2026, 7, 20, 9, 47, 24, tzinfo=UTC)
+    assert svc_iso(aware).endswith("+00:00")
+    assert not svc_iso(aware).endswith("Z")
+    assert svc_iso(None) is None
+
+
 def test_normalized_matcher_forgives_format_diffs_not_substrings():
     from server.app.modules.game_library.ingest_service import _normalized_matcher as m
 

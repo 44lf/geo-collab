@@ -83,6 +83,88 @@ def test_start_configured_ingest_locks_against_reentry(monkeypatch):
     assert scheduler.is_configured_ingest_running() is False
 
 
+class _QuotaCfg:
+    """手动批次用的假配置。gap=0 让测试不真 sleep。"""
+
+    source_order = "taptap"
+    max_shots = 6
+    min_gap_seconds = 0
+    max_gap_seconds = 0
+    cull_after_misses = 3
+    cull_enabled = True
+    last_run_started_at = None
+    last_run_finished_at = None
+    last_run_trigger = None
+    last_run_summary = None
+
+    def __init__(self, batch_size):
+        self.batch_size = batch_size
+
+
+class _QuotaSession:
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def _run_batch_with_outcomes(monkeypatch, *, batch_size, due_ids, outcomes):
+    """跑一次手动批次，注入固定的 select_due_games 序列与每个游戏的 refresh 结果。
+    返回 (summary, attempted_ids)。"""
+    from server.app.modules.game_library import scheduler
+
+    cfg = _QuotaCfg(batch_size)
+    attempted: list[int] = []
+
+    monkeypatch.setattr(scheduler.ingest_service, "get_or_create_ingest_config", lambda db: cfg)
+    monkeypatch.setattr(
+        scheduler.ingest_service,
+        "select_due_games",
+        lambda db, *, limit: list(due_ids)[:limit],
+    )
+
+    def fake_refresh(session_factory, game_id, **kwargs):
+        attempted.append(game_id)
+        return {"outcome": outcomes[game_id], "per_source": {}}
+
+    monkeypatch.setattr(scheduler.ingest_service, "refresh_one_game", fake_refresh)
+    monkeypatch.setattr(scheduler.time, "sleep", lambda *a, **k: None)
+
+    scheduler._run_configured_batch(lambda: _QuotaSession(), trigger="manual")
+    return cfg.last_run_summary, attempted
+
+
+def test_manual_batch_not_found_does_not_consume_quota(monkeypatch):
+    # 名额=2：搜不到不占，继续往下取直到攒够 2 个 refreshed；第 5 个不该被碰到。
+    summary, attempted = _run_batch_with_outcomes(
+        monkeypatch,
+        batch_size=2,
+        due_ids=[1, 2, 3, 4, 5],
+        outcomes={1: "not_found", 2: "refreshed", 3: "not_found", 4: "refreshed", 5: "refreshed"},
+    )
+    assert attempted == [1, 2, 3, 4]  # 攒够 2 个成功即停，第 5 个不动
+    assert summary["refreshed"] == 2
+    assert summary["not_found"] == 2
+    assert summary["attempts"] == 4
+    assert summary["cap_reached"] is False
+
+
+def test_manual_batch_attempt_cap_stops_churn(monkeypatch):
+    # 整池都搜不到：名额=2 → 尝试上限=8，跑满 8 次就停、标 cap_reached，不刷全库。
+    summary, attempted = _run_batch_with_outcomes(
+        monkeypatch,
+        batch_size=2,
+        due_ids=list(range(1, 100)),
+        outcomes={i: "not_found" for i in range(1, 100)},
+    )
+    assert len(attempted) == 8  # batch_size(2) × _ATTEMPT_MULTIPLIER(4)
+    assert summary["refreshed"] == 0
+    assert summary["not_found"] == 8
+    assert summary["attempts"] == 8
+    assert summary["cap_reached"] is True
+
+
 @pytest.mark.mysql
 def test_refresh_one_game_error_path_still_advances_last_verified_at(monkeypatch):
     """error 路径也要推进 last_verified_at，否则该游戏在 last_verified_at ASC 里永远排

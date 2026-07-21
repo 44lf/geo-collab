@@ -21,6 +21,7 @@ export function listGames(params?: {
   min_score?: number;
   q?: string;
   kind?: "main" | "companion";
+  sort?: "score" | "least_used" | "recent";
   limit?: number;
   offset?: number;
 }): Promise<GameListResponse> {
@@ -29,6 +30,7 @@ export function listGames(params?: {
   if (params?.min_score != null) p.set("min_score", String(params.min_score));
   if (params?.q) p.set("q", params.q);
   if (params?.kind) p.set("kind", params.kind);
+  if (params?.sort) p.set("sort", params.sort);
   if (params?.limit != null) p.set("limit", String(params.limit));
   if (params?.offset != null) p.set("offset", String(params.offset));
   const qs = p.toString();

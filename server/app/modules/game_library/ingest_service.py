@@ -64,7 +64,11 @@ def update_ingest_config(db: Session, patch: dict) -> GameIngestConfig:
 
 
 def _iso(dt):
-    return dt.isoformat() if dt else None
+    # 与 main.py 全局 datetime 补丁一致：无时区(naive UTC) 补 "Z"，否则预先 isoformat 的字符串会
+    # 绕过那个只认 datetime 对象的补丁 → 前端 new Date 把裸 UTC 当本地时区、差 8 小时。
+    if dt is None:
+        return None
+    return dt.isoformat() + ("Z" if dt.tzinfo is None else "")
 
 
 def ingest_config_to_dict(cfg, *, running: bool) -> dict:
@@ -121,6 +125,11 @@ def _normalized_matcher(candidate, target) -> bool:
         return False
     ck, tk = _match_key(candidate), _match_key(target)
     return bool(ck) and ck == tk
+
+
+def _best_icon_url(hits: list) -> str | None:
+    """命中里挑一个图标 URL 作封面来源：取最长的非空（与 upsert 的 _prefer_longer 口径一致）。"""
+    return max((h.icon_url for h in hits if h.icon_url), key=len, default=None)
 
 
 def _collect_from_all_sources(source_order: str, name: str) -> dict:
@@ -210,6 +219,7 @@ def refresh_one_game(
         if game is None:
             return {"outcome": "error", "per_source": {}}
         name, category_id = game.name, game.stock_category_id
+        icon_local = bool(game.icon_url and game.icon_url.startswith("/api/stock-images/"))
     finally:
         db.close()
 
@@ -227,6 +237,15 @@ def refresh_one_game(
                 shots.append((url, got[0], got[1]))
         hit_shots.append((hit, shots))
 
+    # 封面同样在 session 外下载：已是本地地址（转存过）就跳过，否则挑最优图标下一份。
+    pre_icon: tuple[str, bytes, str] | None = None
+    if not icon_local:
+        icon_url = _best_icon_url(hits)
+        if icon_url:
+            got = image_download.download_image(icon_url)
+            if got:
+                pre_icon = (icon_url, got[0], got[1])
+
     db = session_factory()
     try:
         g = db.get(Game, game_id)
@@ -242,6 +261,7 @@ def refresh_one_game(
                     pre_downloaded=shots,
                     category_id=category_id,
                     game_row=g,  # 锚定到本行：源标题≠库名时也不另建行
+                    pre_downloaded_icon=pre_icon,
                 )
             g.not_found_streak = 0
             db.commit()
