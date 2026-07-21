@@ -17,6 +17,7 @@ from server.app.modules.game_library.schemas import (
     GameIngestRunStartResponse,
     GameListResponse,
     GameTagOut,
+    GameUpdateRequest,
     ImageCategoryImportRequest,
     ImageCategoryImportResponse,
 )
@@ -56,6 +57,24 @@ def web_get_game(game_id: int, db: Session = Depends(get_db)):
     if g is None:
         raise HTTPException(status_code=404, detail="游戏不存在")
     return g
+
+
+@game_library_web_router.patch("/games/{game_id}", response_model=GameDetail)
+def web_update_game(game_id: int, payload: GameUpdateRequest, db: Session = Depends(get_db)):
+    updated = service.update_game(db, game_id, payload.model_dump(exclude_unset=True))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="游戏不存在")
+    db.commit()
+    return service.get_game(db, game_id)
+
+
+@game_library_web_router.delete("/games/{game_id}", status_code=204)
+def web_delete_game(game_id: int, db: Session = Depends(get_db)):
+    deleted = service.soft_delete_game(db, game_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="游戏不存在")
+    db.commit()
+    return None
 
 
 @game_library_web_router.post(

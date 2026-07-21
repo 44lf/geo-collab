@@ -93,6 +93,13 @@ class GameIngestRunStartResponse(BaseModel):
     status: GameIngestConfigRead
 
 
+class GameUpdateRequest(BaseModel):
+    name: str | None = None
+    score: float | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+
+
 class GameDetail(BaseModel):
     game_id: int
     name: str

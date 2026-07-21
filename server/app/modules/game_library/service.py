@@ -318,6 +318,46 @@ def get_game(db, game_id: int) -> dict | None:
     return _game_to_detail(db, g) if g is not None else None
 
 
+def update_game(db: Session, game_id: int, patch: dict) -> Game | None:
+    """手动编辑游戏。只对 patch 里显式给出的非 None 字段生效；tags 给了就整体替换。
+    不 commit（调用方按需提交）。"""
+    game = db.get(Game, game_id)
+    if game is None:
+        return None
+
+    name = patch.get("name")
+    if name is not None:
+        game.name = name
+        game.name_normalized = _normalize_game_name(name) or name
+
+    score = patch.get("score")
+    if score is not None:
+        game.score = score
+
+    description = patch.get("description")
+    if description is not None:
+        game.description = description
+
+    tags = patch.get("tags")
+    if tags is not None:
+        deduped = list(dict.fromkeys(tag.strip() for tag in tags if tag and tag.strip()))
+        game.tags = [GameTag(tag=tag) for tag in deduped]
+
+    db.flush()
+    return game
+
+
+def soft_delete_game(db: Session, game_id: int) -> bool:
+    """软删：置 is_active=False，可逆；浏览列表已按 is_active=True 过滤自动隐去。
+    不 commit（调用方按需提交）。"""
+    game = db.get(Game, game_id)
+    if game is None:
+        return False
+    game.is_active = False
+    db.flush()
+    return True
+
+
 def bump_game_usage(db: Session, game_ids: list[int], article_id: int) -> None:
     """文章采用游戏后回写游戏级用量（不 commit，调用方同事务提交）。未知 id 天然跳过。"""
     ids = [int(game_id) for game_id in (game_ids or []) if game_id]

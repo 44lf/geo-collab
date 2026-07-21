@@ -146,6 +146,118 @@ def test_web_list_game_tags(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_web_update_game(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        s = app.session_factory()
+        try:
+            seeded = _seed(s)
+        finally:
+            s.close()
+
+        # companion_game_id 初始有标签 ["经营"]，验证 PATCH 会整体替换而非追加。
+        game_id = seeded["companion_game_id"]
+        r = app.client.patch(
+            f"/api/game-library/games/{game_id}",
+            json={
+                "name": "改名后的游戏",
+                "score": 6.5,
+                "description": "新简介",
+                "tags": ["卡牌", "二次元"],
+            },
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "改名后的游戏"
+        assert body["name_normalized"]
+        assert body["score"] == 6.5
+        assert body["description"] == "新简介"
+        assert sorted(body["tags"]) == ["二次元", "卡牌"]
+        assert "经营" not in body["tags"]
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_web_update_game_partial_only_touches_given_fields(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        s = app.session_factory()
+        try:
+            seeded = _seed(s)
+        finally:
+            s.close()
+
+        game_id = seeded["main_game_id"]
+        r = app.client.patch(f"/api/game-library/games/{game_id}", json={"score": 3.3})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "主推游戏B"
+        assert body["score"] == 3.3
+        assert sorted(body["tags"]) == ["国风", "射击"]
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_web_update_game_404(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        r = app.client.patch("/api/game-library/games/999999", json={"name": "不存在"})
+        assert r.status_code == 404
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_web_delete_game(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        s = app.session_factory()
+        try:
+            seeded = _seed(s)
+        finally:
+            s.close()
+
+        game_id = seeded["plain_game_id"]
+        r = app.client.delete(f"/api/game-library/games/{game_id}")
+        assert r.status_code == 204
+        assert r.content == b""
+
+        listing = app.client.get("/api/game-library/games")
+        assert listing.status_code == 200
+        names = [item["name"] for item in listing.json()["items"]]
+        assert "素游戏C" not in names
+
+        # get_game 不按 is_active 过滤，软删后详情仍可见、is_active 反映真实状态。
+        detail = app.client.get(f"/api/game-library/games/{game_id}")
+        assert detail.status_code == 200
+        assert detail.json()["is_active"] is False
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_web_delete_game_404(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        r = app.client.delete("/api/game-library/games/999999")
+        assert r.status_code == 404
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
 def test_web_game_library_requires_jwt(monkeypatch):
     from server.tests.utils import build_test_app
 
