@@ -95,7 +95,11 @@ from server.app.modules.system.system_router import router as system_router
 from server.app.modules.system.users_router import router as users_router
 from server.app.modules.tasks.router import publish_records_router, tasks_mcp_router, tasks_router
 from server.app.modules.video.router import video_files_router, video_list_router, video_mcp_router
-from server.app.modules.xhs_cards.router import xhs_files_router, xhs_mcp_router
+from server.app.modules.xhs_cards.router import (
+    xhs_files_router,
+    xhs_gallery_router,
+    xhs_mcp_router,
+)
 from server.app.shared.errors import AccountError, ClientError, ConflictError, ValidationError
 
 # PyInstaller 打包后 sys._MEIPASS 指向解压目录
@@ -427,6 +431,7 @@ def create_app() -> FastAPI:
     app.include_router(video_files_router, prefix="/api/videos", tags=["video-files"])
     app.include_router(video_list_router, prefix="/api/videos", tags=["videos"])
     app.include_router(xhs_files_router, prefix="/api/xhs-cards", tags=["xhs-files"])
+    app.include_router(xhs_gallery_router, prefix="/api/xhs-cards", tags=["xhs-gallery"])
     app.include_router(h5_public_router, prefix="/api/feishu", tags=["feishu"])
     app.include_router(
         h5_auth_router,
