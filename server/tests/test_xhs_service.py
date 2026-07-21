@@ -87,3 +87,15 @@ def test_run_render_job_failure(monkeypatch):
             assert "render boom" in got.error
     finally:
         test_app.cleanup()
+
+
+def test_article_content_type_column(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.articles.models import Article
+
+        assert "content_type" in Article.__table__.c
+    finally:
+        test_app.cleanup()
