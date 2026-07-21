@@ -75,6 +75,24 @@ class GameListResponse(BaseModel):
     total: int = 0
 
 
+class ImageCategoryImportRequest(BaseModel):
+    kind: str | None = None
+    only_with_images: bool = False
+    limit: int | None = None
+
+
+class ImageCategoryImportResponse(BaseModel):
+    scanned: int = 0
+    created: int = 0
+    attached: int = 0
+    skipped: int = 0
+
+
+class GameIngestRunStartResponse(BaseModel):
+    started: bool
+    status: GameIngestConfigRead
+
+
 class GameDetail(BaseModel):
     game_id: int
     name: str

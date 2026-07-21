@@ -234,6 +234,12 @@ def create_app() -> FastAPI:
     from server.app.modules.game_library.router import game_library_mcp_router
 
     app.include_router(game_library_mcp_router)
+    # 游戏库前台只读浏览 + 导入/抓取配置（user JWT 鉴权）
+    from server.app.modules.game_library import router_web as _game_library_web
+    from server.app.modules.game_library.router_web import game_library_web_router
+
+    _game_library_web.bg_session_factory = SessionLocal
+    app.include_router(game_library_web_router)
     # MCP 接入指引（前端「MCP 接入」tab 用）
     # user JWT 鉴权（与 system_router 等 user-JWT 路由同一组依赖）
     app.include_router(
