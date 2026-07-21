@@ -53,6 +53,9 @@ const QualityReferenceWorkspace = lazy(() =>
     default: m.QualityReferenceWorkspace,
   })),
 );
+const XhsStyleGallery = lazy(() =>
+  import("./features/prompt-templates/XhsStyleGallery").then((m) => ({ default: m.XhsStyleGallery })),
+);
 
 // admin 专属页守卫：非 admin 直接重定向回默认页（RootLayout 已保证此处必有登录用户）。
 function RequireAdmin({ children }: { children: ReactElement }) {
@@ -93,6 +96,7 @@ function PromptsRoute() {
   const { scope } = useParams();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  if (scope === "xhs_styles") return <XhsStyleGallery />;
   const active: PromptScope = PROMPT_SCOPES.includes(scope as PromptScope)
     ? (scope as PromptScope)
     : "generation";

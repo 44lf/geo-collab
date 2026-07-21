@@ -616,6 +616,7 @@ export const navItems: {
       { key: "prompts:ai_format", label: "AI格式提示词", value: "ai_format" },
       { key: "prompts:image_search", label: "搜图关键词", value: "image_search" },
       { key: "prompts:image_companion", label: "陪衬配图提示词", value: "image_companion" },
+      { key: "prompts:xhs_styles", label: "小红书样式库", value: "xhs_styles" },
     ],
   },
   { key: "quality-reference", label: "高质量库", icon: Gem },
