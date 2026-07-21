@@ -524,6 +524,7 @@ export type GameListItem = {
   last_used_at: string | null;
   stock_category_id: number | null;
   sources: string[];
+  kind: "main" | "companion" | null;
 };
 
 export type GameListResponse = { items: GameListItem[]; total: number };
@@ -543,6 +544,7 @@ export type GameDetail = {
   screenshot_urls: string[];
   description: string | null;
   stock_category_id: number | null;
+  kind: "main" | "companion" | null;
   use_count: number;
   last_used_at: string | null;
   last_used_article_id: number | null;
