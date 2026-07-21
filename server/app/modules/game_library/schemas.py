@@ -54,3 +54,46 @@ class GameIngestConfigPatch(BaseModel):
     max_gap_seconds: int | None = Field(default=None, ge=1)
     source_order: str | None = None
     max_shots: int | None = Field(default=None, ge=1)
+
+
+class GameListItem(BaseModel):
+    game_id: int
+    name: str
+    score: float | None = None
+    tags: list[str] = Field(default_factory=list)
+    icon_url: str | None = None
+    screenshot_count: int = 0
+    use_count: int = 0
+    last_used_at: str | None = None
+    stock_category_id: int | None = None
+    sources: list[str] = Field(default_factory=list)
+    kind: str | None = None
+
+
+class GameListResponse(BaseModel):
+    items: list[GameListItem] = Field(default_factory=list)
+    total: int = 0
+
+
+class GameDetail(BaseModel):
+    game_id: int
+    name: str
+    name_normalized: str
+    score: float | None = None
+    comment_count: int | None = None
+    tags: list[str] = Field(default_factory=list)
+    platforms: list[str] = Field(default_factory=list)
+    sources: list = Field(default_factory=list)
+    icon_url: str | None = None
+    screenshot_urls: list[str] = Field(default_factory=list)
+    description: str | None = None
+    stock_category_id: int | None = None
+    kind: str | None = None
+    use_count: int = 0
+    last_used_at: str | None = None
+    last_used_article_id: int | None = None
+    first_seen_at: str | None = None
+    last_verified_at: str | None = None
+    highlight_comments: list | None = None
+    related_hotspots: list | None = None
+    is_active: bool = True

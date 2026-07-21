@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -10,6 +10,7 @@ from server.app.core.time import utcnow
 from server.app.modules.articles.formatting.document import _normalize_game_name
 from server.app.modules.game_library import types
 from server.app.modules.game_library.models import Game, GameTag
+from server.app.modules.image_library.models import StockCategory
 from server.app.modules.image_library.service import (
     get_or_create_companion_category,
     store_image_bytes,
@@ -191,6 +192,115 @@ def query_games_by_tags(
         rows.sort(key=lambda g: 0 if diversity_set & {tag.tag for tag in g.tags} else 1)
 
     return [_game_to_dict(g) for g in rows]
+
+
+def _iso(dt):
+    return dt.isoformat() if dt else None
+
+
+def _source_names(sources) -> list[str]:
+    names: list[str] = []
+    for entry in sources or []:
+        name = entry.get("source") if isinstance(entry, dict) else None
+        if name and name not in names:
+            names.append(name)
+    return sorted(names)
+
+
+def _kind_of(db: Session, stock_category_id: int | None) -> str | None:
+    if stock_category_id is None:
+        return None
+    cat = db.get(StockCategory, stock_category_id)
+    return cat.kind if cat is not None else None
+
+
+def _game_to_list_item(db: Session, g: Game) -> dict:
+    return {
+        "game_id": g.id,
+        "name": g.name,
+        "score": g.score,
+        "tags": [t.tag for t in g.tags],
+        "icon_url": g.icon_url,
+        "screenshot_count": len(g.screenshot_urls or []),
+        "use_count": g.use_count,
+        "last_used_at": _iso(g.last_used_at),
+        "stock_category_id": g.stock_category_id,
+        "sources": _source_names(g.sources),
+        "kind": _kind_of(db, g.stock_category_id),
+    }
+
+
+def _game_to_detail(db: Session, g: Game) -> dict:
+    return {
+        "game_id": g.id,
+        "name": g.name,
+        "name_normalized": g.name_normalized,
+        "score": g.score,
+        "comment_count": g.comment_count,
+        "tags": [t.tag for t in g.tags],
+        "platforms": g.platforms or [],
+        "sources": g.sources or [],
+        "icon_url": g.icon_url,
+        "screenshot_urls": g.screenshot_urls or [],
+        "description": g.description,
+        "stock_category_id": g.stock_category_id,
+        "kind": _kind_of(db, g.stock_category_id),
+        "use_count": g.use_count,
+        "last_used_at": _iso(g.last_used_at),
+        "last_used_article_id": g.last_used_article_id,
+        "first_seen_at": _iso(g.first_seen_at),
+        "last_verified_at": _iso(g.last_verified_at),
+        "highlight_comments": g.highlight_comments,
+        "related_hotspots": g.related_hotspots,
+        "is_active": g.is_active,
+    }
+
+
+def list_games(
+    db,
+    *,
+    tag=None,
+    min_score=None,
+    q=None,
+    kind=None,
+    is_active=True,
+    limit=50,
+    offset=0,
+) -> dict:
+    conds: list[ColumnElement[bool]] = []
+    if is_active:
+        conds.append(Game.is_active.is_(True))
+    if tag:
+        conds.append(Game.id.in_(select(GameTag.game_id).where(GameTag.tag == tag)))
+    if min_score is not None:
+        conds.append(Game.score >= min_score)
+    if q:
+        conds.append(Game.name.like(f"%{q}%"))
+    if kind:
+        conds.append(
+            Game.stock_category_id.in_(select(StockCategory.id).where(StockCategory.kind == kind))
+        )
+    count_stmt = select(func.count()).select_from(Game)
+    if conds:
+        count_stmt = count_stmt.where(*conds)
+    total = int(db.execute(count_stmt).scalar_one())
+    stmt = select(Game).options(selectinload(Game.tags))
+    if conds:
+        stmt = stmt.where(*conds)
+    stmt = (
+        stmt.order_by(func.coalesce(Game.score, -1).desc(), Game.id.asc())
+        .limit(max(1, min(200, limit)))
+        .offset(max(0, offset))
+    )
+    rows = list(db.execute(stmt).scalars().all())
+    return {"items": [_game_to_list_item(db, g) for g in rows], "total": total}
+
+
+def get_game(db, game_id: int) -> dict | None:
+    g = db.execute(
+        select(Game).options(selectinload(Game.tags)).where(Game.id == game_id)
+    ).scalar_one_or_none()
+    return _game_to_detail(db, g) if g is not None else None
 
 
 def bump_game_usage(db: Session, game_ids: list[int], article_id: int) -> None:
