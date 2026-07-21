@@ -39,6 +39,7 @@
   - pyproject.toml
   - alembic.ini
   - .gitlab-ci.yml
+  - ci/**/*
   - Dockerfile*
   - docker-compose*.yml
 
