@@ -7,6 +7,7 @@ tool 一律 async + 丢线程池（见 catalog.py docstring）。
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import anyio
@@ -14,6 +15,12 @@ import anyio
 from server.mcp.config import get_config
 from server.mcp.http_client import ApiError, GeoApiClient
 from server.mcp.server import mcp
+
+# 与 action.py 的 _OPERATOR_USER_ID 同源（同一环境变量），但不跨 module import 那个私有常量：
+# server.py 顶部先 import action 再 import xhs，若这里反向 `from action import _OPERATOR_USER_ID`
+# 会在 action.py 自身的 `from server.mcp.server import mcp` 尚未跑完时形成循环 import
+# （直接 `import server.mcp.tools.action` 的测试会踩中 partially initialized module 报错）。
+_OPERATOR_USER_ID = int(os.environ.get("GEO_MCP_OPERATOR_USER_ID", "1"))
 
 
 def _client() -> GeoApiClient:
@@ -108,3 +115,41 @@ async def get_xhs_status(job_id: str) -> dict[str, Any]:
          "cover_url": str|null, "card_urls": [str], "error": str|null}, "error": None}
     """
     return await _aget(f"/api/xhs-cards/status/{job_id}")
+
+
+@mcp.tool()
+async def save_xhs_note(
+    source_article_id: int,
+    prompt_template_id: int,
+    title: str,
+    markdown_content: str,
+    model_label: str | None = None,
+) -> dict[str, Any]:
+    """Persist a rendered Xiaohongshu image-text note into GEO's review queue (pending).
+
+    Use AFTER get_xhs_status returns done. Assemble markdown_content as:
+    cover image + each card image (as ![](/api/xhs-cards/file/...) links) + the
+    Xiaohongshu copy text (title / body / SEO #tags) at the end. Lands review_status=pending
+    with content_type="xhs_image_text" so the content list badges it as 小红书图文.
+
+    Args:
+        source_article_id: the approved article this note derives from.
+        prompt_template_id: the template used to condense (list_prompt_templates).
+        title: note title (<=300 chars).
+        markdown_content: image links + copy text (see above).
+        model_label: optional writer label.
+
+    Returns:
+        {"ok": True, "data": {"article_id": N}, "error": None}
+    """
+    body: dict[str, Any] = {
+        "prompt_template_id": prompt_template_id,
+        "user_id": _OPERATOR_USER_ID,
+        "title": title,
+        "markdown_content": markdown_content,
+        "content_type": "xhs_image_text",
+        "source_article_id": source_article_id,
+    }
+    if model_label:
+        body["model_label"] = model_label
+    return await _apost("/api/articles/save-from-mcp", json=body)
