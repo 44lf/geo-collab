@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from server.app.core.mcp_auth import require_mcp_token
 from server.app.core.mcp_errors import mcp_exception_response
+from server.app.core.security import get_current_user
 from server.app.db.session import get_db
-from server.app.modules.xhs_cards import store
+from server.app.modules.xhs_cards import previews, store
 from server.app.modules.xhs_cards.models import XhsRenderJob
 from server.app.modules.xhs_cards.schemas import ComposeXhsRequest
 from server.app.modules.xhs_cards.service import create_render_job, spawn_render_job
@@ -85,3 +86,29 @@ def serve_card(job_id: str, idx: int, db: Session = Depends(get_db)) -> Response
     if job is None or not job.card_keys or idx < 1 or idx > len(job.card_keys):
         raise HTTPException(status_code=404, detail="卡片不存在")
     return _serve(job_id, job.card_keys[idx - 1])
+
+
+xhs_gallery_router = APIRouter(dependencies=[Depends(get_current_user)])  # 样式库：任何登录用户
+
+
+@xhs_gallery_router.get("/themes")
+def list_themes() -> dict:
+    return {"ok": True, "data": previews.list_theme_previews(), "error": None}
+
+
+@xhs_gallery_router.get("/themes/{name}/preview/{kind}")
+def theme_preview(name: str, kind: str) -> Response:
+    data = previews.get_preview_bytes(name, kind)
+    if data is None:
+        raise HTTPException(status_code=404, detail="预览未生成或主题不存在")
+    return Response(content=data, media_type="image/png")
+
+
+@xhs_gallery_router.post("/themes/regenerate", status_code=202)
+def regenerate_themes() -> dict:
+    started = previews.spawn_regenerate()
+    return {
+        "ok": True,
+        "data": {"status": "generating" if started else "already_running"},
+        "error": None,
+    }
