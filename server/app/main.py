@@ -462,6 +462,11 @@ def create_app() -> FastAPI:
 
     _video_service.bg_session_factory = SessionLocal
 
+    # 为小红书卡片渲染后台线程提供 SessionLocal（spawn_render_job 读的是 service 里这个变量）
+    import server.app.modules.xhs_cards.service as _xhs_service
+
+    _xhs_service.bg_session_factory = SessionLocal
+
     # qref 外部参考导入后台线程（spawn_import_job 读 import_job 里这个变量）
     import server.app.modules.quality_reference.import_job as _qref_import_job
 
