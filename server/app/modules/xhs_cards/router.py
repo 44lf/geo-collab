@@ -93,7 +93,7 @@ xhs_gallery_router = APIRouter(dependencies=[Depends(get_current_user)])  # æ ·å
 
 @xhs_gallery_router.get("/themes")
 def list_themes() -> dict:
-    return {"ok": True, "data": previews.list_theme_previews(), "error": None}
+    return {"ok": True, "data": previews.preview_gallery_state(), "error": None}
 
 
 @xhs_gallery_router.get("/themes/{name}/preview/{kind}")

@@ -207,6 +207,8 @@ def build_test_app(monkeypatch) -> TestApp:
     # 关闭发布前随机延迟（错峰防封）：否则执行真实发布的集成测试会被 10-120s 睡眠拖到超时。
     # 延迟逻辑本身由 test_publish_pre_delay.py 用注入的 sleep 单测覆盖，无需在集成测试里真等。
     monkeypatch.setenv("GEO_PUBLISH_PRE_DELAY_ENABLED", "false")
+    # 小红书样式库预览预热在测试里关掉：否则每次 build_test_app 都会起真 chromium 渲染 8 主题。
+    monkeypatch.setenv("GEO_XHS_PREVIEW_PREWARM_ENABLED", "false")
     get_settings.cache_clear()
 
     from server.app.modules.tasks import executor as _tasks_mod

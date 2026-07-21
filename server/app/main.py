@@ -490,6 +490,21 @@ def create_app() -> FastAPI:
 
     _xhs_service.bg_session_factory = SessionLocal
 
+    # 小红书样式库预览预热：当前版本缓存不全时后台自动渲一轮，样式库常态秒开、不用手点。
+    # best-effort（不碰 DB、单飞锁幂等、失败静默），不阻塞启动。需 chromium（base 镜像已有）。
+    # 开关默认开；测试环境（build_test_app 设 false）关掉，避免每次建 app 都起真 chromium 渲染。
+    import os as _os
+
+    if _os.environ.get("GEO_XHS_PREVIEW_PREWARM_ENABLED", "true").lower() in ("1", "true", "yes"):
+        try:
+            import server.app.modules.xhs_cards.previews as _xhs_previews
+
+            _xhs_previews.ensure_prewarmed()
+        except Exception:  # noqa: BLE001 — 预热失败不致命
+            import logging as _logging
+
+            _logging.getLogger(__name__).exception("小红书样式库预览预热启动失败")
+
     # qref 外部参考导入后台线程（spawn_import_job 读 import_job 里这个变量）
     import server.app.modules.quality_reference.import_job as _qref_import_job
 
