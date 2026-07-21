@@ -5306,6 +5306,53 @@ option, optgroup {
 .glPagerBtn:disabled { cursor: not-allowed; opacity: .45; }
 .glPagerInfo { font-size: 12px; color: #8D94AE; min-width: 56px; text-align: center; }
 
+/* 抓取运行日志弹窗 */
+.glLogBody { display: flex; flex-direction: column; gap: 10px; }
+.glLogEmpty {
+  padding: 32px 16px; text-align: center; font-size: 13px; color: #8D94AE;
+  border: 1px dashed #2A2E45; border-radius: 10px;
+}
+.glLogCard {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px; border-radius: 10px;
+  background: #171B2A; border: 1px solid #262B40;
+}
+.glLogCardHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.glLogBadge {
+  padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: #23263C; border: 1px solid #3A3E5C; color: #C9CFEA;
+}
+.glLogTime { font-size: 12px; color: #8D94AE; }
+.glLogMsg { font-size: 13px; color: #DDE2F5; line-height: 1.5; }
+.glLogChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.glLogChip {
+  padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 700;
+  background: #1B2032; border: 1px solid #2A2E45; color: #B7BEDA;
+}
+.glLogChip-refreshed { background: #14261C; border-color: #2E6B45; color: #9AE6B4; }
+.glLogChip-created { background: #14261C; border-color: #2E6B45; color: #9AE6B4; }
+.glLogChip-not_found { background: #2A2413; border-color: #6B5A2E; color: #E6D79A; }
+.glLogChip-culled { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogChip-error { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogChip-cap { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogToggle {
+  align-self: flex-start; padding: 0; background: none; border: none;
+  color: #A99BFF; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glLogDetailRow {
+  display: flex; gap: 8px; align-items: baseline;
+  padding-top: 6px; border-top: 1px dashed #262B40;
+}
+.glLogDetailLabel { flex: 0 0 auto; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+.glLogDetailNames { font-size: 12px; color: #B7BEDA; line-height: 1.6; word-break: break-all; }
+.glLogMore {
+  align-self: center; height: 30px; padding: 0 16px; border-radius: 7px;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glLogMore:hover:not(:disabled) { background: #232A40; }
+.glLogMore:disabled { cursor: not-allowed; opacity: .5; }
+
 .glCard {
   display: flex; flex-direction: column; gap: 18px;
   padding: 22px; border-radius: 10px;

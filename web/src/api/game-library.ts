@@ -4,6 +4,7 @@ import type {
   GameDetail,
   GameIngestConfig,
   GameIngestConfigPatch,
+  GameIngestLogList,
   GameIngestRunStartResponse,
   GameListResponse,
   GameTagCount,
@@ -61,6 +62,18 @@ export function patchIngestConfig(patch: GameIngestConfigPatch): Promise<GameIng
 
 export function startIngestRun(): Promise<GameIngestRunStartResponse> {
   return api<GameIngestRunStartResponse>("/api/game-library/ingest/run", { method: "POST" });
+}
+
+// 抓取/导入运行日志：复用通用 report_events(user JWT)，按 source_module=game_ingest 过滤。
+export function listGameIngestLogs(params?: {
+  limit?: number;
+  cursor?: number;
+}): Promise<GameIngestLogList> {
+  const p = new URLSearchParams();
+  p.set("source_module", "game_ingest");
+  p.set("limit", String(params?.limit ?? 30));
+  if (params?.cursor != null) p.set("cursor", String(params.cursor));
+  return api<GameIngestLogList>(`/api/report-events?${p.toString()}`);
 }
 
 export function importImageCategories(

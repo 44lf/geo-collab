@@ -204,6 +204,53 @@ def _release_running() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 运行日志：一轮抓取(手动批次 / 定时窗)结果落一条 report_events(source_module=game_ingest)，
+# payload 带按结果分组的游戏名列表，供前端「运行日志」展示 —— 每轮一条，明细进 payload。
+# ---------------------------------------------------------------------------
+
+_LOG_BUCKETS = ("refreshed", "not_found", "error", "culled")
+
+
+def _blank_log() -> dict[str, list]:
+    return {b: [] for b in _LOG_BUCKETS}
+
+
+def _append_log(log: dict[str, list], result: dict) -> None:
+    outcome = result.get("outcome")
+    bucket = outcome if outcome in _LOG_BUCKETS else "error"
+    log[bucket].append({"id": result.get("game_id"), "name": result.get("name")})
+
+
+def _emit_run_log(
+    session_factory: SessionFactory,
+    *,
+    trigger: str,
+    event_type: str,
+    kind_label: str,
+    log: dict[str, list],
+    attempts: int,
+    cap_reached: bool,
+) -> None:
+    """一轮结果非空才写一条 report_event(空轮不写)。刷新=录入、跳过=not_found、删除=culled。"""
+    if not any(log.values()):
+        return
+    counts = {b: len(log[b]) for b in _LOG_BUCKETS}
+    counts["attempts"] = attempts
+    counts["cap_reached"] = cap_reached
+    tail = "，已达尝试上限" if cap_reached else ""
+    message = (
+        f"{kind_label}：刷新 {counts['refreshed']} / 跳过 {counts['not_found']} / "
+        f"删除 {counts['culled']} / 错误 {counts['error']}（尝试 {attempts}{tail}）"
+    )
+    ingest_service.record_ingest_run_event(
+        session_factory,
+        event_type=event_type,
+        message=message,
+        payload={"trigger": trigger, "counts": counts, "games": log},
+    )
+
+
+# ---------------------------------------------------------------------------
 # config-driven 托管抓取：按名刷新迁移集，软 LRU + 时间窗 + 有界随机 gap。
 # ---------------------------------------------------------------------------
 
@@ -264,9 +311,22 @@ def run_configured_ingest_once(
 
     win_start = window_start_instant(start, now_local)
     if state.get("window_start") != win_start:
+        # 进入新窗口：上一窗若攒了游戏却没在配额/触顶时 emit 过(收尾窗口不足 batch_size)，补发一条。
+        if state.get("log_games") and not state.get("log_emitted", False):
+            _emit_run_log(
+                session_factory,
+                trigger="scheduled",
+                event_type="ingest_window",
+                kind_label="定时抓取窗口",
+                log=state["log_games"],
+                attempts=state.get("attempts_this_window", 0),
+                cap_reached=False,
+            )
         state["window_start"] = win_start
         state["refreshed_this_window"] = 0
         state["attempts_this_window"] = 0
+        state["log_games"] = _blank_log()
+        state["log_emitted"] = False
 
     # 名额=batch_size，只数刷新成功；搜不到/错误不占。尝试上限兜底，防整池搜不到时猛刷。
     refreshed = state.get("refreshed_this_window", 0)
@@ -297,6 +357,22 @@ def run_configured_ingest_once(
     state["attempts_this_window"] = attempts + 1
     if result.get("outcome") == "refreshed":
         state["refreshed_this_window"] = refreshed + 1
+    _append_log(state.setdefault("log_games", _blank_log()), result)
+
+    # 本窗配额跑满 / 触顶 → 立刻 emit 一条(不等下一窗)，本窗其余 tick 靠 log_emitted 不重复。
+    done_quota = state["refreshed_this_window"] >= batch_size
+    done_cap = state["attempts_this_window"] >= batch_size * _ATTEMPT_MULTIPLIER
+    if (done_quota or done_cap) and not state.get("log_emitted", False):
+        _emit_run_log(
+            session_factory,
+            trigger="scheduled",
+            event_type="ingest_window",
+            kind_label="定时抓取窗口",
+            log=state["log_games"],
+            attempts=state["attempts_this_window"],
+            cap_reached=done_cap and not done_quota,
+        )
+        state["log_emitted"] = True
 
     win_end = window_end_instant(end, now_local)
     remaining_window_s = (win_end - _to_utc_naive(now_local)).total_seconds()
@@ -345,6 +421,7 @@ def _run_configured_batch(session_factory: SessionFactory, *, trigger: str) -> N
             "culled": 0,
         }
         cap_reached = False
+        log = _blank_log()
         for game_id in due:
             result = ingest_service.refresh_one_game(
                 session_factory,
@@ -358,6 +435,7 @@ def _run_configured_batch(session_factory: SessionFactory, *, trigger: str) -> N
             key = outcome if outcome in summary else "error"
             summary[key] += 1
             summary["attempts"] += 1
+            _append_log(log, result)
             if summary["refreshed"] >= batch_size:
                 break
             if summary["attempts"] < len(due):
@@ -375,6 +453,16 @@ def _run_configured_batch(session_factory: SessionFactory, *, trigger: str) -> N
             db.commit()
         finally:
             db.close()
+
+        _emit_run_log(
+            session_factory,
+            trigger=trigger,
+            event_type="ingest_batch",
+            kind_label="立即抓一批" if trigger == "manual" else "抓取一批",
+            log=log,
+            attempts=summary["attempts"],
+            cap_reached=cap_reached,
+        )
     except Exception:
         logger.exception("game ingest manual batch failed")
     finally:

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { CalendarClock, Plus, Search, SquarePen, Trash2 } from "lucide-react";
+import { CalendarClock, Plus, ScrollText, Search, SquarePen, Trash2 } from "lucide-react";
 import { deleteGame, getIngestConfig, patchIngestConfig } from "../../api/game-library";
 import type { GameDetail, GameIngestConfig } from "../../types";
 import { useToast } from "../../components/Toast";
 import type { Seg, SortKey } from "./GameLibraryWorkspace";
 import { GameIngestSettingsModal } from "./GameIngestSettingsModal";
+import { GameIngestLogModal } from "./GameIngestLogModal";
 import { GameEditModal } from "./GameEditModal";
 import { GameCreateModal } from "./GameCreateModal";
 
@@ -55,6 +56,7 @@ export function GameLibraryHeader({
   const [ingestLoading, setIngestLoading] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -217,6 +219,11 @@ export function GameLibraryHeader({
           )}
         </div>
 
+        <button type="button" className="glHeaderBtn" onClick={() => setLogOpen(true)}>
+          <ScrollText size={16} />
+          运行日志
+        </button>
+
         <button
           type="button"
           className="glHeaderBtn glHeaderBtnDelete"
@@ -236,6 +243,8 @@ export function GameLibraryHeader({
           onImported={onGamesChanged}
         />
       )}
+
+      {logOpen && <GameIngestLogModal onClose={() => setLogOpen(false)} />}
 
       {editOpen && selectedGame && (
         <GameEditModal

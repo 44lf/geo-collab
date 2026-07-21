@@ -166,6 +166,66 @@ def test_manual_batch_attempt_cap_stops_churn(monkeypatch):
 
 
 @pytest.mark.mysql
+def test_manual_batch_writes_report_event(monkeypatch):
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.game_library import ingest_service, scheduler
+        from server.app.modules.report.models import ReportEvent
+
+        monkeypatch.setattr(
+            scheduler.ingest_service,
+            "select_due_games",
+            lambda db, *, limit: [101, 102, 103][:limit],
+        )
+        outcomes = {
+            101: ("refreshed", "甲游戏"),
+            102: ("not_found", "乙游戏"),
+            103: ("refreshed", "丙游戏"),
+        }
+
+        def fake_refresh(session_factory, game_id, **kwargs):
+            oc, nm = outcomes[game_id]
+            return {"outcome": oc, "per_source": {}, "game_id": game_id, "name": nm}
+
+        monkeypatch.setattr(scheduler.ingest_service, "refresh_one_game", fake_refresh)
+        monkeypatch.setattr(scheduler.time, "sleep", lambda *a, **k: None)
+
+        s = app.session_factory()
+        try:
+            cfg = ingest_service.get_or_create_ingest_config(s)
+            cfg.batch_size = 2
+            cfg.min_gap_seconds = 0
+            cfg.max_gap_seconds = 0
+            s.commit()
+        finally:
+            s.close()
+
+        scheduler._run_configured_batch(app.session_factory, trigger="manual")
+
+        s2 = app.session_factory()
+        try:
+            ev = (
+                s2.query(ReportEvent)
+                .filter(ReportEvent.source_module == "game_ingest")
+                .order_by(ReportEvent.id.desc())
+                .first()
+            )
+            assert ev is not None
+            assert ev.event_type == "ingest_batch"
+            p = ev.payload_json
+            assert p["counts"]["refreshed"] == 2
+            assert p["counts"]["not_found"] == 1
+            names = {g["name"] for g in p["games"]["refreshed"]}
+            assert names == {"甲游戏", "丙游戏"}
+        finally:
+            s2.close()
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
 def test_refresh_one_game_error_path_still_advances_last_verified_at(monkeypatch):
     """error 路径也要推进 last_verified_at，否则该游戏在 last_verified_at ASC 里永远排
     最前、每个 tick 都被重选，饿死整批软-LRU 轮转（最终 review I2）。"""

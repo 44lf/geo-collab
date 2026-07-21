@@ -98,11 +98,28 @@ def web_delete_game(game_id: int, db: Session = Depends(get_db)):
 )
 def web_import_image_categories(payload: ImageCategoryImportRequest, db: Session = Depends(get_db)):
     from server.app.modules.game_library import importer
+    from server.app.modules.report import service as report_service
 
     result = importer.import_image_categories_as_games(
         db, kind=payload.kind, only_with_images=payload.only_with_images, limit=payload.limit
     )
     db.commit()
+    # 运行日志：图库导入也落一条 game_ingest 事件(counts + 新建的游戏名)，best-effort、自 commit。
+    created_names = result.pop("created_names", [])
+    report_service.record_event(
+        db,
+        source_module="game_ingest",
+        event_type="ingest_import",
+        message=(
+            f"图库导入：扫描 {result['scanned']}，新建 {result['created']}，"
+            f"挂桶 {result['attached']}，跳过 {result['skipped']}"
+        ),
+        payload={
+            "trigger": "manual",
+            "counts": {k: result[k] for k in ("scanned", "created", "attached", "skipped")},
+            "games": {"created": [{"id": None, "name": n} for n in created_names]},
+        },
+    )
     return result
 
 

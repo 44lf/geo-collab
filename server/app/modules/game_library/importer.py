@@ -39,6 +39,7 @@ def import_image_categories_as_games(
     if limit:
         q = q.limit(int(limit))
     scanned = created = attached = skipped = 0
+    created_names: list[str] = []
     for cat in q.all():
         scanned += 1
         norm = _normalize_game_name(cat.name) or cat.name
@@ -62,6 +63,7 @@ def import_image_categories_as_games(
                 db.flush()
                 nested.commit()
                 created += 1
+                created_names.append(cat.name)
             except IntegrityError:
                 nested.rollback()
                 skipped += 1
@@ -71,9 +73,11 @@ def import_image_categories_as_games(
         else:
             skipped += 1
     db.flush()
+    # created_names 仅供「运行日志」事件用，HTTP 出参走 ImageCategoryImportResponse 会自动过滤掉。
     return {
         "scanned": scanned,
         "created": created,
         "attached": attached,
         "skipped": skipped,
+        "created_names": created_names,
     }

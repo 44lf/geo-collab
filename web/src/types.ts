@@ -602,6 +602,26 @@ export type ImageCategoryImportResponse = {
   skipped: number;
 };
 
+export type GameIngestLogGame = { id: number | null; name: string | null };
+
+export type GameIngestLogEvent = {
+  id: number;
+  created_at: string;
+  event_type: string;
+  level: string;
+  message: string;
+  payload_json: {
+    trigger?: string;
+    counts?: Record<string, number | boolean>;
+    games?: Record<string, GameIngestLogGame[]>;
+  } | null;
+};
+
+export type GameIngestLogList = {
+  items: GameIngestLogEvent[];
+  next_cursor: number | null;
+};
+
 export type GameUpdateRequest = Partial<{
   name: string;
   score: number | null;

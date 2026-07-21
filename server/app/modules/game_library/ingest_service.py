@@ -91,6 +91,34 @@ def ingest_config_to_dict(cfg, *, running: bool) -> dict:
     }
 
 
+def record_ingest_run_event(
+    session_factory,
+    *,
+    event_type: str,
+    message: str,
+    payload: dict,
+    level: str = "info",
+) -> None:
+    """把一轮抓取/导入的结果作为一条 report_event 落库(best-effort, 独立 session)。
+
+    source_module 统一 "game_ingest", 前端「运行日志」按此过滤。record_event 内部自 commit +
+    吞异常、返回 None, 不影响抓取主流程。"""
+    from server.app.modules.report import service as report_service
+
+    db = session_factory()
+    try:
+        report_service.record_event(
+            db,
+            source_module="game_ingest",
+            event_type=event_type,
+            message=message,
+            level=level,
+            payload=payload,
+        )
+    finally:
+        db.close()
+
+
 def select_due_games(db: Session, *, limit: int) -> list[int]:
     """选出待巡检的 companion-only 游戏 id，按 last_verified_at 升序（未巡检的 NULL 优先）。
 
@@ -217,7 +245,7 @@ def refresh_one_game(
     try:
         game = db.get(Game, game_id)
         if game is None:
-            return {"outcome": "error", "per_source": {}}
+            return {"outcome": "error", "per_source": {}, "game_id": game_id, "name": None}
         name, category_id = game.name, game.stock_category_id
         icon_local = bool(game.icon_url and game.icon_url.startswith("/api/stock-images/"))
     finally:
@@ -250,7 +278,7 @@ def refresh_one_game(
     try:
         g = db.get(Game, game_id)
         if g is None:
-            return {"outcome": "error", "per_source": per_source}
+            return {"outcome": "error", "per_source": per_source, "game_id": game_id, "name": name}
 
         if hits:
             for hit, shots in hit_shots:
@@ -265,7 +293,12 @@ def refresh_one_game(
                 )
             g.not_found_streak = 0
             db.commit()
-            return {"outcome": "refreshed", "per_source": per_source}
+            return {
+                "outcome": "refreshed",
+                "per_source": per_source,
+                "game_id": game_id,
+                "name": name,
+            }
 
         # 无命中：区分 miss / error
         has_error = any(v == "error" for v in per_source.values())
@@ -282,7 +315,7 @@ def refresh_one_game(
                 g.is_active = False
                 outcome = "culled"
         db.commit()
-        return {"outcome": outcome, "per_source": per_source}
+        return {"outcome": outcome, "per_source": per_source, "game_id": game_id, "name": name}
     except Exception:
         db.rollback()
         logger.warning("refresh_one_game failed id=%s", game_id, exc_info=True)
@@ -296,6 +329,6 @@ def refresh_one_game(
             logger.warning(
                 "refresh_one_game: bump last_verified_at failed id=%s", game_id, exc_info=True
             )
-        return {"outcome": "error", "per_source": per_source}
+        return {"outcome": "error", "per_source": per_source, "game_id": game_id, "name": name}
     finally:
         db.close()
