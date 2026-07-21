@@ -115,10 +115,15 @@ def search(category, *, platform=None, order=ORDER_HOT, page=1, page_size=20):
     return [_to_game(g) for g in game_list]
 
 
-def search_by_name(name):
+def _exact_match(candidate, target):
+    return candidate == target
+
+
+def search_by_name(name, *, matcher=_exact_match):
     """按游戏名精确搜索,用于"给定一个具体游戏,找到它本身"的场景(见模块顶部说明)。
 
-    找不到与 name 完全一致的结果时返回 None。
+    matcher(候选名, name) -> bool 决定命中口径,默认完全相等;调用方可注入归一化 matcher。
+    找不到匹配结果时返回 None。
     """
     params = {"action": "game_query", "gameName": name}
     url = f"{_API}?{urlencode(params)}"
@@ -127,7 +132,7 @@ def search_by_name(name):
         data = json.loads(resp.read().decode("utf-8"))
     items = ((data.get("result") or {}).get("data")) or []
     for item in items:
-        if item.get("gameName") == name:
+        if matcher(item.get("gameName"), name):
             return _to_game_from_query(item)
     return None
 

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { CalendarClock, Search, SquarePen, Trash2 } from "lucide-react";
+import { CalendarClock, Plus, Search, SquarePen, Trash2 } from "lucide-react";
 import { deleteGame, getIngestConfig, patchIngestConfig } from "../../api/game-library";
 import type { GameDetail, GameIngestConfig } from "../../types";
 import { useToast } from "../../components/Toast";
-import type { SortKey } from "./GameLibraryWorkspace";
+import type { Seg, SortKey } from "./GameLibraryWorkspace";
 import { GameIngestSettingsModal } from "./GameIngestSettingsModal";
 import { GameEditModal } from "./GameEditModal";
+import { GameCreateModal } from "./GameCreateModal";
 
 type Props = {
   total: number;
@@ -13,7 +14,9 @@ type Props = {
   onQ: (v: string) => void;
   sort: SortKey;
   onSort: (s: SortKey) => void;
-  /** 「从图片库导入」等操作完成后通知父级重拉游戏列表。 */
+  /** 当前分组（新建游戏默认归属此分组）。 */
+  newGameKind: Seg;
+  /** 「从图片库导入」/「新建游戏」等操作完成后通知父级重拉游戏列表。 */
   onGamesChanged?: () => void;
   /** 当前详情面板选中的游戏（编辑/删除的操作目标）；未选中任何游戏时为 null。 */
   selectedGame: GameDetail | null;
@@ -40,6 +43,7 @@ export function GameLibraryHeader({
   onQ,
   sort,
   onSort,
+  newGameKind,
   onGamesChanged,
   selectedGame,
   onGameSaved,
@@ -52,6 +56,7 @@ export function GameLibraryHeader({
   const [toggling, setToggling] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const flyoutWrapRef = useRef<HTMLDivElement>(null);
 
@@ -137,6 +142,11 @@ export function GameLibraryHeader({
           <option value="least_used">取材最少</option>
           <option value="recent">最近取材</option>
         </select>
+
+        <button type="button" className="glHeaderBtn" onClick={() => setCreateOpen(true)}>
+          <Plus size={16} />
+          新建游戏
+        </button>
 
         <button
           type="button"
@@ -232,6 +242,14 @@ export function GameLibraryHeader({
           game={selectedGame}
           onClose={() => setEditOpen(false)}
           onSaved={(updated) => onGameSaved?.(updated)}
+        />
+      )}
+
+      {createOpen && (
+        <GameCreateModal
+          defaultKind={newGameKind}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => onGamesChanged?.()}
         />
       )}
     </header>

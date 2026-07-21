@@ -565,6 +565,8 @@ export type GameIngestConfig = {
   max_gap_seconds: number;
   source_order: string;
   max_shots: number;
+  cull_after_misses: number;
+  cull_enabled: boolean;
   running: boolean;
   last_run_started_at: string | null;
   last_run_finished_at: string | null;
@@ -581,6 +583,8 @@ export type GameIngestConfigPatch = Partial<{
   max_gap_seconds: number;
   source_order: string;
   max_shots: number;
+  cull_after_misses: number;
+  cull_enabled: boolean;
 }>;
 
 export type GameIngestRunStartResponse = { started: boolean; status: GameIngestConfig };
@@ -604,6 +608,14 @@ export type GameUpdateRequest = Partial<{
   description: string | null;
   tags: string[];
 }>;
+
+export type GameCreateRequest = {
+  name: string;
+  score?: number | null;
+  description?: string | null;
+  tags?: string[];
+  kind?: "main" | "companion";
+};
 
 export type TaskCreatePayload = {
   name: string;

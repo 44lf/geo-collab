@@ -46,6 +46,15 @@ class Game(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="1", index=True
     )
+    # 连续几轮「全源都没匹配到」计数：全源 miss +1、任一 hit 归 0、有 error 不动。
+    # 达阈值且无源级证据 → 自动软删（is_active=False）。见 0067 迁移。
+    not_found_streak: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # 人工新建 / 人工编辑过 = True：自动软删对它豁免（人背书过）。
+    manually_curated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -82,6 +91,11 @@ class GameIngestConfig(Base):
         String(50), nullable=False, server_default="taptap,baidu"
     )
     max_shots: Mapped[int] = mapped_column(Integer, nullable=False, server_default="6")
+    # 无证据自动软删：连续几轮全源 miss 才软删 + 总开关。
+    cull_after_misses: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")
+    cull_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="1"
+    )
     last_run_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_run_finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_run_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)

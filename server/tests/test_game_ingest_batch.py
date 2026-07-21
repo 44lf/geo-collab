@@ -27,6 +27,8 @@ def test_start_configured_ingest_locks_against_reentry(monkeypatch):
         max_shots = 6
         min_gap_seconds = 0
         max_gap_seconds = 0
+        cull_after_misses = 3
+        cull_enabled = True
         last_run_started_at = None
         last_run_finished_at = None
         last_run_trigger = None
@@ -48,10 +50,10 @@ def test_start_configured_ingest_locks_against_reentry(monkeypatch):
     def fake_select_due_games(db, *, limit):
         return [1]
 
-    def fake_refresh_one_game(session_factory, game_id, *, source_order, max_shots):
+    def fake_refresh_one_game(session_factory, game_id, *, source_order, max_shots, **kwargs):
         started.set()
         release.wait(timeout=5)
-        return "refreshed"
+        return {"outcome": "refreshed", "per_source": {}}
 
     monkeypatch.setattr(
         scheduler.ingest_service,
@@ -124,7 +126,11 @@ def test_refresh_one_game_error_path_still_advances_last_verified_at(monkeypatch
             description="d",
             raw={},
         )
-        monkeypatch.setattr(ingest_service, "_search_by_name", lambda source_order, name: hit)
+        monkeypatch.setattr(
+            ingest_service,
+            "_collect_from_all_sources",
+            lambda source_order, name: {"hits": [hit], "per_source": {"baidu": "hit"}},
+        )
 
         def _boom(*args, **kwargs):
             raise RuntimeError("upsert boom")
@@ -134,7 +140,7 @@ def test_refresh_one_game_error_path_still_advances_last_verified_at(monkeypatch
         result = ingest_service.refresh_one_game(
             app.session_factory, game_id, source_order="baidu", max_shots=6
         )
-        assert result == "error"
+        assert result["outcome"] == "error"
 
         s2 = app.session_factory()
         try:

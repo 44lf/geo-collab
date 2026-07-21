@@ -11,6 +11,7 @@ from server.app.core.security import get_current_user
 from server.app.db.session import get_db
 from server.app.modules.game_library import ingest_service, service
 from server.app.modules.game_library.schemas import (
+    GameCreateRequest,
     GameDetail,
     GameIngestConfigPatch,
     GameIngestConfigRead,
@@ -49,6 +50,20 @@ def web_list_games(
     return service.list_games(
         db, tag=tag, min_score=min_score, q=q, kind=kind, limit=limit, offset=offset
     )
+
+
+@game_library_web_router.post("/games", response_model=GameDetail, status_code=201)
+def web_create_game(payload: GameCreateRequest, db: Session = Depends(get_db)):
+    game = service.create_game(
+        db,
+        name=payload.name.strip(),
+        score=payload.score,
+        description=payload.description,
+        tags=payload.tags,
+        kind=payload.kind,
+    )
+    db.commit()
+    return service.get_game(db, game.id)
 
 
 @game_library_web_router.get("/games/{game_id}", response_model=GameDetail)

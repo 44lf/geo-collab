@@ -107,6 +107,7 @@ export function GameLibraryWorkspace() {
         onQ={setQ}
         sort={sort}
         onSort={setSort}
+        newGameKind={seg}
         onGamesChanged={reloadGames}
         selectedGame={detail}
         onGameSaved={(updated) => {

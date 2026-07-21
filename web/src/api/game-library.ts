@@ -1,5 +1,6 @@
 import { api } from "./core";
 import type {
+  GameCreateRequest,
   GameDetail,
   GameIngestConfig,
   GameIngestConfigPatch,
@@ -36,6 +37,13 @@ export function listGames(params?: {
 
 export function getGame(gameId: number): Promise<GameDetail> {
   return api<GameDetail>(`/api/game-library/games/${gameId}`);
+}
+
+export function createGame(payload: GameCreateRequest): Promise<GameDetail> {
+  return api<GameDetail>("/api/game-library/games", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getIngestConfig(): Promise<GameIngestConfig> {

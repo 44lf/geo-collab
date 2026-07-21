@@ -32,6 +32,8 @@ export function GameIngestSettingsModal({ config, onClose, onSaved, onImported }
     max_gap_seconds: config.max_gap_seconds,
     source_order: config.source_order,
     max_shots: config.max_shots,
+    cull_enabled: config.cull_enabled,
+    cull_after_misses: config.cull_after_misses,
   });
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(config.running);
@@ -56,6 +58,8 @@ export function GameIngestSettingsModal({ config, onClose, onSaved, onImported }
         max_gap_seconds: form.max_gap_seconds,
         source_order: form.source_order.trim(),
         max_shots: form.max_shots,
+        cull_enabled: form.cull_enabled,
+        cull_after_misses: form.cull_after_misses,
       });
       onSaved(next);
       toast("已保存抓取配置", "success");
@@ -209,6 +213,30 @@ export function GameIngestSettingsModal({ config, onClose, onSaved, onImported }
             value={form.source_order}
             placeholder="如 taptap,baidu"
             onChange={(e) => setField("source_order", e.target.value)}
+          />
+        </label>
+
+        <div className="glIngestModalToggleRow">
+          <span className="aiFormLabel">无证据自动软删（连续搜不到）</span>
+          <button
+            type="button"
+            className={`glIngestToggle${form.cull_enabled ? " glIngestToggleOn" : ""}`}
+            role="switch"
+            aria-checked={form.cull_enabled}
+            aria-label="启用无证据自动软删"
+            onClick={() => setField("cull_enabled", !form.cull_enabled)}
+          >
+            <span className="glIngestToggleKnob" />
+          </button>
+        </div>
+        <label className="aiFormGroup">
+          <span className="aiFormLabel">连续几轮全源未命中才软删</span>
+          <input
+            className="aiSearchInput"
+            type="number"
+            min={1}
+            value={form.cull_after_misses}
+            onChange={(e) => setField("cull_after_misses", Number(e.target.value))}
           />
         </label>
 

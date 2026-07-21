@@ -92,21 +92,27 @@ def upsert_game(
     max_screenshots: int = 6,
     pre_downloaded: list | None = None,
     category_id: int | None = None,
+    game_row: Game | None = None,
 ) -> Game:
     """跨源并集合并；下载已在 session 外做好经 pre_downloaded 传入，session 内只写库。
-    category_id 非空 = 直接用该桶，不按名 re-resolve(迁移集游戏)。不 commit（调用方按游戏 commit）。"""
+    category_id 非空 = 直接用该桶，不按名 re-resolve(迁移集游戏)。
+    game_row 非空 = 合并进这一行、不按名重解析(刷新已知游戏时用；归一化匹配后源标题可能≠库名)。
+    不 commit（调用方按游戏 commit）。"""
     shots = (
         pre_downloaded
         if pre_downloaded is not None
         else _download_screenshots(game.screenshot_urls, max_screenshots)
     )
 
-    norm = _normalize_game_name(game.name) or game.name
     if category_id is not None:
         cat = db.get(StockCategory, category_id)
     else:
         cat = get_or_create_companion_category(db, game.name, commit=False)
-    row = _get_or_create_game_row(db, game, norm)
+    if game_row is not None:
+        row = game_row
+    else:
+        norm = _normalize_game_name(game.name) or game.name
+        row = _get_or_create_game_row(db, game, norm)
 
     row.score = _merge_scalar_max(row.score, game.score)
     row.comment_count = _merge_scalar_max(row.comment_count, game.comment_count)
@@ -319,12 +325,55 @@ def get_game(db, game_id: int) -> dict | None:
     return _game_to_detail(db, g) if g is not None else None
 
 
+def create_game(
+    db: Session,
+    *,
+    name: str,
+    score: float | None = None,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    kind: str = "companion",
+) -> Game:
+    """手动新建游戏：查重(name_normalized 撞→409) → 建/挂对应 kind 素材桶 → 建 Game。
+    标记 manually_curated=True（人背书、豁免自动软删）。不 commit（调用方提交）。"""
+    norm = _normalize_game_name(name) or name
+    if db.query(Game).filter(Game.name_normalized == norm).first() is not None:
+        raise ConflictError("游戏名已存在")
+
+    cat = get_or_create_companion_category(db, name, commit=False)
+    if cat is not None and kind == "main" and cat.kind != "main":
+        cat.kind = "main"
+
+    row = Game(
+        name=name,
+        name_normalized=norm,
+        sources=[],
+        platforms=[],
+        screenshot_urls=[],
+        use_count=0,
+        is_active=True,
+        manually_curated=True,
+        score=score,
+        description=description,
+        stock_category_id=cat.id if cat is not None else None,
+        first_seen_at=utcnow(),
+    )
+    db.add(row)
+    db.flush()
+    for tag in dict.fromkeys(t.strip() for t in (tags or []) if t and t.strip()):
+        db.add(GameTag(game_id=row.id, tag=tag))
+    db.flush()
+    return row
+
+
 def update_game(db: Session, game_id: int, patch: dict) -> Game | None:
     """手动编辑游戏。只对 patch 里显式给出的非 None 字段生效；tags 给了就整体替换。
-    不 commit（调用方按需提交）。"""
+    编辑即置 manually_curated=True（人背书、豁免自动软删）。不 commit（调用方按需提交）。"""
     game = db.get(Game, game_id)
     if game is None:
         return None
+
+    game.manually_curated = True
 
     name = patch.get("name")
     if name is not None:

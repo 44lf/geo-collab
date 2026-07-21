@@ -248,6 +248,8 @@ def run_configured_ingest_once(
         max_shots = cfg.max_shots
         min_gap = cfg.min_gap_seconds
         max_gap = cfg.max_gap_seconds
+        cull_after_misses = cfg.cull_after_misses
+        cull_enabled = cfg.cull_enabled
     finally:
         db.close()
 
@@ -276,7 +278,12 @@ def run_configured_ingest_once(
 
     game_id = due[0]
     result = ingest_service.refresh_one_game(
-        session_factory, game_id, source_order=source_order, max_shots=max_shots
+        session_factory,
+        game_id,
+        source_order=source_order,
+        max_shots=max_shots,
+        cull_after_misses=cull_after_misses,
+        cull_enabled=cull_enabled,
     )
     state["processed_this_window"] = processed_this_window + 1
 
@@ -310,16 +317,30 @@ def _run_configured_batch(session_factory: SessionFactory, *, trigger: str) -> N
             max_shots = cfg.max_shots
             min_gap = cfg.min_gap_seconds
             max_gap = cfg.max_gap_seconds
+            cull_after_misses = cfg.cull_after_misses
+            cull_enabled = cfg.cull_enabled
             due = ingest_service.select_due_games(db, limit=batch_size)
         finally:
             db.close()
 
-        summary: dict[str, int] = {"batch": len(due), "refreshed": 0, "not_found": 0, "error": 0}
+        summary: dict[str, int] = {
+            "batch": len(due),
+            "refreshed": 0,
+            "not_found": 0,
+            "error": 0,
+            "culled": 0,
+        }
         for i, game_id in enumerate(due):
             result = ingest_service.refresh_one_game(
-                session_factory, game_id, source_order=source_order, max_shots=max_shots
+                session_factory,
+                game_id,
+                source_order=source_order,
+                max_shots=max_shots,
+                cull_after_misses=cull_after_misses,
+                cull_enabled=cull_enabled,
             )
-            key = result if result in summary else "error"
+            outcome = result["outcome"]
+            key = outcome if outcome in summary else "error"
             summary[key] += 1
             if i < len(due) - 1:
                 time.sleep(rng.uniform(min_gap, max_gap))

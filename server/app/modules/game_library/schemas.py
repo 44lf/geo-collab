@@ -1,9 +1,24 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class GameTagOut(BaseModel):
     tag: str
     game_count: int
+
+
+class GameCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    score: float | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    kind: str = "companion"
+
+    @field_validator("kind")
+    @classmethod
+    def _validate_kind(cls, value: str) -> str:
+        if value not in {"main", "companion"}:
+            raise ValueError("kind must be 'main' or 'companion'")
+        return value
 
 
 class GameCard(BaseModel):
@@ -38,6 +53,8 @@ class GameIngestConfigRead(BaseModel):
     max_gap_seconds: int
     source_order: str
     max_shots: int
+    cull_after_misses: int
+    cull_enabled: bool
     running: bool = False
     last_run_started_at: str | None = None
     last_run_finished_at: str | None = None
@@ -54,6 +71,8 @@ class GameIngestConfigPatch(BaseModel):
     max_gap_seconds: int | None = Field(default=None, ge=1)
     source_order: str | None = None
     max_shots: int | None = Field(default=None, ge=1)
+    cull_after_misses: int | None = Field(default=None, ge=1)
+    cull_enabled: bool | None = None
 
 
 class GameListItem(BaseModel):

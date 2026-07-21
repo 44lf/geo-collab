@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,6 +24,8 @@ _WRITABLE = {
     "max_gap_seconds",
     "source_order",
     "max_shots",
+    "cull_after_misses",
+    "cull_enabled",
 }
 
 
@@ -41,7 +44,13 @@ def update_ingest_config(db: Session, patch: dict) -> GameIngestConfig:
     for key in ("window_start", "window_end"):
         if key in data and not _HHMM.match(str(data[key])):
             raise ValidationError(f"{key} 必须是 HH:MM")
-    for key in ("batch_size", "min_gap_seconds", "max_gap_seconds", "max_shots"):
+    for key in (
+        "batch_size",
+        "min_gap_seconds",
+        "max_gap_seconds",
+        "max_shots",
+        "cull_after_misses",
+    ):
         if key in data and int(data[key]) <= 0:
             raise ValidationError(f"{key} 必须为正整数")
     lo = int(data.get("min_gap_seconds", cfg.min_gap_seconds))
@@ -68,6 +77,8 @@ def ingest_config_to_dict(cfg, *, running: bool) -> dict:
         "max_gap_seconds": cfg.max_gap_seconds,
         "source_order": cfg.source_order,
         "max_shots": cfg.max_shots,
+        "cull_after_misses": cfg.cull_after_misses,
+        "cull_enabled": cfg.cull_enabled,
         "running": running,
         "last_run_started_at": _iso(cfg.last_run_started_at),
         "last_run_finished_at": _iso(cfg.last_run_finished_at),
@@ -94,37 +105,101 @@ def select_due_games(db: Session, *, limit: int) -> list[int]:
     return list(db.execute(stmt).scalars().all())
 
 
-def _search_by_name(source_order: str, name: str):
-    """按 source_order（逗号分隔，如 "taptap,baidu"）依次尝试，命中即停。"""
+# 匹配用的独立归一化：比去重键 `_normalize_game_name`（仅 strip）更狠，但只用于"算不算命中"、
+# 不碰 name_normalized（落库靠 game_row 锚定，不按名解析），故可放心加强、零去重风险。
+# NFKC 折全/半角 + 小写 + 去所有内部空白 + 去常见标点。仍是"归一化后相等"，不做子串/模糊。
+_MATCH_PUNCT = re.compile(r"[\s·・:：\-—_、,，.。!！?？'’\"“”()（）\[\]【】~～|/\\]+")
+
+
+def _match_key(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s or "").strip().lower()
+    return _MATCH_PUNCT.sub("", s)
+
+
+def _normalized_matcher(candidate, target) -> bool:
+    if not candidate or not target:
+        return False
+    ck, tk = _match_key(candidate), _match_key(target)
+    return bool(ck) and ck == tk
+
+
+def _collect_from_all_sources(source_order: str, name: str) -> dict:
+    """按 source_order 逐源查、**不命中即停**，收集所有命中并记录每源结果。
+
+    返回 {"hits": [types.Game...], "per_source": {src: "hit"|"miss"|"error"}}。
+    error（网络/异常）与 miss 严格区分：error 不构成"搜不到"的证据、不计入软删 streak。
+    taptap 命中不带截图 → 补 get_detail。归一化 matcher 放宽格式差异。
+    """
     from server.app.modules.game_library.sources import baidu, taptap
 
     srcs = {"baidu": baidu, "taptap": taptap}
+    hits: list = []
+    per_source: dict[str, str] = {}
     for key in [s.strip() for s in (source_order or "").split(",") if s.strip()]:
         mod = srcs.get(key)
         if mod is None:
             continue
         try:
-            hit = mod.search_by_name(name)
+            hit = mod.search_by_name(name, matcher=_normalized_matcher)
         except Exception:
             logger.warning("search_by_name failed source=%s name=%s", key, name, exc_info=True)
-            hit = None
-        if hit is not None:
-            # taptap 的 search_by_name 命中时不带截图（brand 搜索接口没有该字段），
-            # 需要再调 get_detail 补齐 screenshot_urls。
-            if key == "taptap" and not hit.screenshot_urls:
-                try:
-                    hit = taptap.get_detail(hit.game_id)
-                except Exception:
-                    logger.warning("taptap get_detail failed name=%s", name, exc_info=True)
-            return hit
-    return None
+            per_source[key] = "error"
+            continue
+        if hit is None:
+            per_source[key] = "miss"
+            continue
+        if key == "taptap" and not hit.screenshot_urls:
+            try:
+                hit = taptap.get_detail(hit.game_id)
+            except Exception:
+                logger.warning("taptap get_detail failed name=%s", name, exc_info=True)
+        per_source[key] = "hit"
+        hits.append(hit)
+    return {"hits": hits, "per_source": per_source}
 
 
-def refresh_one_game(session_factory, game_id: int, *, source_order: str, max_shots: int) -> str:
-    """巡检单个游戏：短读 session 取名字/桶 → session 外联网+下载 → 短写 session 落库。
+def _has_evidence(g: Game) -> bool:
+    """有任何源级信息 = 从某个源成功匹配过 = 有存在证据。截图不算（桶里图可能错配）。"""
+    if g.score is not None:
+        return True
+    if g.description and g.description.strip():
+        return True
+    if g.comment_count is not None:
+        return True
+    if g.sources:  # 非空 list
+        return True
+    return False
 
-    per-game 隔离：任何异常都吞掉记日志，返回 'refreshed' / 'not_found' / 'error'，
-    绝不向上抛——一个游戏巡检失败不能拖垮整批。
+
+def _is_cull_exempt(db: Session, g: Game) -> bool:
+    """自动软删豁免：有证据 / 被文章用过 / 人工背书 / 主推 main。"""
+    if _has_evidence(g):
+        return True
+    if (g.use_count or 0) > 0:
+        return True
+    if g.manually_curated:
+        return True
+    if g.stock_category_id is not None:
+        cat = db.get(StockCategory, g.stock_category_id)
+        if cat is not None and cat.kind == "main":
+            return True
+    return False
+
+
+def refresh_one_game(
+    session_factory,
+    game_id: int,
+    *,
+    source_order: str,
+    max_shots: int,
+    cull_after_misses: int = 3,
+    cull_enabled: bool = True,
+) -> dict:
+    """巡检单个游戏：短读 name/桶 → session 外查全部源+下载 → 短写落库(并集合并)。
+
+    并集：查全部源、合并所有命中（`upsert_game` 天然跨源合并，锚定到本 game_row、不按名重解析）。
+    无证据软删：全源 miss(无 hit 无 error) → not_found_streak+1；达阈值且无证据且不豁免 → is_active=False。
+    per-game 隔离：异常吞掉记日志。返回 {"outcome": refreshed|not_found|error|culled, "per_source": {...}}。
     """
     from server.app.modules.game_library import service
     from server.app.shared import image_download
@@ -133,37 +208,64 @@ def refresh_one_game(session_factory, game_id: int, *, source_order: str, max_sh
     try:
         game = db.get(Game, game_id)
         if game is None:
-            return "error"
+            return {"outcome": "error", "per_source": {}}
         name, category_id = game.name, game.stock_category_id
     finally:
         db.close()
 
-    hit = _search_by_name(source_order, name)  # 无 session：联网 + 下载
-    shots: list[tuple[str, bytes, str]] = []
-    if hit is not None:
+    collected = _collect_from_all_sources(source_order, name)  # 无 session：联网
+    hits = collected["hits"]
+    per_source = collected["per_source"]
+
+    # 每个 hit 各自下截图（session 外）
+    hit_shots: list[tuple] = []
+    for hit in hits:
+        shots: list[tuple[str, bytes, str]] = []
         for url in list(dict.fromkeys(hit.screenshot_urls or []))[:max_shots]:
             got = image_download.download_image(url)
             if got:
                 shots.append((url, got[0], got[1]))
+        hit_shots.append((hit, shots))
 
     db = session_factory()
     try:
-        if hit is None:
-            g = db.get(Game, game_id)
-            if g is not None:
-                g.last_verified_at = utcnow()
+        g = db.get(Game, game_id)
+        if g is None:
+            return {"outcome": "error", "per_source": per_source}
+
+        if hits:
+            for hit, shots in hit_shots:
+                service.upsert_game(
+                    db,
+                    hit,
+                    max_screenshots=max_shots,
+                    pre_downloaded=shots,
+                    category_id=category_id,
+                    game_row=g,  # 锚定到本行：源标题≠库名时也不另建行
+                )
+            g.not_found_streak = 0
             db.commit()
-            return "not_found"
-        service.upsert_game(
-            db, hit, max_screenshots=max_shots, pre_downloaded=shots, category_id=category_id
-        )
+            return {"outcome": "refreshed", "per_source": per_source}
+
+        # 无命中：区分 miss / error
+        has_error = any(v == "error" for v in per_source.values())
+        all_miss = bool(per_source) and not has_error
+        g.last_verified_at = utcnow()  # 推进轮转，避免饿死（沿用 I2）
+        outcome = "error" if has_error else "not_found"
+        if all_miss:
+            g.not_found_streak = (g.not_found_streak or 0) + 1
+            if (
+                cull_enabled
+                and g.not_found_streak >= cull_after_misses
+                and not _is_cull_exempt(db, g)
+            ):
+                g.is_active = False
+                outcome = "culled"
         db.commit()
-        return "refreshed"
+        return {"outcome": outcome, "per_source": per_source}
     except Exception:
         db.rollback()
         logger.warning("refresh_one_game failed id=%s", game_id, exc_info=True)
-        # 即便失败也推进 last_verified_at：否则该游戏在 last_verified_at ASC 里永远排最前、
-        # 每个 tick 都重选，饿死整批轮转（最终 review I2）。失败游戏被推到队尾、下一整轮才重试。
         try:
             g = db.get(Game, game_id)
             if g is not None:
@@ -174,6 +276,6 @@ def refresh_one_game(session_factory, game_id: int, *, source_order: str, max_sh
             logger.warning(
                 "refresh_one_game: bump last_verified_at failed id=%s", game_id, exc_info=True
             )
-        return "error"
+        return {"outcome": "error", "per_source": per_source}
     finally:
         db.close()

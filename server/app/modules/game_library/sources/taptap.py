@@ -275,8 +275,15 @@ def _to_game_from_brand(app):
     )
 
 
-def search_by_name(name):
+def _exact_match(candidate, target):
+    return candidate == target
+
+
+def search_by_name(name, *, matcher=_exact_match):
     """按游戏名关键词全站搜索(不是分类查询),用于"给定一个具体游戏,找到它本身"的场景。
+
+    matcher(候选标题, name) -> bool 决定"算不算命中",默认完全相等。调用方(ingest_service)
+    可注入归一化 matcher 放宽格式差异;本模块自身不引入 app 依赖、保持纯 stdlib。
 
     接口: POST https://www.taptap.cn/webapiv2/search/v6/agg-search?X-UA=<UA>
     body(multipart/form-data): kw=<name>&types=mix
@@ -317,6 +324,6 @@ def search_by_name(name):
             if item.get("type") != "brand":
                 continue
             app = (item.get("brand") or {}).get("app") or {}
-            if app.get("title") == name:
+            if matcher(app.get("title"), name):
                 return _to_game_from_brand(app)
     return None
