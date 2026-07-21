@@ -627,6 +627,13 @@ export const navItems: {
   { key: "mcp-connect", label: "MCP 接入", icon: Plug },
 ];
 
+// 「日志中心」（audit-logs）的子项。audit-logs 是 admin-only 且在 App.tsx 中
+// 独立于 navItems 硬编码渲染，故其子项单列于此，供侧栏 NavGroup 复用。
+export const AUDIT_LOG_CHILDREN: NavChild[] = [
+  { key: "audit-logs:audit", label: "审计日志", value: "audit" },
+  { key: "audit-logs:events", label: "打点日志", value: "events" },
+];
+
 export const TERMINAL_STATUSES = new Set(["succeeded", "partial_failed", "failed", "cancelled"]);
 
 export type UserInfo = {
