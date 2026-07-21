@@ -198,12 +198,14 @@ class SaveArticleFromMcpPayload(BaseModel):
     零配置生文路径，不需要 GEO_AI_API_KEY。
     """
 
-    question_item_id: int
+    question_item_id: int | None = None  # 放宽：xhs 图文源自文章、无问题
     prompt_template_id: int
     user_id: int
     title: str = Field(min_length=1, max_length=300)
     markdown_content: str = Field(min_length=1)
     model_label: str | None = Field(default=None, max_length=120)
+    content_type: str | None = Field(default=None, max_length=40)
+    source_article_id: int | None = None
 
 
 class SaveArticleFromMcpResponse(BaseModel):
@@ -234,12 +236,14 @@ def save_article_from_mcp(
     from server.app.modules.articles.service import create_article as _create_article
     from server.app.modules.prompt_templates.service import get_prompt_template
 
-    item = db.query(QuestionItem).filter(QuestionItem.id == payload.question_item_id).first()
-    if item is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"question_item not found: id={payload.question_item_id}",
-        )
+    item = None
+    if payload.question_item_id is not None:
+        item = db.query(QuestionItem).filter(QuestionItem.id == payload.question_item_id).first()
+        if item is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"question_item not found: id={payload.question_item_id}",
+            )
     # get_prompt_template 已过滤软删（is_deleted）→ 软删模板视同不存在（404）。
     tpl = get_prompt_template(db, payload.prompt_template_id)
     if tpl is None:
@@ -277,11 +281,24 @@ def save_article_from_mcp(
         article.source_template_id = tpl.id
         # 对抗评审质量门 Task 7（spec §13.1 决策）：本期只存单题溯源，不加
         # question_item_ids 参数、不改 orchestrator——直接快照所查得的 QuestionItem。
-        article.source_question_category = item.category
-        article.source_question_texts = [item.question_text] if item.question_text else None
+        article.source_question_category = item.category if item else None
+        article.source_question_texts = (
+            [item.question_text] if item and item.question_text else None
+        )
         if payload.model_label:
             existing = dict(article.metrics or {})
             existing["writer_model"] = payload.model_label
+            article.metrics = existing
+        if payload.content_type is not None:
+            if payload.content_type not in {"xhs_image_text"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"unsupported content_type: {payload.content_type}",
+                )
+            article.content_type = payload.content_type
+        if payload.source_article_id is not None:
+            existing = dict(article.metrics or {})
+            existing["source_article_id"] = payload.source_article_id
             article.metrics = existing
         db.commit()
     except HTTPException:

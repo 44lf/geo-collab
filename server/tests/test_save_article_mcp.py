@@ -510,6 +510,79 @@ def test_save_snapshots_single_question_provenance(monkeypatch):
         test_app.cleanup()
 
 
+def test_save_from_mcp_xhs_no_question(monkeypatch):
+    """无 question_item_id + content_type=xhs_image_text → 落库 pending，content_type/metrics 正确写入。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": "小红书图文A",
+                "markdown_content": "![封面](/api/xhs-cards/file/abc/cover)\n\n正文文案\n\n#标签",
+                "content_type": "xhs_image_text",
+                "source_article_id": 123,
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        aid = r.json()["article_id"]
+        with test_app.session_factory() as db:
+            art = db.get(Article, aid)
+            assert art is not None
+            assert art.review_status == "pending"
+            assert art.content_type == "xhs_image_text"
+            assert (art.metrics or {}).get("source_article_id") == 123
+            assert art.source_question_category is None
+            assert art.source_question_texts is None
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_rejects_unknown_content_type(monkeypatch):
+    """content_type 不在白名单内 → 400，不落库。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": "未知类型",
+                "markdown_content": "正文",
+                "content_type": "bogus",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 400, r.text
+        assert "content_type" in r.json()["detail"]
+        with test_app.session_factory() as db:
+            assert db.query(Article).count() == 0
+    finally:
+        test_app.cleanup()
+
+
 def test_save_from_mcp_without_model_label_leaves_metrics_clean(monkeypatch):
     """model_label 不传时 article.metrics 不该被强写 None/空键，保持 None/{} 原状。"""
     from server.app.modules.articles.models import Article
