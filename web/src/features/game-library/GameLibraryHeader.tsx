@@ -4,6 +4,7 @@ import { getIngestConfig, patchIngestConfig } from "../../api/game-library";
 import type { GameIngestConfig } from "../../types";
 import { useToast } from "../../components/Toast";
 import type { SortKey } from "./GameLibraryWorkspace";
+import { GameIngestSettingsModal } from "./GameIngestSettingsModal";
 
 type Props = {
   total: number;
@@ -11,6 +12,8 @@ type Props = {
   onQ: (v: string) => void;
   sort: SortKey;
   onSort: (s: SortKey) => void;
+  /** 「从图片库导入」等操作完成后通知父级重拉游戏列表；编辑/删除游戏（H2）也会复用它。 */
+  onGamesChanged?: () => void;
 };
 
 function formatTimestamp(iso: string): string {
@@ -24,12 +27,13 @@ function formatTimestamp(iso: string): string {
   });
 }
 
-export function GameLibraryHeader({ total, q, onQ, sort, onSort }: Props) {
+export function GameLibraryHeader({ total, q, onQ, sort, onSort, onGamesChanged }: Props) {
   const { toast } = useToast();
   const [flyoutOpen, setFlyoutOpen] = useState(false);
   const [ingest, setIngest] = useState<GameIngestConfig | null>(null);
   const [ingestLoading, setIngestLoading] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const flyoutWrapRef = useRef<HTMLDivElement>(null);
 
   // 首次展开浮层时拉一次配置；已有数据不重复拉（配置弹窗保存后会直接更新本地状态）。
@@ -159,9 +163,7 @@ export function GameLibraryHeader({ total, q, onQ, sort, onSort }: Props) {
                     <button
                       type="button"
                       className="glIngestConfigBtn"
-                      onClick={() => {
-                        /* TODO(G3): 打开抓取设置弹窗（GameIngestSettingsModal） */
-                      }}
+                      onClick={() => setSettingsOpen(true)}
                     >
                       配置
                     </button>
@@ -183,6 +185,15 @@ export function GameLibraryHeader({ total, q, onQ, sort, onSort }: Props) {
           删除游戏
         </button>
       </div>
+
+      {settingsOpen && ingest && (
+        <GameIngestSettingsModal
+          config={ingest}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={(cfg) => setIngest(cfg)}
+          onImported={onGamesChanged}
+        />
+      )}
     </header>
   );
 }

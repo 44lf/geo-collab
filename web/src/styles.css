@@ -5224,6 +5224,17 @@ option, optgroup {
 }
 .glIngestConfigBtn:hover { background: #2E2856; }
 
+.glIngestModalBody { display: flex; flex-direction: column; gap: 16px; padding: 18px 20px; }
+.glIngestModalToggleRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.glIngestModalGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.glIngestModalRunRow { display: flex; gap: 10px; }
+.glIngestModalRunRow button { flex: 1; }
+.glIngestModalSummary {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-top: 12px; border-top: 1px solid var(--hair);
+}
+.glIngestModalSummaryText { margin: 0; font-size: 12px; color: var(--fg-3); word-break: break-all; }
+
 .glBody { display: flex; gap: 18px; flex: 1; min-height: 0; }
 .glLeft { display: flex; flex-direction: column; gap: 14px; width: 245px; flex-shrink: 0; }
 .glRight { display: flex; flex-direction: column; gap: 18px; flex: 1; min-width: 0; }

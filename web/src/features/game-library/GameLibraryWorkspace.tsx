@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getGame, listGames } from "../../api/game-library";
 import type { GameDetail, GameListItem } from "../../types";
 import { useToast } from "../../components/Toast";
@@ -29,25 +29,26 @@ export function GameLibraryWorkspace() {
   const seqRef = useRef(0);
   const detailSeq = useRef(0);
 
-  // 游戏列表：搜索变化时（服务端 name like）重拉，带竞态防护。
-  useEffect(() => {
+  // 立即重拉游戏列表（不防抖）：供搜索防抖 effect 和「从图片库导入」等操作后手动触发复用。
+  const reloadGames = useCallback(() => {
     const seq = ++seqRef.current;
-    const timer = setTimeout(
-      () => {
-        listGames({ q: q.trim() || undefined, limit: 200 })
-          .then((res) => {
-            if (seq !== seqRef.current) return;
-            setRaw(res.items);
-            setTotal(res.total);
-            setLoaded(true);
-          })
-          .catch((e) => {
-            if (seq !== seqRef.current) return;
-            toast(e instanceof Error ? e.message : "加载游戏失败", "error");
-          });
-      },
-      q ? 250 : 0,
-    );
+    return listGames({ q: q.trim() || undefined, limit: 200 })
+      .then((res) => {
+        if (seq !== seqRef.current) return;
+        setRaw(res.items);
+        setTotal(res.total);
+        setLoaded(true);
+      })
+      .catch((e) => {
+        if (seq !== seqRef.current) return;
+        toast(e instanceof Error ? e.message : "加载游戏失败", "error");
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  // 游戏列表：搜索变化时（服务端 name like）重拉，带竞态防护 + 防抖。
+  useEffect(() => {
+    const timer = setTimeout(() => void reloadGames(), q ? 250 : 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
@@ -100,7 +101,14 @@ export function GameLibraryWorkspace() {
 
   return (
     <div className="glPage">
-      <GameLibraryHeader total={total} q={q} onQ={setQ} sort={sort} onSort={setSort} />
+      <GameLibraryHeader
+        total={total}
+        q={q}
+        onQ={setQ}
+        sort={sort}
+        onSort={setSort}
+        onGamesChanged={reloadGames}
+      />
       <div className="glBody">
         <aside className="glLeft">
           <GameGroupSwitch
