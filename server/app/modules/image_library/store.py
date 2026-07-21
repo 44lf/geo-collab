@@ -109,3 +109,15 @@ def remove_bucket(bucket_name: str) -> None:
     """删除空分桶。MinIO 仅允许删空桶，非空时 client 抛错——与"非空禁止删"语义天然一致。"""
     client = _client()
     client.remove_bucket(bucket_name)
+
+
+def object_exists(bucket_name: str, key: str) -> bool:
+    """对象是否存在。stat_object 命中 S3Error（NoSuchKey/NoSuchBucket）→ False。"""
+    from minio.error import S3Error
+
+    client = _client()
+    try:
+        client.stat_object(bucket_name, key)
+        return True
+    except S3Error:
+        return False

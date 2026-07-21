@@ -17,3 +17,7 @@ def put_png(key: str, data: bytes) -> None:
 
 def get_object(key: str) -> bytes:
     return minio_store.get_object_bytes(XHS_BUCKET, key)
+
+
+def object_exists(key: str) -> bool:
+    return minio_store.object_exists(XHS_BUCKET, key)
