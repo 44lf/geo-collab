@@ -63,7 +63,7 @@ digraph release {
 
 ## 步骤（照做）
 
-1. **前置**：`git checkout main && git fetch <remote> && git pull`。工作区必须干净（`git status` clean）。GEO 的部署远端是 `hlgit`（`git remote -v` 确认；团队成员按各自的 remote 名）。
+1. **前置**：`git checkout main && git fetch <remote> && git pull`。工作区必须干净（`git status` clean）。GEO 的部署远端是 `hlgit`（`git remote -v` 确认；团队成员按各自的 remote 名）。**发版只能在 main 上进行**——发版 tag 只能打在 `<remote>/main` 的 commit 上。若当前 HEAD 不在 main、或要打 tag 的 commit 不是 `<remote>/main` 祖先，**立刻停下、提醒发布者**：不要从 feature 分支 / 游离 commit 发版，先把代码合并到 main 再来打 tag（CI 的 `verify-tag-on-main` 闸也会拦 fail，但本地提前拦更快、省一次流水线）。
 2. **算基线 + diff**：
    ```bash
    BASE_TAG=$(git tag --merged main --list 'base-*' 'server-*' 'web-*' 'release-*' --sort=-creatordate | head -1)
@@ -77,8 +77,11 @@ digraph release {
    - 版本形如 `1.0.2`（语义化，默认 patch；用户要 minor/major 让他指定）。
 4. **向用户确认（只此一次，覆盖整个计划）**：把「发哪端 + **全部** tag 名（含 needsBase 时的 base tag）+ 版本 + 依据的改动文件 + 执行顺序」一次性列出来，**等用户批准再开始打任何 tag**（打 tag = 真部署到线上，是外发操作）。批准后按计划执行，中途的"等 base 绿"是**机械闸门不是二次决策**：base 绿 → 自动继续打 app tag；**base 流水线红 → 停下报告、不要打 app tag**。
 5. **若 needsBase**：改 `deploy/VERSION` 的 `BASE=<baseVer>` → commit → 因 **main 受保护**，走 MR 合进 main（有 Maintainer 权限也可直接 push）→ 打 `base-<baseVer>` 并 push → **等 base 流水线绿**（Harbor 出现 `geo-collab-base:<baseVer>`）再继续；base 红则中止、不打 app tag。
-6. **打 app tag**（在含最新代码/新 BASE 的 main commit 上）：
+6. **打 app tag**（在含最新代码/新 BASE 的 main commit 上）。打 tag 前**先本地校验目标 commit 在 main 上**，不在就停下提醒发布者、别打：
    ```bash
+   git fetch <remote> main
+   git merge-base --is-ancestor HEAD <remote>/main \
+     || { echo '❌ 当前 commit 不在 main 上——禁止发版。请先把改动合并到 main 再打 tag'; exit 1; }
    git tag <release|server|web>-<appVer>
    git push <remote> <release|server|web>-<appVer>
    ```
@@ -95,6 +98,7 @@ digraph release {
 - **迁移只前进不回退**：server 发版自动 `alembic upgrade head`；回滚涉及 schema 要人工评估。
 - **只跑 lint+frontend 当门禁**：backend-test 目前是 `.backend-test`（隐藏）；tag 流水线不会因它失败。
 - **确认后再打 tag**：发版是生产操作，评估→列计划→用户批准→才 push tag。
+- **发版 tag 必须在 main（CI 硬闸 + 本地预拦）**：`ci/deploy.gitlab-ci.yml` 的 `verify-tag-on-main`（`.pre` stage）用 `git merge-base --is-ancestor $CI_COMMIT_SHA origin/main` 校验，tag commit 不是 main 祖先就 fail、build/deploy 全不跑。历史事故：`web-1.0.15`（游离 commit）、`release-1.0.16`（feat 分支）绕过 main 直接部署。步骤 6 已在本地打 tag 前预拦——**若发布者当前不在 main / 目标 commit 不在 main，停下提醒他先合并到 main，不要硬打 tag**。
 
 ## 快速示例
 
