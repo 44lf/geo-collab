@@ -112,9 +112,16 @@ class Settings(BaseSettings):
     pipeline_scheduler_interval_seconds: int = 60  # GEO_PIPELINE_SCHEDULER_INTERVAL_SECONDS
     scheduler_tz: str = "Asia/Shanghai"  # GEO_SCHEDULER_TZ
     # 游戏库定时入库（应用内后台线程）。默认关闭，避免本地 / 测试打真实爬包源。
+    # env 总闸：是否起后台线程；起了之后每 tick 再读 DB game_ingest_config.enabled + 时间窗判断
+    # 要不要真的干活（按名刷新迁移集，软 LRU）。
     game_ingest_scheduler_enabled: bool = False  # GEO_GAME_INGEST_SCHEDULER_ENABLED
-    game_ingest_interval_seconds: int = 21600  # GEO_GAME_INGEST_INTERVAL_SECONDS（6 小时）
-    game_ingest_targets: str = ""  # GEO_GAME_INGEST_TARGETS（JSON，空则回落种子常量）
+    # 已废弃：旧「按体裁定时发现」loop 的轮询间隔，新 config-driven loop 不读它。
+    # 保留字段防止已设置该 env var 的部署报未知配置；`run_ingest_once` 手动 CLI 路径不用它。
+    game_ingest_interval_seconds: int = 21600  # GEO_GAME_INGEST_INTERVAL_SECONDS（6 小时，已废弃）
+    game_ingest_targets: str = ""  # GEO_GAME_INGEST_TARGETS（JSON；仅手动 CLI 种子用，定时不再读）
+    game_ingest_poll_seconds: int = (
+        120  # GEO_GAME_INGEST_POLL_SECONDS（窗口外/关闭/本窗已满时的轮询步长）
+    )
     # TapTap cookie 体检（应用内后台线程，纯 HTTP 探测 account-profile/v1/me）。默认关闭。
     taptap_cookie_check_enabled: bool = False  # GEO_TAPTAP_COOKIE_CHECK_ENABLED
     taptap_cookie_check_interval_seconds: int = (
