@@ -180,22 +180,28 @@ export function ImageLibraryWorkspace() {
     if (currentPage > total) setCurrentPage(total);
   }, [images, currentPage]);
 
-  // After images load, if there's a pending jump targeting an image in this list, scroll + highlight
+  // 点搜索结果跳转：目标图可能不在当前页，先翻到它所在页，再滚动 + 高亮。
   useEffect(() => {
     if (!pendingJump || loading) return;
-    const found = images.find((img) => img.id === pendingJump.imageId);
-    if (!found) return;
+    const idx = images.findIndex((img) => img.id === pendingJump.imageId);
+    if (idx === -1) return;
 
-    const el = document.getElementById(`il-card-${found.id}`);
+    const targetPage = Math.floor(idx / PAGE_SIZE) + 1;
+    if (currentPage !== targetPage) {
+      setCurrentPage(targetPage);
+      return; // 切页后本 effect 会因 currentPage 变化再跑一次，届时卡片已渲染
+    }
+
+    const el = document.getElementById(`il-card-${pendingJump.imageId}`);
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });
-      setHighlightedImageId(found.id);
+      setHighlightedImageId(pendingJump.imageId);
       setTimeout(() => {
         setHighlightedImageId(null);
       }, 1500);
     }
     setPendingJump(null);
-  }, [images, pendingJump, loading]);
+  }, [images, pendingJump, loading, currentPage]);
 
   // Debounced search
   useEffect(() => {
