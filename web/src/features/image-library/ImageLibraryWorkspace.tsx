@@ -162,6 +162,7 @@ export function ImageLibraryWorkspace() {
 
   useEffect(() => {
     setLightboxIndex(null);
+    setCurrentPage(1);
     if (selectedCategoryId === null) {
       setImages([]);
       return;
@@ -172,6 +173,12 @@ export function ImageLibraryWorkspace() {
       .catch(() => showToast("加载图片失败", "error"))
       .finally(() => setLoading(false));
   }, [selectedCategoryId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 删除等导致总页数减少时，把 currentPage 钳回合法范围，避免停在空页。
+  useEffect(() => {
+    const total = Math.max(1, Math.ceil(images.length / PAGE_SIZE));
+    if (currentPage > total) setCurrentPage(total);
+  }, [images, currentPage]);
 
   // After images load, if there's a pending jump targeting an image in this list, scroll + highlight
   useEffect(() => {
@@ -310,6 +317,7 @@ export function ImageLibraryWorkspace() {
     setShowUpload(false);
     setUploadFiles([]); setBatchTags(""); setBatchDesc("");
     showToast(`上传完成：${successCount}/${uploadFiles.length} 张`, successCount === uploadFiles.length ? "success" : "error");
+    if (uploadCategoryId === selectedCategoryId) setCurrentPage(1);
   }
 
   async function handleDelete(img: StockImage) {
