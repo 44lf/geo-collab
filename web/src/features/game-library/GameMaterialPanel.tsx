@@ -139,7 +139,8 @@ export function GameMaterialPanel({
             {pageImages.map((img) => (
               <div key={img.id} className="glShotCard">
                 <div className="glShotThumb" onClick={() => setLightbox(img)}>
-                  <img src={img.url} alt={img.filename} loading="lazy" />
+                  {/* 网格只加载 640px 缩略图（后端 ?w= 现算 WebP，省带宽）；灯箱仍用原图 */}
+                  <img src={`${img.url}?w=640`} alt={img.filename} loading="lazy" />
                   <button
                     type="button"
                     className="glShotDel"

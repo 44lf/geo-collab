@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import re
 import struct
@@ -13,6 +14,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -30,6 +32,22 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()  # /api/image-library/* — 需要登录
 files_router = APIRouter()  # /api/stock-images/*  — 公开（图片嵌入文章）
+
+# ── 图片文件服务：缓存 + 按需缩略图 ─────────────────────────────────────────
+# 给定 image_id 的原始字节不可变（改图=新行新 minio_key，PATCH 只改 tags/描述），故可长缓存 +
+# immutable。缩略图按需现算 WebP、不落服务端缓存，靠这些缓存头把重复请求挡在浏览器/CDN 侧。
+STOCK_IMAGE_CACHE_MAX_AGE = 31536000  # 1 年
+_STOCK_IMAGE_CACHE_CONTROL = f"public, max-age={STOCK_IMAGE_CACHE_MAX_AGE}, immutable"
+# 缩略图允许宽度白名单：端点公开无鉴权，限制取值防任意大 w 打爆内存 / 制造无界缓存 key。
+ALLOWED_THUMB_WIDTHS = frozenset({320, 480, 640, 960})
+_THUMB_WEBP_QUALITY = 80
+_EXT_MIME = {
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+}
 
 
 # ── Pydantic 入参和出参模型 ─────────────────────────────────────────────────
@@ -524,12 +542,48 @@ def list_images(
     return [_to_image_read(img) for img in images]
 
 
+def _image_cache_headers(etag: str) -> dict[str, str]:
+    return {"ETag": etag, "Cache-Control": _STOCK_IMAGE_CACHE_CONTROL}
+
+
+def _make_webp_thumbnail(data: bytes, width: int) -> bytes | None:
+    """把原图字节保宽比缩到目标宽的 WebP。
+
+    返回 None 表示应回退原图：w >= 原图宽（不放大），或 Pillow 打不开/缩放失败（损坏图/动图等）。
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as src:
+            im = ImageOps.exif_transpose(src) or src  # 摆正 EXIF 方向
+            if width >= im.width:
+                return None  # 不放大
+            new_h = max(1, round(im.height * width / im.width))
+            resized = im.convert("RGB").resize((width, new_h), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            resized.save(buf, "WEBP", quality=_THUMB_WEBP_QUALITY, method=4)
+            return buf.getvalue()
+    except Exception:
+        logger.warning("缩略图生成失败，回退原图 (width=%s)", width, exc_info=True)
+        return None
+
+
 @files_router.get("/{image_id}/file")
 def serve_image_file(
     image_id: int,
+    request: Request,
+    w: int | None = Query(default=None, description="按需缩略图目标宽度；仅允许白名单值"),
     db: Session = Depends(get_db),
 ) -> Response:
-    """代理返回 MinIO 中的图片文件。无需登录（嵌入文章正文后需公开可访问）。"""
+    """代理返回 MinIO 中的图片文件。无需登录（嵌入文章正文后需公开可访问）。
+
+    - 不传 ``w``：返回原图。
+    - 传 ``w``（须在 ``ALLOWED_THUMB_WIDTHS`` 内）：现算保宽比 WebP 缩略图；``w >= 原宽`` 回原图
+      不放大；Pillow 处理失败降级回原图。
+    - 一律带长缓存头 + 强 ETag；命中 ``If-None-Match`` 返回 304 空体。
+    """
+    if w is not None and w not in ALLOWED_THUMB_WIDTHS:
+        allowed = ", ".join(str(x) for x in sorted(ALLOWED_THUMB_WIDTHS))
+        raise HTTPException(status_code=400, detail=f"w 仅允许：{allowed}")
+
     img = db.get(StockImage, image_id)
     if img is None:
         raise HTTPException(status_code=404, detail="图片不存在")
@@ -542,16 +596,21 @@ def serve_image_file(
         raise HTTPException(status_code=502, detail=f"MinIO 读取失败: {exc}") from exc
 
     ext = img.minio_key.rsplit(".", 1)[-1].lower() if "." in img.minio_key else ""
-    mime_map = {
-        "png": "image/png",
-        "webp": "image/webp",
-        "gif": "image/gif",
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-    }
-    content_type = mime_map.get(ext, "image/jpeg")
+    body = data
+    content_type = _EXT_MIME.get(ext, "image/jpeg")
+    etag_suffix = ""  # 原图
 
-    return Response(content=data, media_type=content_type)
+    if w is not None:
+        thumb = _make_webp_thumbnail(data, w)
+        if thumb is not None:
+            body, content_type, etag_suffix = thumb, "image/webp", f".w{w}"
+        # thumb is None：w>=原宽 或 Pillow 失败 → 保持原图（降级）
+
+    etag = f'"{img.minio_key}{etag_suffix}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=_image_cache_headers(etag))
+
+    return Response(content=body, media_type=content_type, headers=_image_cache_headers(etag))
 
 
 @router.delete("/images/{image_id}", status_code=204)
