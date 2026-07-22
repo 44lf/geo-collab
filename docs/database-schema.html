@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Geo 协作平台 · 数据库建模清单</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel-2:#1d212a; --line:#2a2f3a;
+    --ink:#e6e9ef; --ink-dim:#9aa3b2; --ink-faint:#6b7385;
+    --accent:#5b9dff; --accent-2:#7c5cff;
+    --pk:#f0b429; --fk:#39b8a0; --uq:#c678dd; --idx:#5b9dff; --nn:#e06c75; --chk:#8a94a6;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.55}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* Layout */
+  .wrap{display:grid;grid-template-columns:280px 1fr;min-height:100vh}
+  aside{position:sticky;top:0;height:100vh;overflow:auto;background:var(--panel);border-right:1px solid var(--line);padding:20px 0}
+  main{padding:32px 40px 120px;max-width:1180px}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr}aside{position:static;height:auto}}
+
+  /* Sidebar */
+  .brand{padding:0 22px 16px;border-bottom:1px solid var(--line);margin-bottom:12px}
+  .brand h1{font-size:15px;margin:0 0 4px;letter-spacing:.3px}
+  .brand p{margin:0;color:var(--ink-faint);font-size:12px}
+  .search{padding:0 18px 14px}
+  .search input{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    padding:8px 11px;border-radius:8px;font-size:13px;outline:none}
+  .search input:focus{border-color:var(--accent)}
+  nav a{display:flex;justify-content:space-between;align-items:center;gap:8px;
+    padding:6px 22px;color:var(--ink-dim);font-size:12.5px;border-left:2px solid transparent}
+  nav a:hover{background:var(--panel-2);color:var(--ink);text-decoration:none}
+  nav a .dot{width:8px;height:8px;border-radius:2px;flex:none}
+  nav a .cnt{color:var(--ink-faint);font-variant-numeric:tabular-nums;font-size:11px}
+  nav a .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* Header */
+  .hero{margin-bottom:34px}
+  .hero h2{font-size:26px;margin:0 0 8px;font-weight:650;letter-spacing:.2px}
+  .hero .sub{color:var(--ink-dim);max-width:760px}
+  .stats{display:flex;gap:14px;margin-top:22px;flex-wrap:wrap}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 20px;min-width:120px}
+  .stat b{display:block;font-size:24px;font-weight:650;font-variant-numeric:tabular-nums}
+  .stat span{color:var(--ink-faint);font-size:12px}
+
+  /* Legend */
+  .legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .legend .item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-dim)}
+
+  /* Module section */
+  .module{margin-top:46px;scroll-margin-top:20px}
+  .module-head{display:flex;align-items:center;gap:12px;margin-bottom:6px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+  .module-head .bar{width:5px;height:26px;border-radius:3px;flex:none}
+  .module-head h3{margin:0;font-size:19px;font-weight:650}
+  .module-head code{font-family:var(--mono);color:var(--ink-faint);font-size:12px;background:var(--panel-2);padding:2px 8px;border-radius:6px}
+  .module-desc{color:var(--ink-dim);margin:2px 0 4px;font-size:13px}
+
+  /* Table card */
+  .tbl{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-top:20px;overflow:hidden;scroll-margin-top:20px}
+  .tbl-head{display:flex;align-items:baseline;gap:12px;padding:14px 18px;background:var(--panel-2);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .tbl-head .tname{font-family:var(--mono);font-size:15px;font-weight:600;color:var(--ink)}
+  .tbl-head .ccount{color:var(--ink-faint);font-size:12px}
+  .tbl-head .tdesc{color:var(--ink-dim);font-size:12.5px;flex-basis:100%;margin-top:2px}
+  .tbl-head .flag-dormant{color:#c9803a;border:1px solid #6b4a26;background:#2a1f12;font-size:11px;padding:1px 8px;border-radius:20px}
+
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:8px 12px;vertical-align:top}
+  thead th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-faint);border-bottom:1px solid var(--line);font-weight:600}
+  tbody tr{border-bottom:1px solid #21252e}
+  tbody tr:last-child{border-bottom:none}
+  tbody tr:hover{background:#1b1f28}
+  td.col-name{font-family:var(--mono);font-size:13px;white-space:nowrap;color:var(--ink)}
+  td.col-type{font-family:var(--mono);font-size:12px;color:var(--fk);white-space:nowrap}
+  td.col-note{color:var(--ink-dim);font-size:12.5px}
+  td.col-note a{font-family:var(--mono);font-size:12px}
+
+  .badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:5px;margin-right:4px;letter-spacing:.4px;vertical-align:middle}
+  .b-pk{background:rgba(240,180,41,.14);color:var(--pk);border:1px solid rgba(240,180,41,.35)}
+  .b-fk{background:rgba(57,184,160,.13);color:var(--fk);border:1px solid rgba(57,184,160,.35)}
+  .b-uq{background:rgba(198,120,221,.13);color:var(--uq);border:1px solid rgba(198,120,221,.35)}
+  .b-idx{background:rgba(91,157,255,.12);color:var(--idx);border:1px solid rgba(91,157,255,.32)}
+  .b-nn{background:rgba(224,108,117,.12);color:var(--nn);border:1px solid rgba(224,108,117,.32)}
+
+  .constraints{padding:10px 18px 16px;border-top:1px dashed var(--line);font-size:12px;color:var(--ink-dim)}
+  .constraints .clabel{color:var(--ink-faint);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-right:6px}
+  .constraints code{font-family:var(--mono);background:var(--panel-2);padding:1px 6px;border-radius:5px;color:var(--chk)}
+  .constraints .crow{margin-bottom:5px}
+
+  .backtop{position:fixed;right:24px;bottom:24px;background:var(--accent);color:#fff;border:none;
+    width:44px;height:44px;border-radius:50%;font-size:18px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.4);display:none}
+  .backtop.show{display:block}
+  .nores{padding:40px;text-align:center;color:var(--ink-faint);display:none}
+  footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--ink-faint);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside>
+    <div class="brand">
+      <h1>Geo · 数据库建模</h1>
+      <p>SQLAlchemy ORM · MySQL only</p>
+    </div>
+    <div class="search"><input id="q" type="search" placeholder="搜索表 / 字段…"></div>
+    <nav id="toc"></nav>
+  </aside>
+
+  <main>
+    <div class="hero">
+      <h2>数据库建模清单</h2>
+      <p class="sub">从 <code>server/app/modules/*/models.py</code> 逐一读取的完整数据库结构快照。后端为 FastAPI + SQLAlchemy 2.0（<code>Mapped</code> 声明式），仅支持 MySQL（<code>mysql+pymysql</code>）；迁移由 Alembic 管理。下列为 ORM 层定义的物理表，含休眠/已下线但未 drop 的表。</p>
+      <div class="stats" id="stats"></div>
+      <div class="legend">
+        <span class="item"><span class="badge b-pk">PK</span>主键</span>
+        <span class="item"><span class="badge b-fk">FK</span>外键</span>
+        <span class="item"><span class="badge b-uq">UQ</span>唯一</span>
+        <span class="item"><span class="badge b-idx">IDX</span>索引</span>
+        <span class="item"><span class="badge b-nn">NULL</span>可空</span>
+        <span class="item" style="color:var(--ink-faint)">未标 NULL = NOT NULL</span>
+      </div>
+    </div>
+    <div id="content"></div>
+    <div class="nores" id="nores">没有匹配的表或字段</div>
+    <footer>
+      由 Claude Code 依据仓库源码生成 · 数据来自 16 个模块的 <span id="ft"></span> 张 ORM 表 ·
+      如需权威 DDL 请对照 <code>server/alembic/versions/</code>。
+    </footer>
+  </main>
+</div>
+<button class="backtop" id="backtop" title="回到顶部">↑</button>
+
+<script>
+/* ── 模块与表结构数据（来自源码逐字段转录）─────────────────────────── */
+// 列格式: [名称, 类型, 标记数组, 说明]
+//   标记: pk / fk:目标表.列 / uq / idx / null
+const MODULES = [
+{
+  id:"system", name:"系统基础", file:"system/models.py", color:"#5b9dff",
+  desc:"跨域共用的基础实体：认证用户、发布平台字典、后台 Worker 心跳。",
+  tables:[
+    {name:"users", desc:"平台用户（认证、权限、飞书绑定）", cols:[
+      ["id","Integer",["pk"],""],
+      ["username","String(80)",["uq","idx"],"登录名"],
+      ["password_hash","String(255)",[],"bcrypt 哈希"],
+      ["role","String(20)",[],"admin / operator，默认 operator"],
+      ["is_active","Boolean",[],"默认 True"],
+      ["must_change_password","Boolean",[],"默认 True，首登强制改密"],
+      ["display_name","String(200)",["null"],""],
+      ["feishu_open_id","String(200)",["uq","null"],"飞书 open_id 绑定（H5 免登）"],
+      ["solo_mode","Boolean",[],"默认 False"],
+      ["ai_format_preset_id","Integer",["null"],"用户默认 AI 排版模板（无 FK）"],
+      ["created_at","DateTime",[],""],
+      ["last_login_at","DateTime",["null"],""],
+    ]},
+    {name:"platforms", desc:"发布平台字典（toutiao / wechat_mp 等种子数据）", cols:[
+      ["id","Integer",["pk"],""],
+      ["code","String(50)",["uq","idx"],"平台编码，如 toutiao"],
+      ["name","String(100)",[],"显示名称"],
+      ["base_url","String(500)",["null"],""],
+      ["enabled","Boolean",[],"默认 True"],
+      ["created_at","DateTime",[],""],
+    ]},
+    {name:"worker_heartbeats", desc:"后台 Worker 心跳注册表", cols:[
+      ["worker_id","String(100)",["pk"],""],
+      ["hostname","String(255)",["null"],""],
+      ["pid","Integer",["null"],""],
+      ["heartbeat_at","DateTime",["idx"],"最近心跳时刻"],
+    ]},
+  ]
+},
+{
+  id:"articles", name:"文章与资源", file:"articles/models.py", color:"#39b8a0",
+  desc:"核心内容域：文章正文三份并行存储（Tiptap JSON / HTML / 纯文本），配套资源文件、正文图片定位、分组与标签。",
+  tables:[
+    {name:"articles", desc:"文章主表。正文三份必须同步；含生文溯源与对抗判分字段", cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["title","String(300)",["idx"],""],
+      ["author","String(200)",["null"],""],
+      ["cover_asset_id","String(64)",["fk:assets.id","null"],"封面图"],
+      ["content_json","Text",[],"Tiptap 编辑器 JSON，默认 {}"],
+      ["content_html","Text",[],"渲染 HTML"],
+      ["plain_text","Text",[],"发布用纯文本"],
+      ["word_count","Integer",[],"默认 0"],
+      ["status","String(30)",["idx"],"draft / ready / archived"],
+      ["review_status","String(20)",["idx"],"pending / approved，默认 approved"],
+      ["client_request_id","String(80)",["null"],"并发幂等"],
+      ["version","Integer",[],"默认 1"],
+      ["ai_checking","Boolean",["idx"],"AI 排版进行中"],
+      ["ai_checking_started_at","DateTime",["null"],""],
+      ["ai_format_error","Text",["null"],""],
+      ["source_agent_name","String(200)",["null"],"生文溯源·智能体名（去规范化）"],
+      ["source_template_name","String(200)",["null"],"生文溯源·模板名"],
+      ["source_template_id","Integer",["idx","null"],""],
+      ["source_question_category","String(200)",["idx","null"],"/goal MCP 溯源·问题类型"],
+      ["source_question_texts","JSON",["null"],"问题词列表"],
+      ["adversarial_score","Integer",["null"],"对抗判分（N 次平均，advisory）"],
+      ["stock_category_id","Integer",["fk:stock_categories.id","null"],"主推图库栏目"],
+      ["is_deleted","Boolean",["idx"],"软删"],
+      ["deleted_at","DateTime",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+      ["metrics","JSON",["null"],"发布后阅读/互动指标回流"],
+    ], cons:[
+      "CHECK ck_articles_status: status ∈ (draft, ready, archived)",
+      "CHECK ck_articles_review_status: review_status ∈ (pending, approved)",
+      "UNIQUE uq_articles_user_client_request_id (user_id, client_request_id)",
+    ]},
+    {name:"assets", desc:"上传的资源文件（图片等），uuid 主键，SHA256 去重", cols:[
+      ["id","String(64)",["pk"],"uuid"],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["filename","String(500)",[],""],
+      ["ext","String(30)",[],""],
+      ["mime_type","String(100)",["idx"],""],
+      ["size","Integer",[],""],
+      ["sha256","String(64)",["idx"],"内容哈希，去重"],
+      ["storage_key","String(500)",["uq"],"相对 data_dir 路径"],
+      ["width","Integer",["null"],""],
+      ["height","Integer",["null"],""],
+      ["webp_storage_key","String(500)",["null"],""],
+      ["webp_size","Integer",["null"],""],
+      ["thumb_storage_key","String(500)",["null"],""],
+      ["thumb_size","Integer",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["is_deleted","Boolean",["idx"],""],
+      ["deleted_at","DateTime",["null"],""],
+    ]},
+    {name:"article_body_assets", desc:"正文图片位置关联（Tiptap 节点 ↔ 资源）", cols:[
+      ["id","Integer",["pk"],""],
+      ["article_id","Integer",["fk:articles.id","idx"],""],
+      ["asset_id","String(64)",["fk:assets.id","idx"],""],
+      ["position","Integer",[],"正文排序位置"],
+      ["editor_node_id","String(200)",["null"],"Tiptap 节点 ID"],
+      ["created_at","DateTime",[],""],
+    ]},
+    {name:"article_groups", desc:"文章分组（发布批次容器）", cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["name","String(200)",["idx"],""],
+      ["description","Text",["null"],""],
+      ["version","Integer",[],"默认 1"],
+      ["is_deleted","Boolean",["idx"],""],
+      ["deleted_at","DateTime",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ], cons:["UNIQUE uq_article_groups_user_name (user_id, name)"]},
+    {name:"article_group_items", desc:"分组-文章多对多关联（带排序）", cols:[
+      ["id","Integer",["pk"],""],
+      ["group_id","Integer",["fk:article_groups.id","idx"],""],
+      ["article_id","Integer",["fk:articles.id","idx"],""],
+      ["sort_order","Integer",[],"默认 0"],
+      ["created_at","DateTime",[],""],
+    ], cons:["UNIQUE uq_article_group_items_group_article (group_id, article_id)"]},
+    {name:"tags", desc:"文章标签字典", cols:[
+      ["id","Integer",["pk"],""],
+      ["name","String(80)",["uq","idx"],""],
+      ["created_at","DateTime",[],""],
+    ]},
+    {name:"article_tags", desc:"文章 ↔ 标签 多对多（复合主键）", cols:[
+      ["article_id","Integer",["pk","fk:articles.id"],"ON DELETE CASCADE"],
+      ["tag_id","Integer",["pk","fk:tags.id"],"ON DELETE CASCADE"],
+    ]},
+    {name:"article_stock_categories", desc:"文章 ↔ 图库栏目 多对多关联表（core.Table）", cols:[
+      ["article_id","Integer",["pk","fk:articles.id"],"ON DELETE CASCADE"],
+      ["stock_category_id","Integer",["pk","fk:stock_categories.id"],"ON DELETE CASCADE"],
+    ], cons:["UNIQUE uq_article_stock_cat (article_id, stock_category_id)"]},
+  ]
+},
+{
+  id:"accounts", name:"账号与浏览器会话", file:"accounts/models.py", color:"#e5a13a",
+  desc:"平台媒体账号（含 API 型加密凭据、共享账号合并）、交互式登录会话状态机、跨进程浏览器会话与 profile 锁。",
+  tables:[
+    {name:"accounts", desc:"平台媒体账号。API 型账号凭据加密存储；支持软删与合并 tombstone", cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx"],"owner"],
+      ["platform_id","Integer",["fk:platforms.id","idx"],""],
+      ["display_name","String(200)",[],""],
+      ["platform_user_id","String(200)",["null"],"平台侧用户 ID"],
+      ["status","String(30)",["idx"],"valid / expired / unknown"],
+      ["last_checked_at","DateTime",["null"],""],
+      ["last_login_at","DateTime",["null"],""],
+      ["state_path","String(1000)",["null"],"storage_state.json 相对路径；API 账号为 NULL"],
+      ["note","Text",["null"],""],
+      ["api_credentials","EncryptedJSON",["null"],"{app_id, app_secret} 加密"],
+      ["api_token_cache","EncryptedJSON",["null"],"{access_token, expires_at} 加密"],
+      ["distribution_enabled","Boolean",["idx"],"分发开关，默认 True"],
+      ["contact","String(200)",["null"],""],
+      ["avatar_asset_id","String(64)",["fk:assets.id","null"],""],
+      ["is_deleted","Boolean",["idx"],""],
+      ["deleted_at","DateTime",["null"],""],
+      ["merged_into","Integer",["fk:accounts.id","idx","null"],"合并 tombstone 自引用"],
+      ["created_at","DateTime",[],""],
+      ["last_operated_at","DateTime",["idx"],""],
+      ["updated_at","DateTime",[],""],
+    ], cons:[
+      "UNIQUE uq_accounts_platform_user (platform_id, platform_user_id)",
+      "CHECK ck_accounts_status: status ∈ (valid, expired, unknown)",
+    ]},
+    {name:"account_members", desc:"共享账号成员表（canonical 账号被授予使用权的非 owner 用户）", cols:[
+      ["account_id","Integer",["pk","fk:accounts.id"],"ON DELETE CASCADE"],
+      ["user_id","Integer",["pk","fk:users.id"],"ON DELETE CASCADE"],
+      ["granted_via","String(40)",[],"login_dedup / backfill_merge / manual"],
+      ["created_at","DateTime",[],""],
+    ]},
+    {name:"account_login_sessions", desc:"Worker 拥有的交互式登录会话命令/状态记录", cols:[
+      ["id","String(12)",["pk"],""],
+      ["account_id","Integer",["fk:accounts.id","idx"],"ON DELETE CASCADE"],
+      ["platform_code","String(80)",[],""],
+      ["account_key","String(200)",[],""],
+      ["channel","String(80)",[],"默认 chromium"],
+      ["executable_path","String(500)",["null"],""],
+      ["status","String(30)",["idx"],""],
+      ["browser_session_id","String(12)",["idx","null"],""],
+      ["novnc_url","String(500)",["null"],""],
+      ["logged_in","Boolean",["null"],""],
+      ["result_url","String(1000)",["null"],""],
+      ["result_title","String(500)",["null"],""],
+      ["error_message","Text",["null"],""],
+      ["queue_reason","String(500)",["null"],""],
+      ["previous_status","String(30)",["null"],""],
+      ["worker_id","String(100)",["idx","null"],""],
+      ["resolved_account_id","Integer",["null"],"查重决议后的 canonical id"],
+      ["extracted_platform_user_id","String(200)",["null"],"抽取到的 creator-ID"],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ]},
+    {name:"browser_sessions", desc:"跨进程浏览器会话注册表（worker 写、API 读）", cols:[
+      ["id","String(12)",["pk"],""],
+      ["platform_code","String(80)",["null"],""],
+      ["account_key","String(200)",[],""],
+      ["profile_key","String(255)",["null"],""],
+      ["display","String(20)",["null"],"X display"],
+      ["novnc_url","String(500)",["null"],""],
+      ["started_at","DateTime",[],""],
+      ["last_activity_at","DateTime",[],""],
+      ["worker_id","String(100)",["null"],""],
+      ["keep_alive","Boolean",[],"默认 False"],
+      ["stop_requested","Boolean",[],"默认 False"],
+    ]},
+    {name:"record_browser_sessions", desc:"发布记录 → 浏览器会话映射", cols:[
+      ["record_id","Integer",["pk","fk:publish_records.id"],"ON DELETE CASCADE"],
+      ["session_id","String(12)",["fk:browser_sessions.id"],"ON DELETE CASCADE"],
+    ]},
+    {name:"browser_profile_locks", desc:"单个 Chrome 持久化 profile 目录的跨进程租约锁", cols:[
+      ["profile_key","String(255)",["pk"],""],
+      ["owner_kind","String(40)",[],"publish / login / account_check"],
+      ["owner_id","String(80)",[],""],
+      ["worker_id","String(100)",["idx","null"],""],
+      ["queue_reason","String(500)",["null"],""],
+      ["acquired_at","DateTime",[],""],
+      ["heartbeat_at","DateTime",[],""],
+      ["lease_until","DateTime",["idx"],"租约到期，过期即被抢占"],
+    ]},
+  ]
+},
+{
+  id:"tasks", name:"发布任务", file:"tasks/models.py", color:"#e06c75",
+  desc:"发布任务与执行记录的状态机：PublishTask → PublishRecord → TaskLog + PublishTaskAccount，含 worker 乐观锁租约字段。",
+  tables:[
+    {name:"publish_tasks", desc:"发布任务头。状态机 pending→running→succeeded/partial_failed/failed/cancelled", cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["name","String(300)",[],""],
+      ["task_type","String(40)",["idx"],"single / group_round_robin / article_round_robin"],
+      ["status","String(40)",["idx"],"默认 pending"],
+      ["platform_id","Integer",["fk:platforms.id","idx","null"],""],
+      ["article_id","Integer",["fk:articles.id","null"],"single 用"],
+      ["group_id","Integer",["fk:article_groups.id","null"],"group_round_robin 用"],
+      ["stop_before_publish","Boolean",[],"停在预览等人工确认"],
+      ["client_request_id","String(80)",["null"],""],
+      ["worker_id","String(100)",["idx","null"],""],
+      ["worker_lease_until","DateTime",["null"],"乐观锁租约"],
+      ["worker_heartbeat_at","DateTime",["null"],""],
+      ["cancel_requested","Boolean",[],""],
+      ["is_deleted","Boolean",["idx"],""],
+      ["deleted_at","DateTime",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["scheduled_at","DateTime",["null"],""],
+      ["started_at","DateTime",["null"],""],
+      ["finished_at","DateTime",["null"],""],
+    ], cons:[
+      "CHECK ck_publish_tasks_task_type ∈ (single, group_round_robin, article_round_robin)",
+      "CHECK ck_publish_tasks_status ∈ (pending, running, succeeded, partial_failed, failed, cancelled)",
+      "UNIQUE uq_publish_tasks_user_client_request_id (user_id, client_request_id)",
+    ]},
+    {name:"publish_records", desc:"单账号发布记录。含断网重试的失败归类字段", cols:[
+      ["id","Integer",["pk"],""],
+      ["task_id","Integer",["fk:publish_tasks.id","idx"],""],
+      ["article_id","Integer",["fk:articles.id","idx"],""],
+      ["platform_id","Integer",["fk:platforms.id","idx"],""],
+      ["account_id","Integer",["fk:accounts.id","idx"],""],
+      ["status","String(40)",["idx"],"默认 pending"],
+      ["publish_url","String(1000)",["null"],""],
+      ["error_message","Text",["null"],""],
+      ["queue_reason","String(500)",["null"],""],
+      ["snapshot_title","String(300)",["null"],"发布时标题快照"],
+      ["snapshot_content_json","Text",["null"],"正文快照"],
+      ["retry_of_record_id","Integer",["fk:publish_records.id","null"],"重试自引用"],
+      ["started_at","DateTime",["null"],""],
+      ["finished_at","DateTime",["null"],""],
+      ["lease_until","DateTime",["null"],""],
+      ["commit_attempted_at","DateTime",["null"],"跨提交点前置时间戳"],
+      ["failure_kind","String(40)",["null"],"失败归类"],
+      ["is_deleted","Boolean",["idx"],""],
+      ["deleted_at","DateTime",["null"],""],
+    ], cons:[
+      "CHECK ck_publish_records_status ∈ (pending, running, waiting_manual_publish, waiting_user_input, succeeded, failed, cancelled)",
+    ]},
+    {name:"publish_task_accounts", desc:"任务 ↔ 账号 派号关联（round-robin 排序）", cols:[
+      ["id","Integer",["pk"],""],
+      ["task_id","Integer",["fk:publish_tasks.id","idx"],""],
+      ["account_id","Integer",["fk:accounts.id","idx"],""],
+      ["sort_order","Integer",[],"默认 0"],
+    ], cons:["UNIQUE uq_publish_task_accounts_task_account (task_id, account_id)"]},
+    {name:"task_logs", desc:"任务/记录执行日志，可挂截图资源", cols:[
+      ["id","Integer",["pk"],""],
+      ["task_id","Integer",["fk:publish_tasks.id","idx"],""],
+      ["record_id","Integer",["fk:publish_records.id","null"],""],
+      ["level","String(20)",["idx"],"info / warn / error"],
+      ["message","Text",[],""],
+      ["screenshot_asset_id","String(64)",["fk:assets.id","null"],""],
+      ["created_at","DateTime",[],""],
+    ], cons:["CHECK ck_task_logs_level ∈ (info, warn, error)"]},
+  ]
+},
+{
+  id:"ai_generation", name:"AI 生文", file:"ai_generation/models.py", color:"#7c5cff",
+  desc:"当前主流程「问题池 → 方案池 → 方案运行」。含镜像飞书多维表的问题池/单元，以及已硬切 410 的休眠旧表（generation_sessions / category_usages）。",
+  tables:[
+    {name:"question_pools", desc:"问题池：对应一张飞书多维表", cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx"],"仅溯源创建者"],
+      ["name","String(200)",[],""],
+      ["feishu_app_token","String(255)",["null"],""],
+      ["feishu_table_id","String(255)",["null"],""],
+      ["is_deleted","Boolean",["idx"],""],
+      ["last_synced_at","DateTime",["null"],""],
+      ["last_sync_error","Text",["null"],""],
+      ["auto_sync_enabled","Boolean",[],"默认 True"],
+      ["created_at","DateTime",[],""],
+    ]},
+    {name:"question_items", desc:"问题单元：飞书多维表一行的本地镜像", cols:[
+      ["id","Integer",["pk"],""],
+      ["pool_id","Integer",["fk:question_pools.id","idx"],""],
+      ["record_id","String(255)",[],"飞书记录 ID"],
+      ["fields","JSON",[],"飞书全字段原样镜像"],
+      ["question_text","Text",["null"],"提问词"],
+      ["category","String(200)",["idx","null"],"分类板块（方案行分组键）"],
+      ["source_active","Boolean",["idx"],"飞书是否仍存在，默认 True"],
+      ["source_deleted_at","DateTime",["null"],""],
+      ["last_seen_at","DateTime",["null"],""],
+      ["status","String(20)",["idx"],"旧队列遗留：pending / consumed"],
+      ["article_id","Integer",["fk:articles.id","null"],"旧遗留"],
+      ["synced_at","DateTime",["null"],""],
+      ["created_at","DateTime",[],""],
+    ], cons:[
+      "UNIQUE uq_question_items_pool_record (pool_id, record_id)",
+      "CHECK ck_question_items_status ∈ (pending, consumed)",
+    ]},
+    {name:"generation_schemes", desc:"方案头：可复用的生文方案，绑定一个问题池", cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["pool_id","Integer",["fk:question_pools.id","idx"],""],
+      ["name","String(200)",[],""],
+      ["ai_engine","String(100)",["null"],"方案级 LiteLLM 模型串"],
+      ["is_enabled","Boolean",[],"默认 True"],
+      ["is_deleted","Boolean",["idx"],""],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ]},
+    {name:"generation_scheme_lines", desc:"方案行：一行 = 一个问题类型 + 文章数 + 允许模板列表", cols:[
+      ["id","Integer",["pk"],""],
+      ["scheme_id","Integer",["fk:generation_schemes.id","idx"],""],
+      ["question_type","String(200)",["null"],"= QuestionItem.category"],
+      ["article_count","Integer",[],"默认 1"],
+      ["allowed_prompt_template_ids","JSON",[],"允许模板 ID 数组"],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ]},
+    {name:"generation_scheme_line_questions", desc:"方案行选中的问题：外键 + 快照", cols:[
+      ["id","Integer",["pk"],""],
+      ["scheme_line_id","Integer",["fk:generation_scheme_lines.id","idx"],""],
+      ["question_item_id","Integer",["fk:question_items.id","null"],"删除置 NULL 不影响快照"],
+      ["record_id","String(255)",["null"],"快照"],
+      ["question_text","Text",["null"],"快照"],
+      ["question_type","String(200)",["null"],"快照"],
+      ["created_at","DateTime",[],""],
+    ]},
+    {name:"generation_scheme_runs", desc:"方案运行头：一次实际生文任务", cols:[
+      ["id","Integer",["pk"],""],
+      ["scheme_id","Integer",["fk:generation_schemes.id","idx"],""],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["status","String(20)",["idx"],"pending/running/done/partial_failed/failed"],
+      ["article_ids","JSON",[],"产出文章 ID 数组"],
+      ["ai_engine","String(100)",["null"],"运行期冻结引擎"],
+      ["error_message","Text",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["completed_at","DateTime",["null"],""],
+    ], cons:["CHECK ck_scheme_runs_status ∈ (pending, running, done, partial_failed, failed)"]},
+    {name:"generation_scheme_run_tasks", desc:"方案运行明细：每篇文章一条", cols:[
+      ["id","Integer",["pk"],""],
+      ["run_id","Integer",["fk:generation_scheme_runs.id","idx"],""],
+      ["scheme_line_id","Integer",["fk:generation_scheme_lines.id","null"],""],
+      ["question_type","String(200)",["null"],""],
+      ["question_text","Text",["null"],"渲染好的编号问题列表"],
+      ["question_item_ids","JSON",[],""],
+      ["allowed_prompt_template_ids","JSON",[],""],
+      ["actual_prompt_template_id","Integer",["fk:prompt_templates.id","null"],"实际采用模板"],
+      ["status","String(20)",["idx"],"pending/running/done/failed"],
+      ["article_id","Integer",["fk:articles.id","null"],""],
+      ["error_message","Text",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["completed_at","DateTime",["null"],""],
+    ], cons:["CHECK ck_scheme_run_tasks_status ∈ (pending, running, done, failed)"]},
+    {name:"generation_sessions", desc:"旧 /sessions 生成批次（LangGraph）。已硬切 410、休眠保留", dormant:true, cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["skill_id","Integer",["fk:skills.id","null"],"引用已下线 skills 表"],
+      ["prompt_template_id","Integer",["fk:prompt_templates.id","null"],""],
+      ["extra_instruction","Text",["null"],""],
+      ["status","String(20)",["idx"],"pending/running/done/failed"],
+      ["article_ids","Text",[],"JSON 字符串，默认 []"],
+      ["question_item_ids","Text",[],"JSON 字符串"],
+      ["pool_id","Integer",["fk:question_pools.id","null"],""],
+      ["auto_count","Integer",["null"],""],
+      ["error_message","Text",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["completed_at","DateTime",["null"],""],
+    ], cons:["CHECK ck_gen_sessions_status ∈ (pending, running, done, failed)"]},
+    {name:"category_usages", desc:"旧自动选题：记录 (池,分类) 上次使用时间。休眠保留", dormant:true, cols:[
+      ["pool_id","Integer",["pk","fk:question_pools.id"],""],
+      ["category","String(200)",["pk"],""],
+      ["last_used_at","DateTime",[],""],
+    ]},
+  ]
+},
+{
+  id:"pipelines", name:"工作流编排（智能体）", file:"pipelines/models.py", color:"#4fb0c6",
+  desc:"可视化线性工作流。前端 UI 叫「智能体管理」，后端/DB 一律叫 pipeline。含草稿快照、发布版本、运行时冻结快照与定时调度字段。",
+  tables:[
+    {name:"pipelines", desc:"工作流头，含草稿快照与调度配置", cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["name","String(200)",[],""],
+      ["description","Text",["null"],""],
+      ["draft_snapshot","JSON",["null"],"草稿节点快照"],
+      ["has_draft","Boolean",[],"默认 False"],
+      ["type","String(20)",[],"默认 general"],
+      ["tags","JSON",[],"默认 []"],
+      ["ignore_exception","Boolean",[],"默认 False"],
+      ["is_enabled","Boolean",[],"默认 True"],
+      ["schedule_kind","String(20)",[],"默认 none"],
+      ["schedule_minute","Integer",["null"],""],
+      ["schedule_hour","Integer",["null"],""],
+      ["schedule_weekday","Integer",["null"],""],
+      ["window_start","Time",["null"],""],
+      ["window_end","Time",["null"],""],
+      ["last_scheduled_run_at","DateTime",["null"],"条件 UPDATE claim 去重"],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ]},
+    {name:"pipeline_nodes", desc:"实时节点，按 node_index 线性执行", cols:[
+      ["id","Integer",["pk"],""],
+      ["pipeline_id","Integer",["fk:pipelines.id","idx"],"ON DELETE CASCADE"],
+      ["node_type","String(64)",[],"input / ai_compose / distribute…"],
+      ["name","String(200)",[],""],
+      ["node_index","Integer",[],"执行顺序"],
+      ["config","JSON",[],"节点配置，默认 {}"],
+      ["flow_meta","JSON",["null"],"inputMapping / condition"],
+      ["created_at","DateTime",[],""],
+    ]},
+    {name:"pipeline_versions", desc:"发布版本快照", cols:[
+      ["id","Integer",["pk"],""],
+      ["pipeline_id","Integer",["fk:pipelines.id","idx"],"ON DELETE CASCADE"],
+      ["version_no","Integer",[],""],
+      ["snapshot","JSON",[],"节点快照"],
+      ["remark","String(255)",["null"],""],
+      ["created_by","Integer",["fk:users.id"],""],
+      ["created_at","DateTime",[],""],
+    ], cons:["UNIQUE uq_pipeline_versions_pipeline_version (pipeline_id, version_no)"]},
+    {name:"pipeline_runs", desc:"一次运行，创建时冻结快照，执行只读它", cols:[
+      ["id","Integer",["pk"],""],
+      ["pipeline_id","Integer",["fk:pipelines.id","idx"],"ON DELETE CASCADE"],
+      ["user_id","Integer",["fk:users.id","idx"],""],
+      ["status","String(20)",["idx"],"pending/running/done/partial_failed/failed"],
+      ["node_results","JSON",[],"逐节点结果，默认 {}"],
+      ["article_ids","JSON",[],"默认 []"],
+      ["snapshot","JSON",["null"],"冻结节点快照"],
+      ["error_message","Text",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["completed_at","DateTime",["null"],""],
+    ], cons:["CHECK ck_pipeline_runs_status ∈ (pending, running, done, partial_failed, failed)"]},
+  ]
+},
+{
+  id:"quality_reference", name:"高质量参考库", file:"quality_reference/models.py", color:"#c678dd",
+  desc:"对抗评审质量门的参考真品库。收纳本站已审文章（own）与站外真品（external），自包含正文快照 + content_hash 查重；图片去重共享，问题类型走多对多子表。",
+  tables:[
+    {name:"quality_reference", desc:"参考文章主表（own / external），自包含正文三份快照", cols:[
+      ["id","Integer",["pk"],""],
+      ["origin","String(16)",["idx"],"own / external，服务端盖章"],
+      ["article_id","Integer",["fk:articles.id","uq","null"],"外部=NULL；ON DELETE SET NULL"],
+      ["title","String(300)",[],""],
+      ["content_json","Text",[],"默认 {}"],
+      ["content_html","Text",[],"外部已 nh3 清洗"],
+      ["plain_text","Text",[],""],
+      ["content_hash","String(64)",["uq"],"sha256(归一化 title+plain_text) 查重"],
+      ["source_url","String(1000)",["null"],""],
+      ["platform","String(100)",["null"],""],
+      ["added_by_user_id","Integer",["fk:users.id","null"],""],
+      ["is_active","Boolean",["idx"],"默认 True"],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ], cons:[
+      "CHECK ck_quality_reference_origin ∈ (own, external)",
+      "UNIQUE uq_quality_reference_article_id (article_id)",
+      "UNIQUE uq_quality_reference_content_hash (content_hash)",
+    ]},
+    {name:"quality_reference_category", desc:"参考 ↔ 问题类型 多对多子表（无行=通用兜底）", cols:[
+      ["id","Integer",["pk"],""],
+      ["reference_id","Integer",["fk:quality_reference.id"],"ON DELETE CASCADE"],
+      ["category","String(200)",["idx"],""],
+      ["question_texts","JSON",["null"],"该类型下的问题词"],
+      ["created_at","DateTime",[],""],
+    ], cons:["UNIQUE uq_qref_category_ref_cat (reference_id, category)"]},
+    {name:"quality_reference_image", desc:"去重共享的图片资源（MinIO 专桶）", cols:[
+      ["id","Integer",["pk"],""],
+      ["sha256","String(64)",["uq"],"去重键"],
+      ["minio_key","String(500)",[],""],
+      ["bucket","String(100)",[],""],
+      ["mime_type","String(100)",[],""],
+      ["size","Integer",[],""],
+      ["width","Integer",["null"],""],
+      ["height","Integer",["null"],""],
+      ["created_at","DateTime",[],""],
+    ], cons:["UNIQUE uq_qref_image_sha256 (sha256)"]},
+    {name:"quality_reference_image_link", desc:"reference ↔ image 关联（供孤儿清理）", cols:[
+      ["id","Integer",["pk"],""],
+      ["reference_id","Integer",["fk:quality_reference.id","idx"],"ON DELETE CASCADE"],
+      ["image_id","Integer",["fk:quality_reference_image.id","idx"],""],
+    ], cons:["UNIQUE uq_qref_image_link_ref_img (reference_id, image_id)"]},
+    {name:"quality_reference_import_job", desc:"外部参考异步导入 job（仿 VideoJob）", cols:[
+      ["id","Integer",["pk"],""],
+      ["job_id","String(32)",["uq","idx"],""],
+      ["status","String(20)",[],"pending/running/done/failed"],
+      ["progress","Float",[],"默认 0.0"],
+      ["title","String(300)",[],""],
+      ["markdown","Text",[],"输入快照"],
+      ["platform","String(100)",["null"],""],
+      ["source_url","String(1000)",[],"必填"],
+      ["category","String(200)",["null"],""],
+      ["question_texts","JSON",["null"],""],
+      ["reference_id","Integer",["null"],"成功回填"],
+      ["images_total","Integer",[],""],
+      ["images_rehosted","Integer",[],""],
+      ["images_skipped","Integer",[],""],
+      ["error","Text",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ]},
+  ]
+},
+{
+  id:"image_library", name:"图片素材库", file:"image_library/models.py", color:"#98c379",
+  desc:"生文自动配图的素材库。按栏目分桶（一栏目=一个 MinIO bucket），文章通过 article_stock_categories 多对多关联。",
+  tables:[
+    {name:"stock_categories", desc:"图库栏目（分桶），main 主推 / companion 陪衬", cols:[
+      ["id","Integer",["pk"],""],
+      ["name","String(100)",["uq"],""],
+      ["bucket_name","String(63)",["uq"],"MinIO bucket"],
+      ["kind","String(20)",[],"main / companion，默认 companion"],
+      ["description","String(500)",["null"],""],
+      ["official_url","String(1000)",["null"],""],
+      ["created_at","DateTime",[],""],
+    ]},
+    {name:"stock_images", desc:"图库单图", cols:[
+      ["id","Integer",["pk"],""],
+      ["category_id","Integer",["fk:stock_categories.id","idx"],""],
+      ["minio_key","String(500)",["uq"],"桶内对象 key"],
+      ["filename","String(300)",[],""],
+      ["description","String(2000)",["null"],""],
+      ["tags","JSON",["null"],""],
+      ["width","Integer",["null"],""],
+      ["height","Integer",["null"],""],
+      ["created_at","DateTime",[],""],
+    ]},
+  ]
+},
+{
+  id:"ai_models", name:"AI 模型注册表", file:"ai_models/models.py", color:"#56b6c2",
+  desc:"前端「AI 模型管理」。一行 = 一个可选模型，只存元数据（密钥本体绝不入库，只存环境变量名）。",
+  tables:[
+    {name:"ai_models", desc:"AI 模型行（generation 写作 / ai_format 排版配图）", cols:[
+      ["id","Integer",["pk"],""],
+      ["label","String(100)",[],""],
+      ["model","String(200)",[],"litellm 模型串，空=用 scope 默认"],
+      ["scope","String(20)",["idx"],"generation / ai_format"],
+      ["base_url","String(300)",["null"],"中转网关地址"],
+      ["api_key_env","String(80)",["null"],"环境变量名（非密钥本体）"],
+      ["is_enabled","Boolean",[],"默认 True"],
+      ["is_default","Boolean",[],"默认 False"],
+      ["is_default_key","String(20)",["null"],"计算列：每 scope 至多一个默认"],
+      ["sort_order","Integer",[],"默认 0"],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ], cons:[
+      "INDEX ix_ai_models_scope_enabled (scope, is_enabled)",
+      "UNIQUE uq_ai_models_scope_default (scope, is_default_key)",
+    ]},
+  ]
+},
+{
+  id:"prompt_templates", name:"提示词模板", file:"prompt_templates/models.py", color:"#61afef",
+  desc:"系统模板（所有人可见）与用户私有模板；scope 区分写作 / 排版配图两套用途。软删。",
+  tables:[
+    {name:"prompt_templates", desc:"提示词模板", cols:[
+      ["id","Integer",["pk"],""],
+      ["name","String(200)",[],""],
+      ["content","Text",[],""],
+      ["scope","String(50)",["idx"],"generation / ai_format，默认 generation"],
+      ["user_id","Integer",["fk:users.id","idx","null"],"NULL=系统模板"],
+      ["is_system","Boolean",[],"默认 False"],
+      ["is_enabled","Boolean",[],"默认 True"],
+      ["is_deleted","Boolean",["idx"],"软删"],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ]},
+  ]
+},
+{
+  id:"skills", name:"旧技能表", file:"skills/models.py", color:"#7f848e",
+  desc:"LangGraph 时代的旧 Skill 模型。/api/skills 已下线、模块休眠；表保留不 drop（仍被 generation_sessions.skill_id 一条活 FK 引用），不写迁移。",
+  tables:[
+    {name:"skills", desc:"旧技能定义（已下线休眠）", dormant:true, cols:[
+      ["id","Integer",["pk"],""],
+      ["name","String(200)",[],""],
+      ["description","Text",["null"],""],
+      ["content","Text",[],"默认 ''"],
+      ["storage_path","String(500)",[],""],
+      ["file_stats","Text",[],"JSON 字符串，默认 {}"],
+      ["is_enabled","Boolean",[],"默认 True"],
+      ["is_deleted","Boolean",["idx"],""],
+      ["created_at","DateTime",[],""],
+    ]},
+  ]
+},
+{
+  id:"loop_skills", name:"Loop Skill 库", file:"loop_skills/models.py", color:"#d19a66",
+  desc:"/goal Loop skill 包的上传/版本管理。注意物理表名避开了下线的 skills 表；FK 用 Integer 对齐 users.id。",
+  tables:[
+    {name:"skill_library_skills", desc:"Skill 包（Python 类名 Skill，物理表名避让冲突）", cols:[
+      ["id","Integer",["pk"],""],
+      ["name","String(128)",[],""],
+      ["slug","String(128)",[],"官方包 slug=goal"],
+      ["is_official","Boolean",[],"默认 False"],
+      ["category","String(32)",[],"默认 general"],
+      ["current_version_id","Integer",["null"],""],
+      ["created_by","Integer",["fk:users.id","null"],""],
+      ["is_deleted","Boolean",[],"默认 False"],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+      ["name_active","String(128)",["null"],"生成列：软删则 NULL"],
+      ["slug_active","String(128)",["null"],"生成列：软删则 NULL"],
+    ], cons:[
+      "UNIQUE uq_skills_name_active (name_active)",
+      "UNIQUE uq_skills_slug_active (slug_active)",
+      "INDEX ix_skills_deleted (is_deleted)",
+    ]},
+    {name:"skill_library_versions", desc:"Skill 包版本（files 存 JSON，deferred 惰性加载）", cols:[
+      ["id","Integer",["pk"],""],
+      ["skill_id","Integer",["fk:skill_library_skills.id"],""],
+      ["version_label","String(32)",[],""],
+      ["bundle_sha256","String(64)",[],""],
+      ["file_count","Integer",[],""],
+      ["total_bytes","Integer",[],""],
+      ["storage_backend","String(8)",[],"默认 db"],
+      ["files","JSON",["null"],"deferred"],
+      ["storage_key","String(256)",["null"],""],
+      ["uploaded_by","Integer",["fk:users.id","null"],""],
+      ["is_deleted","Boolean",[],"默认 False"],
+      ["uploaded_at","DateTime",[],""],
+    ], cons:[
+      "UNIQUE uq_skill_versions_label (skill_id, version_label)",
+      "INDEX ix_skill_versions_skill (skill_id, is_deleted)",
+    ]},
+    {name:"loop_skill_bundle_versions", desc:"旧单 bundle 版本表（升级前的 /goal 包分发）", cols:[
+      ["id","Integer",["pk"],""],
+      ["version_label","String(200)",[],""],
+      ["bundle_sha256","String(64)",[],""],
+      ["files","JSON",[],"deferred，[{path,content,sha256,size}]"],
+      ["file_count","Integer",[],"去规范化冗余"],
+      ["total_size","Integer",[],""],
+      ["is_enabled","Boolean",[],"全局唯一（应用锁保证）"],
+      ["is_deleted","Boolean",[],""],
+      ["uploaded_by_user_id","Integer",["fk:users.id","null"],""],
+      ["notes","String(500)",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ], cons:[
+      "INDEX ix_loop_skill_bundle_enabled (is_enabled, is_deleted)",
+      "INDEX ix_loop_skill_bundle_deleted (is_deleted)",
+    ]},
+  ]
+},
+{
+  id:"video", name:"视频生成", file:"video/models.py", color:"#e06c9f",
+  desc:"文章转幻灯片短视频任务。产物 mp4/srt 以 MinIO 对象 key 记录。",
+  tables:[
+    {name:"video_jobs", desc:"视频生成任务", cols:[
+      ["id","Integer",["pk"],""],
+      ["job_id","String(32)",["uq","idx"],""],
+      ["article_id","Integer",["fk:articles.id","idx"],""],
+      ["status","String(20)",[],"默认 pending"],
+      ["progress","Float",[],"默认 0.0"],
+      ["storyboard","JSON",[],"分镜脚本"],
+      ["engine","String(50)",["null"],"TTS 引擎"],
+      ["video_key","String(500)",["null"],"MinIO mp4 key"],
+      ["srt_key","String(500)",["null"],"MinIO 字幕 key"],
+      ["title","String(500)",["null"],""],
+      ["description","Text",["null"],""],
+      ["tags","JSON",["null"],""],
+      ["error","Text",["null"],""],
+      ["created_at","DateTime",[],""],
+      ["updated_at","DateTime",[],""],
+    ]},
+  ]
+},
+{
+  id:"auto_review", name:"Loop 自动审核", file:"auto_review/models.py", color:"#c9a227",
+  desc:"Loop 自评分记录。与 articles 多对一；不直接改 review_status，最终人审仍是 truth。",
+  tables:[
+    {name:"auto_review_decisions", desc:"自动审核决策记录", cols:[
+      ["id","Integer",["pk"],""],
+      ["article_id","Integer",["fk:articles.id","idx"],"ON DELETE CASCADE"],
+      ["decision","String(20)",[],"approved / needs_rewrite / rejected"],
+      ["score_total","Integer",["null"],""],
+      ["pass_line","Integer",["null"],"合格线阈值"],
+      ["score_breakdown","JSON",["null"],"分维度打分"],
+      ["reasoning","Text",["null"],""],
+      ["decided_by","String(50)",[],"claude-code-loop / claude-goal-verifier…"],
+      ["created_at","DateTime",[],""],
+    ]},
+  ]
+},
+{
+  id:"audit", name:"审计日志", file:"audit/models.py", color:"#8a94a6",
+  desc:"系统级用户写操作审计（创建/修改/删除/登录登出/改密）。admin-only 查询，敏感字段脱敏。",
+  tables:[
+    {name:"audit_logs", desc:"审计日志", cols:[
+      ["id","Integer",["pk"],""],
+      ["user_id","Integer",["fk:users.id","idx","null"],""],
+      ["username","String(80)",["null"],"冗余存名，用户删后不丢归属"],
+      ["action","String(80)",["idx"],""],
+      ["target_type","String(40)",["idx"],""],
+      ["target_id","String(80)",["idx","null"],"兼容 int 与 uuid"],
+      ["payload_json","JSON",["null"],"变更摘要（已脱敏）"],
+      ["ip_address","String(45)",["null"],""],
+      ["user_agent","String(255)",["null"],""],
+      ["created_at","DateTime",["idx"],""],
+    ], cons:[
+      "INDEX ix_audit_logs_user_created (user_id, created_at)",
+      "INDEX ix_audit_logs_action_created (action, created_at)",
+      "INDEX ix_audit_logs_target_type_id (target_type, target_id)",
+    ]},
+  ]
+},
+{
+  id:"report", name:"打点上报事件", file:"report/models.py", color:"#7f848e",
+  desc:"跨模块的事件/异常埋点表（AI 生文、pipeline 执行、发布、登录等）。系统内部埋点，不做脱敏。",
+  tables:[
+    {name:"report_events", desc:"通用上报事件", cols:[
+      ["id","Integer",["pk"],""],
+      ["created_at","DateTime",["idx"],""],
+      ["source_module","String(50)",["idx"],""],
+      ["source_type","String(50)",["null"],""],
+      ["source_id","Integer",["idx","null"],""],
+      ["event_type","String(50)",["idx"],""],
+      ["level","String(10)",[],"默认 info"],
+      ["message","Text",[],""],
+      ["payload_json","JSON",["null"],""],
+    ], cons:[
+      "INDEX ix_report_events_source_created (source_module, created_at)",
+      "INDEX ix_report_events_event_type_created (event_type, created_at)",
+      "INDEX ix_report_events_source_type_id (source_type, source_id)",
+    ]},
+  ]
+},
+];
+
+/* ── 渲染 ─────────────────────────────────────────────────────────── */
+const badgeMap = {pk:["PK","b-pk"], uq:["UQ","b-uq"], idx:["IDX","b-idx"], null:["NULL","b-nn"]};
+const totalTables = MODULES.reduce((s,m)=>s+m.tables.length,0);
+const totalCols = MODULES.reduce((s,m)=>s+m.tables.reduce((a,t)=>a+t.cols.length,0),0);
+const totalFks = MODULES.reduce((s,m)=>s+m.tables.reduce((a,t)=>a+t.cols.filter(c=>c[2].some(f=>f.startsWith("fk:"))).length,0),0);
+
+document.getElementById("stats").innerHTML = [
+  [MODULES.length,"业务模块"],[totalTables,"数据表"],[totalCols,"字段"],[totalFks,"外键引用"]
+].map(([n,l])=>`<div class="stat"><b>${n}</b><span>${l}</span></div>`).join("");
+document.getElementById("ft").textContent = totalTables;
+
+// TOC
+document.getElementById("toc").innerHTML = MODULES.map(m=>
+  `<a href="#m-${m.id}"><span class="dot" style="background:${m.color}"></span>
+   <span class="nm">${m.name}</span><span class="cnt">${m.tables.length}</span></a>`
+).join("");
+
+function anchor(tableName){
+  // 在所有模块中找该表所属，生成锚点 id
+  return "t-"+tableName;
+}
+function renderBadges(flags){
+  let out="";
+  const fk = flags.find(f=>f.startsWith("fk:"));
+  flags.forEach(f=>{
+    if(badgeMap[f]) out+=`<span class="badge ${badgeMap[f][1]}">${badgeMap[f][0]}</span>`;
+  });
+  if(fk) out+=`<span class="badge b-fk">FK</span>`;
+  return out;
+}
+function renderNote(flags, note){
+  const fk = flags.find(f=>f.startsWith("fk:"));
+  let out="";
+  if(fk){
+    const target = fk.slice(3);
+    const tbl = target.split(".")[0];
+    out += `→ <a href="#${anchor(tbl)}"><code style="background:none;padding:0">${target}</code></a>`;
+    if(note) out += " · "+note;
+  } else {
+    out = note||"";
+  }
+  return out;
+}
+
+document.getElementById("content").innerHTML = MODULES.map(m=>`
+  <section class="module" id="m-${m.id}" data-mod>
+    <div class="module-head">
+      <span class="bar" style="background:${m.color}"></span>
+      <h3>${m.name}</h3>
+      <code>${m.file}</code>
+    </div>
+    <p class="module-desc">${m.desc}</p>
+    ${m.tables.map(t=>`
+      <div class="tbl" id="${anchor(t.name)}" data-table data-name="${t.name}">
+        <div class="tbl-head">
+          <span class="tname">${t.name}</span>
+          <span class="ccount">${t.cols.length} 字段</span>
+          ${t.dormant?'<span class="flag-dormant">休眠 / 已下线</span>':''}
+          <span class="tdesc">${t.desc||""}</span>
+        </div>
+        <table>
+          <thead><tr><th style="width:26%">字段</th><th style="width:20%">类型</th><th style="width:14%">约束</th><th>说明 / 外键</th></tr></thead>
+          <tbody>
+            ${t.cols.map(c=>`
+              <tr data-col="${c[0]}">
+                <td class="col-name">${c[0]}</td>
+                <td class="col-type">${c[1]}</td>
+                <td>${renderBadges(c[2])||'<span style="color:var(--ink-faint)">—</span>'}</td>
+                <td class="col-note">${renderNote(c[2],c[3])||'<span style="color:var(--ink-faint)">—</span>'}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+        ${t.cons&&t.cons.length?`<div class="constraints"><div class="clabel">表级约束</div>${
+          t.cons.map(x=>`<div class="crow"><code>${x}</code></div>`).join("")
+        }</div>`:""}
+      </div>
+    `).join("")}
+  </section>
+`).join("");
+
+/* ── 搜索过滤 ─────────────────────────────────────────────────────── */
+const q = document.getElementById("q");
+const nores = document.getElementById("nores");
+q.addEventListener("input", ()=>{
+  const term = q.value.trim().toLowerCase();
+  let anyVisible = false;
+  document.querySelectorAll("[data-mod]").forEach(mod=>{
+    let modVisible = false;
+    mod.querySelectorAll("[data-table]").forEach(tbl=>{
+      const name = tbl.dataset.name.toLowerCase();
+      const cols = [...tbl.querySelectorAll("[data-col]")];
+      let tableMatch = !term || name.includes(term);
+      let colMatch = false;
+      cols.forEach(row=>{
+        const hit = !term || tableMatch || row.dataset.col.toLowerCase().includes(term)
+          || row.textContent.toLowerCase().includes(term);
+        row.style.display = (term && !tableMatch && !row.dataset.col.toLowerCase().includes(term)
+          && !row.textContent.toLowerCase().includes(term)) ? "none":"";
+        if(hit && term && !tableMatch && row.dataset.col.toLowerCase().includes(term)) colMatch=true;
+        if(hit) colMatch = colMatch || (!tableMatch && row.style.display!=="none");
+      });
+      const show = tableMatch || cols.some(r=>r.style.display!=="none");
+      tbl.style.display = show ? "" : "none";
+      if(show){ modVisible=true; anyVisible=true; }
+      // 若整表匹配名称，恢复所有行
+      if(tableMatch){ cols.forEach(r=>r.style.display=""); }
+    });
+    mod.style.display = modVisible ? "" : "none";
+  });
+  nores.style.display = anyVisible ? "none":"block";
+});
+
+/* ── 回到顶部 ─────────────────────────────────────────────────────── */
+const bt = document.getElementById("backtop");
+window.addEventListener("scroll", ()=>{ bt.classList.toggle("show", window.scrollY>600); });
+bt.addEventListener("click", ()=>window.scrollTo({top:0,behavior:"smooth"}));
+</script>
+</body>
+</html>
