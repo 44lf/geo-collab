@@ -51,6 +51,29 @@ def test_render_markdown_orchestration_separator(monkeypatch):
     assert len(out["cards"]) == 2  # A / B 两张
 
 
+def test_rewrite_img_src():
+    from server.app.modules.xhs_cards import render as R
+
+    base = "http://127.0.0.1:8000"
+    html = '<p><img src="/api/stock-images/5/file" alt="x"></p>'
+    out = R.rewrite_img_src(html, base)
+    assert 'src="http://127.0.0.1:8000/api/stock-images/5/file"' in out
+    # 已是绝对 URL 不动
+    html2 = '<img src="http://cdn/x.jpg">'
+    assert R.rewrite_img_src(html2, base) == html2
+    # 非 /api 相对不动
+    html3 = '<img src="foo.png">'
+    assert R.rewrite_img_src(html3, base) == html3
+
+
+def test_card_html_has_absolute_img_and_maxheight():
+    from server.app.modules.xhs_cards import render as R
+
+    html = R.generate_card_html("正文\n\n![](/api/stock-images/9/file)", "default", 1, 1080, 1440)
+    assert "http://127.0.0.1:8000/api/stock-images/9/file" in html
+    assert "max-height" in html and "object-fit" in html  # 限高 style 注入
+
+
 @pytest.mark.skipif(
     os.environ.get("GEO_XHS_RENDER_LIVE") != "1",
     reason="需容器内 chromium；设 GEO_XHS_RENDER_LIVE=1 启用",

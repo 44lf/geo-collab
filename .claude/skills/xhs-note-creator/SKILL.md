@@ -35,7 +35,18 @@ description: Use when turning an approved GEO article into a Xiaohongshu (Redboo
      执行（有 `---` 就按 `---` 切、没有就整篇一张）——`auto-split`/`auto-fit`/`dynamic`
      暂不具备真实的自动排版精度。**所以务必在正文里手动打 `---` 控制分卡**，不要指望
      选了 auto-split 就能自动切得整齐。
-4. **组 render-markdown**：YAML frontmatter + 正文，卡片之间用 `---` 分隔：
+4. **问用户是否给卡片配图**（opt-in，**默认关闭**——不问就当用户不要）：
+   - 关闭 → 维持现状：纯文案卡，不 embed 任何图（跳到步骤 5，正文里不加 `![]()`）。
+   - 开启 → 对**每张卡**都走下面的三层兜底链，找到第一张能用的图就停：
+     1. **原文 body 图**：`get_article(source_article_id)` 读 `content_json`，找该卡对应
+        游戏/主题的 image 节点，取其 `src`。
+     2. **游戏/图片库**：没有原文图 → `list_stock_categories()` 找匹配该卡主题的栏目
+        （按栏目名 / `kind="main"` 匹配）→ `list_stock_images(category_id)` 取一张 `url`。
+     3. **联网兜底**：库里也没有 → `search_web_image(<该卡关键词，如游戏名>)`，拿返回的
+        `url`（`url` 为 `null` 说明搜不到 / 未配置联网，直接跳过，该卡不配图，不重试）。
+     - 三层里只要拿到一个 `url`，就把 `![](url)` 放进**该卡 render-markdown 文案末尾**
+       （渲染在文字下方、限高，不占满卡片）；三层都空 → 该卡保持纯文案，不勉强凑图。
+5. **组 render-markdown**：YAML frontmatter + 正文，卡片之间用 `---` 分隔：
 
    ```markdown
    ---
@@ -44,22 +55,24 @@ description: Use when turning an approved GEO article into a Xiaohongshu (Redboo
    subtitle: "副标题(<=15字)"
    ---
    第一张卡片正文……
+   ![](上一步该卡拿到的图 url，配图关闭或三层都没有则不加这行)
 
    ---
    第二张卡片正文……
    ```
 
    frontmatter 只用于**封面**（`emoji`/`title`/`subtitle`）；正文部分从第一个 `---` 之后
-   开始才是卡片内容，卡片间再用 `---` 分隔。
-5. `compose_xhs_cards(render_markdown=<上一步>, theme=<用户选的>, mode=<用户选的>,
+   开始才是卡片内容，卡片间再用 `---` 分隔。配图图片只放在**卡片文案末尾**，不要放进
+   frontmatter、也不要替换封面图逻辑。
+6. `compose_xhs_cards(render_markdown=<上一步>, theme=<用户选的>, mode=<用户选的>,
    source_article_id=<源文章 id>)` → 返回 `job_id`（异步提交，不等渲染完）。
-6. **轮询** `get_xhs_status(job_id)`（间隔 ~5-10s）直到 `status` 为 `done` 或 `failed`：
+7. **轮询** `get_xhs_status(job_id)`（间隔 ~5-10s）直到 `status` 为 `done` 或 `failed`：
    - `done` → 取 `cover_url` + `card_urls`（有序数组）
    - `failed` / 长时间未 done → 记录 `error`，不重试、不阻塞，如实告知用户
-7. **拼落库 markdown**：封面图 + 各卡片图（按 `card_urls` 顺序，`![](url)`）+ 末尾小红书
+8. **拼落库 markdown**：封面图 + 各卡片图（按 `card_urls` 顺序，`![](url)`）+ 末尾小红书
    文案（标题 / 正文 / 5-10 个 SEO `#标签`，**纯文本**，方便用户直接复制粘贴到小红书 App）。
-8. `save_xhs_note(source_article_id=<源文章 id>, prompt_template_id=<步骤2 选的模板 id>,
-   title=<小红书标题>, markdown_content=<步骤7 拼好的 markdown>)` → 落**未审核库**
+9. `save_xhs_note(source_article_id=<源文章 id>, prompt_template_id=<步骤2 选的模板 id>,
+   title=<小红书标题>, markdown_content=<步骤8 拼好的 markdown>)` → 落**未审核库**
    （`review_status="pending"`），内容列表会显示「小红书图文」徽标。
 
 # 约束 / 注意

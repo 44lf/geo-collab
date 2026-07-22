@@ -125,7 +125,7 @@ React 19 + Vite + TypeScript（strict）+ Tiptap + Lucide。Feature 拆分在 `w
 
 ## MCP Server（Claude Code Loop 调用入口）
 
-POC 期：`server/mcp/` 跑独立 Python 进程（FastMCP stdio），把 GEO 现有 + 新增 API 包装成 38 个 atomic tools 给 Claude Code 调用（真值见 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）。Loop 配方在 `claude-loops/*.md`。
+POC 期：`server/mcp/` 跑独立 Python 进程（FastMCP stdio），把 GEO 现有 + 新增 API 包装成 39 个 atomic tools 给 Claude Code 调用（真值见 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）。Loop 配方在 `claude-loops/*.md`。
 
 ### 启动方式
 
@@ -160,10 +160,10 @@ stdio 入口（`python -m server.mcp`）**保留**作为本机 dev / air-gap 路
 - **MCP 端点的未捕获异常用 `core/mcp_errors.mcp_exception_response(exc, context=...)` 包成 HTTPException**，绕过 main.py 全局 500 handler 的字符串抹平。规则：异常 `__module__` 顶级 ∈ {litellm / httpx / openai / anthropic} → 502（上游错误，Loop 可重试 / 切模型）；其它 → 500。detail 形如 `"<ExceptionClass>: <msg, ≤500 字符>"`，完整 traceback 仍由 helper 内 `logger.exception` 落日志。新增 MCP 端点写 `except Exception as exc:` 时一律走它，不要直接抛裸 Exception。
 - 同进程 mount 的 FastMCP HTTP sub-app（`/mcp`）不走 sub-router、用 `McpTokenMiddleware` 实现等价鉴权，语义与 `require_mcp_token` 一致（共享 `verify_mcp_token` helper）。
 
-### Tool 三组（共 38 个，真值在 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）
+### Tool 三组（共 39 个，真值在 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）
 
 - **catalog**（只读 16 个）：`list_articles` / `list_question_pools` / `list_question_items` / `list_prompt_templates` / `list_pipelines` / `list_accounts` / `get_article` / `list_today_loop_articles` / `list_stock_categories` / `list_skills` / `list_stock_images` / `get_video_status` / `pick_quality_references` / `search_articles_by_title` / `list_game_tags` / `query_games_by_tags`
-- **action**（写 18 个）：`save_article` / `illustrate_article` / `ai_illustrate_article` / `submit_review_decision` / `set_review_status` / `create_distribute_task` / `notify_feishu` / `report_event` / `install_loop_skills` / `compose_video` / `notify_review_card` / `record_adversarial_score` / `adopt_quality_reference` / `import_external_reference` / `get_external_reference_status` / `compose_xhs_cards` / `get_xhs_status` / `save_xhs_note`
+- **action**（写 19 个）：`save_article` / `illustrate_article` / `ai_illustrate_article` / `submit_review_decision` / `set_review_status` / `create_distribute_task` / `notify_feishu` / `report_event` / `install_loop_skills` / `compose_video` / `notify_review_card` / `record_adversarial_score` / `adopt_quality_reference` / `import_external_reference` / `get_external_reference_status` / `compose_xhs_cards` / `get_xhs_status` / `save_xhs_note` / `search_web_image`
 - **meta**（评估 / 回流 4 个）：`score_recent_articles` / `get_template_performance` / `get_account_performance` / `record_publish_metrics`
 
 ### MCP Loop 的「生文」零配置约定
