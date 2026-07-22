@@ -146,6 +146,7 @@ class ArticleRead(BaseModel):
     # source_question_category 去调 pick_quality_references。
     source_question_category: str | None = None
     source_question_texts: list | None = None
+    content_type: str | None = None  # 内容形态，如 "xhs_image_text"（小红书图文）
     can_edit: bool = True  # 属主/admin 为 True；他人只读分享时 False（驱动前端只读降级）
     created_at: datetime
     updated_at: datetime
@@ -268,6 +269,7 @@ def to_article_read(
         source_template_id=article.source_template_id,
         source_question_category=article.source_question_category,
         source_question_texts=article.source_question_texts,
+        content_type=article.content_type,
         can_edit=can_edit,
     )
 
