@@ -83,3 +83,48 @@ def test_wrapped_connect_error_is_clean():
             raise exc
     # 必须是原异常透出、不是被包成 CommitUncertainError
     assert not isinstance(ei.value, CommitUncertainError)
+
+
+def test_clean_failure_triggers_mark_clean():
+    """干净失败（有 errcode 正面证据=平台明确未受理）→ 触发 mark_clean 回滚提交标记，异常原样透出。"""
+    events: list[str] = []
+    guard = CommitGuard(
+        mark_pending=lambda: events.append("pending"),
+        mark_clean=lambda: events.append("clean"),
+    )
+
+    class _ApiErr(PublishError):
+        def __init__(self):
+            super().__init__("rejected 4029")
+            self.errcode = 4029
+
+    with pytest.raises(_ApiErr):
+        with guard.committing():
+            raise _ApiErr()
+    # 进守卫先标记，干净失败再回滚——顺序固定
+    assert events == ["pending", "clean"]
+
+
+def test_uncertain_failure_does_not_mark_clean():
+    """结果未知（无正面证据）→ 不触发 mark_clean，包成 CommitUncertainError（保留提交标记）。"""
+    events: list[str] = []
+    guard = CommitGuard(
+        mark_pending=lambda: events.append("pending"),
+        mark_clean=lambda: events.append("clean"),
+    )
+    with pytest.raises(CommitUncertainError):
+        with guard.committing():
+            raise RuntimeError("toutiao click timed out")
+    assert events == ["pending"]  # 未清标记
+
+
+def test_success_does_not_mark_clean():
+    """成功提交 → mark_clean 不触发（只有干净失败才回滚标记）。"""
+    events: list[str] = []
+    guard = CommitGuard(
+        mark_pending=lambda: events.append("pending"),
+        mark_clean=lambda: events.append("clean"),
+    )
+    with guard.committing():
+        pass
+    assert events == ["pending"]

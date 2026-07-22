@@ -10,6 +10,7 @@ from server.app.modules.articles.parser import BodySegment
 from server.app.modules.tasks.drivers.base import (
     CommitGuard,
     CommitUncertainError,
+    PublishError,
     PublishPayload,
 )
 from server.app.modules.tasks.drivers.toutiao_inpage import ToutiaoInPageDriver
@@ -90,6 +91,74 @@ def test_publish_save1_network_loss_is_uncertain(tmp_path, monkeypatch):
             retry_policy=RetryPolicy(enabled=False),  # 关重试，专测守卫
         )
     assert marked["n"] == 1  # 进守卫前标记一次
+    assert page.evaluate_calls == 1
+
+
+class _RejectPage:
+    """save=1 的 evaluate 正常返回一个「业务级拒绝」信封（httpStatus=200, code≠0）。
+
+    即平台明确应答「未受理」（如标题超长 4029）——守卫内不应把它判成结果未知。
+    """
+
+    def __init__(self, *, code, message):
+        self.url = "https://mp.toutiao.com/profile_v4/graphic/publish"
+        self._code = code
+        self._message = message
+        self.evaluate_calls = 0
+
+    def goto(self, url, **_kwargs):
+        pass
+
+    def evaluate(self, _js, _arg):
+        self.evaluate_calls += 1
+        return {
+            "ok": True,
+            "step": "publish",
+            "uploads": [],
+            "publish": {
+                "httpStatus": 200,
+                "data": {"code": self._code, "message": self._message},
+                "raw": "{}",
+            },
+        }
+
+    class _Locator:
+        def count(self):
+            return 1
+
+    def get_by_role(self, _role, name=None):
+        return _RejectPage._Locator()
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+def test_publish_business_rejection_is_clean_and_clears_marker(tmp_path, monkeypatch):
+    """save=1 业务级拒绝(code≠0，如标题超长 4029)=平台明确未受理 → 干净失败(PublishError，
+    非 CommitUncertainError)，并触发 mark_clean 回滚提交标记，让记录可正常重试（本次 bug 根因）。"""
+    monkeypatch.setattr(
+        "server.app.modules.tasks.drivers.toutiao_inpage._b64_of", lambda p: ("AA==", "image/jpeg")
+    )
+
+    events: list[str] = []
+    guard = CommitGuard(
+        mark_pending=lambda: events.append("pending"),
+        mark_clean=lambda: events.append("clean"),
+    )
+    page = _RejectPage(code=4029, message="标题长度应该在2-30字之间")
+
+    with pytest.raises(PublishError) as ei:
+        ToutiaoInPageDriver().publish(
+            page=page,
+            context=None,
+            payload=_payload(tmp_path),
+            stop_before_publish=False,
+            commit_guard=guard,
+            retry_policy=RetryPolicy(enabled=False),
+        )
+    assert not isinstance(ei.value, CommitUncertainError)  # 干净失败，不是「结果未知」
+    assert "4029" in str(ei.value)
+    assert events == ["pending", "clean"]  # 进守卫标记 + 干净失败回滚
     assert page.evaluate_calls == 1
 
 

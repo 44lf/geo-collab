@@ -76,3 +76,30 @@ def test_make_commit_guard_marks_record(monkeypatch):
             assert refreshed.commit_attempted_at is not None
     finally:
         test_app.cleanup()
+
+
+def test_make_commit_guard_clears_marker_on_clean_failure(monkeypatch):
+    """干净失败（PublishError 带 errcode=平台明确未受理）经守卫 → mark_clean 把 commit_attempted_at
+    清回 None，记录退出「结果未知」桶、可正常重试（本次头条 4029 bug 的根因修复）。"""
+    from server.app.modules.tasks.drivers.base import PublishError
+    from server.app.modules.tasks.executor import _make_commit_guard
+    from server.app.modules.tasks.models import PublishRecord
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        with test_app.session_factory() as db:
+            _task, rec = _seed_record(db)
+            db.commit()
+            rid = rec.id
+
+        guard = _make_commit_guard(rid)
+        with pytest.raises(PublishError):
+            with guard.committing():
+                # mark_pending 已落 commit_attempted_at；这里模拟头条业务拒绝（code≠0）
+                raise PublishError("头条发布被拒: code=4029", errcode=4029)
+
+        with test_app.session_factory() as db2:
+            refreshed = db2.get(PublishRecord, rid)
+            assert refreshed.commit_attempted_at is None  # 干净失败已回滚标记
+    finally:
+        test_app.cleanup()
