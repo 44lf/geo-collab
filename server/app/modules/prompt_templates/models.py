@@ -24,6 +24,7 @@ class PromptTemplate(Base):
     scope: Mapped[str] = mapped_column(
         String(50), default="generation", server_default="generation", index=True
     )
+    platform: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", name="fk_prompt_templates_user_id"), nullable=True, index=True
     )

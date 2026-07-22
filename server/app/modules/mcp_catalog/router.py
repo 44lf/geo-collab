@@ -190,10 +190,14 @@ def mcp_list_question_items(
 @router.get("/prompt-templates", response_model=list[PromptTemplateRead])
 def mcp_list_prompt_templates(
     scope: PromptScope | None = Query(default=None),
+    platform: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[PromptTemplateRead]:
-    """[MCP] 列提示词模板：仅排除软删，且只返回"启用"的（关闭模板不递给 Loop）。"""
-    templates = svc_list_templates(db, scope=scope, enabled_only=True)
+    """[MCP] 列提示词模板：仅排除软删，且只返回"启用"的（关闭模板不递给 Loop）。
+
+    platform 传入时按「该 platform 专属 或 通用」过滤；不传返回全部平台。
+    """
+    templates = svc_list_templates(db, scope=scope, enabled_only=True, platform=platform)
     return [PromptTemplateRead.model_validate(t) for t in templates]
 
 
