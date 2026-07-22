@@ -19,6 +19,11 @@ from playwright.async_api import async_playwright
 ASSETS_DIR = Path(__file__).parent / "assets"
 THEMES_DIR = ASSETS_DIR / "themes"
 
+# 卡片内 <img src="/api/..."> 是相对路径，Playwright 走 file:// 打开渲染文件时拉不到；
+# 重写成内网绝对地址。已是绝对(http…)或非 /api 相对的不动。
+_INTERNAL_BASE = os.environ.get("GEO_INTERNAL_URL", "http://127.0.0.1:8000")
+_IMG_SRC_RE = re.compile(r'(<img\b[^>]*\bsrc=")(/api/[^"]*)(")', re.IGNORECASE)
+
 # 默认卡片尺寸配置 (3:4 比例)
 DEFAULT_WIDTH = 1080
 DEFAULT_HEIGHT = 1440
@@ -122,6 +127,12 @@ def load_theme_css(theme: str) -> str:
     if default_file.exists():
         return default_file.read_text(encoding="utf-8")
     return ""
+
+
+def rewrite_img_src(html: str, base: str = _INTERNAL_BASE) -> str:
+    """把 <img src="/api/…"> 的相对 src 重写成 base + src，让 Playwright(file://) 能拉。
+    已是绝对(http…)或非 /api 相对的不动。"""
+    return _IMG_SRC_RE.sub(rf"\g<1>{base}\g<2>\g<3>", html)
 
 
 def generate_cover_html(metadata: dict, theme: str, width: int, height: int) -> str:
@@ -234,6 +245,7 @@ def generate_cover_html(metadata: dict, theme: str, width: int, height: int) -> 
 def generate_card_html(content: str, theme: str, page_number: int, width: int, height: int) -> str:
     """生成正文卡片 HTML（separator 分页模式的容器样式）"""
     html_content = convert_markdown_to_html(content)
+    html_content = rewrite_img_src(html_content)
     theme_css = load_theme_css(theme)
 
     page_text = str(page_number) if page_number and page_number > 1 else ""
@@ -297,6 +309,11 @@ def generate_card_html(content: str, theme: str, page_number: int, width: int, h
         }}
 
         {theme_css}
+
+        .card-content img {{
+            max-height: 640px;
+            object-fit: contain;
+        }}
 
         .card-content :not(pre) > code {{
             overflow-wrap: anywhere;
