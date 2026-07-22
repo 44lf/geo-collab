@@ -68,11 +68,23 @@ class PublishResult:
 
 
 class PublishError(Exception):
-    """平台无关的发布失败异常，可附带诊断截图。"""
+    """平台无关的发布失败异常，可附带诊断截图。
 
-    def __init__(self, message: str, screenshot: bytes | None = None):
+    ``errcode`` 非空 = 平台已应答并明确「未受理」（业务级拒绝码 / 上传前失败等正面证据）。
+    提交守卫据此把该失败判为「干净失败」（见 ``_commit_is_clean_failure``）：原样透出、
+    可安全重试，并回滚 commit_attempted_at 标记，避免记录被困进「结果未知」桶。
+    留空 = 结果未知，守卫保守包成 CommitUncertainError（at-most-once）。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        screenshot: bytes | None = None,
+        errcode: object | None = None,
+    ):
         super().__init__(message)
         self.screenshot = screenshot
+        self.errcode = errcode
 
 
 class UserInputRequired(PublishError):
@@ -136,10 +148,22 @@ def _commit_is_clean_failure(exc: BaseException) -> bool:
 
 class CommitGuard:
     """把不可逆提交包进 committing()。进入时落 commit_attempted_at（经 runner 注入的回调，
-    驱动不碰 ORM）；退出时按异常性质分流为干净失败 or CommitUncertainError。"""
+    驱动不碰 ORM）；退出时按异常性质分流：
 
-    def __init__(self, mark_pending: Callable[[], None]):
+    - 干净失败（有正面证据平台未受理）：调 ``mark_clean`` 回滚 commit_attempted_at 标记
+      （记录退出「结果未知」桶、可正常重试），异常原样透出。
+    - 结果未知：保留标记，包成 CommitUncertainError（at-most-once，需人工核对后强制重发）。
+
+    ``mark_clean`` 同 ``mark_pending`` 由 runner 注入、驱动不碰 ORM；省略即 no-op（纯逻辑桩）。
+    """
+
+    def __init__(
+        self,
+        mark_pending: Callable[[], None],
+        mark_clean: Callable[[], None] | None = None,
+    ):
         self._mark_pending = mark_pending
+        self._mark_clean = mark_clean or (lambda: None)
 
     @contextmanager
     def committing(self) -> Iterator[None]:
@@ -150,6 +174,8 @@ class CommitGuard:
             raise
         except BaseException as exc:  # noqa: BLE001
             if _commit_is_clean_failure(exc):
+                # 平台明确未受理 → 回滚提交标记，让记录退出「结果未知」桶、可正常重试
+                self._mark_clean()
                 raise
             raise CommitUncertainError(
                 f"提交后网络中断，平台受理结果未知: {exc}",

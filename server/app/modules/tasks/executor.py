@@ -1208,8 +1208,13 @@ def _store_failure_screenshot(
 
 
 def _make_commit_guard(record_id: int) -> CommitGuard:
-    """构造该记录的提交守卫：mark_pending 自开 session 落 commit_attempted_at（发布线程内，
-    入参均 detached，不复用外部 session；与 runner_api._resolve_access_token 同模式）。"""
+    """构造该记录的提交守卫（发布线程内自开 session，入参均 detached、不复用外部 session；
+    与 runner_api._resolve_access_token 同模式）：
+
+    - mark_pending：进入提交边界时落 commit_attempted_at。
+    - mark_clean：拿到「平台明确未受理」正面证据（业务拒绝码 / 上传前失败）时回滚 commit_attempted_at，
+      让记录退出「结果未知」桶、可正常重试（不再被 retry_record 的 Layer-2 兜底困住）。
+    """
     from server.app.modules.tasks.drivers.base import CommitGuard
 
     def _mark_pending() -> None:
@@ -1229,7 +1234,24 @@ def _make_commit_guard(record_id: int) -> CommitGuard:
         finally:
             db.close()
 
-    return CommitGuard(mark_pending=_mark_pending)
+    def _mark_clean() -> None:
+        from server.app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            db.execute(
+                sa_update(PublishRecord)
+                .where(
+                    PublishRecord.id == record_id,
+                    PublishRecord.is_deleted == False,  # noqa: E712
+                )
+                .values(commit_attempted_at=None)
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    return CommitGuard(mark_pending=_mark_pending, mark_clean=_mark_clean)
 
 
 def build_publish_runner_for_record(record: PublishRecord):

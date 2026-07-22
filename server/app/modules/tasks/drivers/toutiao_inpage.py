@@ -212,7 +212,9 @@ def _map_publish_response(
     code = data.get("code")
     if code not in (0, None):
         message = data.get("message") or data.get("msg") or result.get("raw")
-        raise PublishError(f"头条发布被拒: code={code}; message={message}")
+        # 业务级拒绝（如标题超长 4029）= 平台已应答、明确未受理 → 干净失败（errcode 非空），
+        # 提交守卫据此回滚 commit_attempted_at，记录可正常重试（不困在「结果未知」）。
+        raise PublishError(f"头条发布被拒: code={code}; message={message}", errcode=code)
 
     raw_inner = data.get("data")
     inner: dict[str, Any] = raw_inner if isinstance(raw_inner, dict) else {}
@@ -241,15 +243,31 @@ def _map_full_response(result: Any, title: str, *, is_draft: bool = False) -> Pu
     if not isinstance(result, dict):
         raise PublishError(f"头条页内驱动返回意外结果: {result!r}")
     if result.get("ok") is False and result.get("step") == "upload":
+        # 上传在发布 XHR 之前失败 → 文章必未发布 = 干净失败（errcode 非空，无 httpStatus 时用哨兵），
+        # 提交守卫据此回滚 commit_attempted_at，记录可正常重试。
         raise PublishError(
             f"头条图片上传失败: index={result.get('index')} "
             f"httpStatus={result.get('httpStatus')} field={result.get('field')} "
-            f"b64len={result.get('b64len')} raw={result.get('raw')}"
+            f"b64len={result.get('b64len')} raw={result.get('raw')}",
+            errcode=result.get("httpStatus") or "upload_failed",
         )
     publish = result.get("publish")
     if not isinstance(publish, dict):
+        # 信封缺发布结果 = 未知发生了什么 → 不带 errcode，守卫保守判「结果未知」（at-most-once）。
         raise PublishError(f"头条页内驱动缺少发布结果: {result!r}")
     return _map_publish_response(publish, title, is_draft=is_draft)
+
+
+def _log_inpage_result(result: Any) -> None:
+    """best-effort 记录页内往返信封的 uploads / 发布原始响应，便于排障（不改变控制流）。"""
+    if isinstance(result, dict):
+        logger.info(
+            "toutiao in-page publish: uploads=%s publish.raw=%s",
+            result.get("uploads"),
+            (result.get("publish") or {}).get("raw")
+            if isinstance(result.get("publish"), dict)
+            else None,
+        )
 
 
 class ToutiaoInPageDriver:
@@ -317,21 +335,17 @@ class ToutiaoInPageDriver:
             raise PublishError("头条发布需要封面图片")
         arg = _build_evaluate_arg(payload, content_html, image_order, save)
         if save == 1:
-            # 终点真实发布：不可逆提交边界，包进 commit_guard——进入时落 commit_attempted_at，
-            # 退出按异常性质分流为干净失败 or CommitUncertainError（at-most-once）。
+            # 终点真实发布：不可逆提交边界，evaluate + 响应映射都包进 commit_guard——进入时落
+            # commit_attempted_at；响应里的业务级拒绝(code≠0)/上传失败=平台明确未受理的正面证据，
+            # 守卫据此回滚标记（干净失败、可正常重试），其余异常保守分流为 CommitUncertainError。
+            # 映射必须在守卫内：拒绝码本是同步响应，放守卫外会漏掉回滚、把干净失败困成「结果未知」。
             with guard.committing():
                 result = page.evaluate(_ADAPTER_JS, arg)
-        else:
-            # save=0 是「停在发布前」的草稿，不是提交边界，不包守卫。
-            result = page.evaluate(_ADAPTER_JS, arg)
-        if isinstance(result, dict):
-            logger.info(
-                "toutiao in-page publish: uploads=%s publish.raw=%s",
-                result.get("uploads"),
-                (result.get("publish") or {}).get("raw")
-                if isinstance(result.get("publish"), dict)
-                else None,
-            )
+                _log_inpage_result(result)
+                return _map_full_response(result, payload.title, is_draft=is_draft)
+        # save=0 是「停在发布前」的草稿，不是提交边界，不包守卫。
+        result = page.evaluate(_ADAPTER_JS, arg)
+        _log_inpage_result(result)
         return _map_full_response(result, payload.title, is_draft=is_draft)
 
 
