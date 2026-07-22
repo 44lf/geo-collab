@@ -297,3 +297,33 @@ def test_list_stays_private_after_read_relax(monkeypatch):
         assert owner_article_id not in ids
     finally:
         test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_article_detail_includes_content_type(monkeypatch):
+    """详情接口需回显 content_type（小红书图文预览等前端消费依赖此字段）。"""
+    from server.app.modules.articles.models import Article
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        with test_app.session_factory() as db:
+            a = Article(
+                title="xhs 图文A",
+                content_json="{}",
+                content_html="",
+                plain_text="",
+                word_count=0,
+                user_id=test_app.admin_id,
+                review_status="pending",
+                content_type="xhs_image_text",
+            )
+            db.add(a)
+            db.commit()
+            db.refresh(a)
+            aid = a.id
+
+        r = test_app.client.get(f"/api/articles/{aid}")
+        assert r.status_code == 200
+        assert r.json()["content_type"] == "xhs_image_text"
+    finally:
+        test_app.cleanup()

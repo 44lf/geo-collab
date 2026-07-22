@@ -616,3 +616,15 @@ def test_save_from_mcp_without_model_label_leaves_metrics_clean(monkeypatch):
             assert "writer_model" not in metrics
     finally:
         test_app.cleanup()
+
+
+def test_escape_hashtag_headings():
+    from server.app.modules.ai_generation.markdown_sanitizer import escape_hashtag_headings
+
+    # 无空格 hashtag → 转义首 #（保号、不再当标题）
+    assert escape_hashtag_headings("#打工人 #平价好物") == "\#打工人 #平价好物"
+    assert escape_hashtag_headings("正文\n#标签") == "正文\n\#标签"
+    # 合法标题（# 后有空格）不动
+    assert escape_hashtag_headings("## 正常标题") == "## 正常标题"
+    assert escape_hashtag_headings("# 标题") == "# 标题"
+    assert escape_hashtag_headings("no hash here") == "no hash here"
