@@ -33,7 +33,7 @@
   - 删除：`:317`（从 `images` 过滤）。
   - 侧栏栏目角标 `images.length`：`:590-592`（总数，分页后仍显示总数）。
 - 前端 API：`web/src/api/image-library.ts:49` `listImages`（不变）。
-- 卡片网格 CSS：`web/src/styles.css:1370` `.imageLibraryGrid`，当前 `repeat(auto-fill, minmax(min(100%, 340px), 420px))`。
+- 卡片网格 CSS：`web/src/styles.css:2365-2373` `.imageLibraryGrid`，当前 `repeat(auto-fill, minmax(160px, 1fr))`（卡片偏小、`overflow-y:auto` 内部滚动）；容器 `.imageLibraryLayout`（flex row，:2347）+ `.imageLibrarySidebar`（180px，:2349）。
 - 后端 `GET /images`：`server/app/modules/image_library/router.py:511`，`.all()` 全量、按 `created_at desc` 排序 —— **本次不改**。
 
 ## 设计
@@ -55,6 +55,7 @@
 - 页码过多时用省略号折叠（首页、末页、当前页 ±1 常显）。
 - `totalPages <= 1` 时整条隐藏。
 - 抽成同文件内的局部组件 `GridPagination`（props：`page`、`totalPages`、`totalCount`、`onChange`），职责单一、便于独立理解；不引第三方分页库。
+- 布局：新增 `.imageLibraryContent`（flex column）包住 `.imageLibraryGrid`（滚动区）+ 分页条（固定底部），分页条不随网格滚动。
 
 ### 3. 与现有逻辑的集成（逐条）
 
@@ -73,7 +74,7 @@
 
 ### 5. 卡片尺寸调大
 
-- `.imageLibraryGrid`：`minmax(min(100%, 340px), 420px)` → `minmax(min(100%, 480px), 560px)`（每行约 2–3 列，随容器宽度自适应）。
+- `.imageLibraryGrid`：`minmax(160px, 1fr)` → `minmax(min(100%, 480px), 560px)`（每行约 2–3 列，随容器宽度自适应）。
 - 加载骨架数量从 8 调到 `PAGE_SIZE`（12），与每页量对齐。
 
 ## 验证
