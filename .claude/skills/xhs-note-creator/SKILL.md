@@ -77,8 +77,12 @@ description: Use when turning an approved GEO article into a Xiaohongshu (Redboo
 7. **轮询** `get_xhs_status(job_id)`（间隔 ~5-10s）直到 `status` 为 `done` 或 `failed`：
    - `done` → 取 `cover_url` + `card_urls`（有序数组）
    - `failed` / 长时间未 done → 记录 `error`，不重试、不阻塞，如实告知用户
-8. **拼落库 markdown**：封面图 + 各卡片图（按 `card_urls` 顺序，`![](url)`）+ 末尾小红书
-   文案（标题 / 正文 / 5-10 个 SEO `#标签`，**纯文本**，方便用户直接复制粘贴到小红书 App）。
+8. **拼落库 markdown**：封面图 + 各卡片图（按 `card_urls` 顺序，`![](url)`）+ 末尾放**可直接
+   发布的成品文案**：小红书标题(一行) → 空行 → 正文 → 空行 → 5-10 个 SEO `#标签`。
+   **⚠️ 文案必须是复制粘贴就能直接发的成品,不含任何脚手架/标签**：
+   - **不要**加「小红书文案（可直接复制）」这类说明性抬头；
+   - **不要**给内容打「标题：」「正文：」「标签：」这种字段标签；
+   - **不要**任何解释/元信息文字。用户复制就能发到小红书 App,不用再手动删任何词。
 9. `save_xhs_note(source_article_id=<源文章 id>, prompt_template_id=<步骤2 选的模板 id>,
    title=<小红书标题>, markdown_content=<步骤8 拼好的 markdown>)` → 落**未审核库**
    （`review_status="pending"`），内容列表会显示「小红书图文」徽标。
