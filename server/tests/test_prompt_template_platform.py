@@ -126,5 +126,22 @@ def test_create_and_update_platform_round_trip(monkeypatch):
             fetched = get_prompt_template(db, template_id)
             assert fetched is not None
             assert fetched.platform is None
+
+        # create 传空字符串 → 与 update 对齐，直接归一化为通用（None）
+        with app.session_factory() as db:
+            template2 = create_prompt_template(
+                db,
+                name="t2",
+                content="c2",
+                scope="generation",
+                platform="",
+            )
+            db.commit()
+            template2_id = template2.id
+
+        with app.session_factory() as db:
+            fetched2 = get_prompt_template(db, template2_id)
+            assert fetched2 is not None
+            assert fetched2.platform is None
     finally:
         app.cleanup()

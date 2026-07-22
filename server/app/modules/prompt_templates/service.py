@@ -189,6 +189,8 @@ def create_prompt_template(
     platform: str | None = None,
 ) -> PromptTemplate:
     _validate_scope(scope)
+    # 与 update_prompt_template 对齐：先归一化空串→None，再校验，再落库。
+    platform = platform or None
     _validate_platform(platform)
     template = PromptTemplate(
         name=name,
