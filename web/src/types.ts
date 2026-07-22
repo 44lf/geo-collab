@@ -1,7 +1,34 @@
-import { Bot, FileText, Film, Gamepad2, Gem, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
+import {
+  Bot,
+  FileText,
+  Film,
+  Gamepad2,
+  Gem,
+  MessagesSquare,
+  MonitorCog,
+  Plug,
+  RadioTower,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "agents" | "ai" | "content" | "prompts" | "quality-reference" | "image-library" | "game-library" | "videos" | "media" | "tasks" | "system" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
+export type NavKey =
+  | "agents"
+  | "ai"
+  | "content"
+  | "prompts"
+  | "quality-reference"
+  | "image-library"
+  | "game-library"
+  | "videos"
+  | "media"
+  | "tasks"
+  | "system"
+  | "mcp-connect"
+  | "admin"
+  | "audit-logs"
+  | "ai-models";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -14,6 +41,7 @@ export type PromptTemplate = {
   is_system: boolean;
   is_enabled: boolean;
   is_deleted: boolean;
+  platform: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -337,12 +365,7 @@ export type AccountBrowserSession = {
 };
 
 export type AccountLoginSessionStatus =
-  | "pending"
-  | "queued"
-  | "starting"
-  | "active"
-  | "failed"
-  | "cancelled";
+  "pending" | "queued" | "starting" | "active" | "failed" | "cancelled";
 
 export type AccountLoginSessionStatusResponse = {
   status: AccountLoginSessionStatus;
@@ -821,17 +844,34 @@ export interface Pipeline {
   nodes: PipelineNodeDef[];
 }
 export interface PipelineVersionSummary {
-  id: number; pipeline_id: number; version_no: number;
-  remark: string | null; created_by: number; created_at: string;
+  id: number;
+  pipeline_id: number;
+  version_no: number;
+  remark: string | null;
+  created_by: number;
+  created_at: string;
 }
 export interface PipelineRun {
-  id: number; pipeline_id: number; status: string;
-  article_ids: number[]; node_results: Record<string, unknown>;
-  error_message: string | null; created_at: string; completed_at: string | null;
+  id: number;
+  pipeline_id: number;
+  status: string;
+  article_ids: number[];
+  node_results: Record<string, unknown>;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
 }
 export interface NodeTypeDef {
-  type: string; label: string;
-  config_schema: { key: string; type: string; label: string; default?: boolean | string | number; hint?: string; note?: string }[];
+  type: string;
+  label: string;
+  config_schema: {
+    key: string;
+    type: string;
+    label: string;
+    default?: boolean | string | number;
+    hint?: string;
+    note?: string;
+  }[];
 }
 
 export type RunLogRow = {

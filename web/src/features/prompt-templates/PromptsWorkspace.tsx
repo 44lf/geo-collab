@@ -19,6 +19,15 @@ const scopeTabs: { scope: PromptScope; label: string }[] = [
   { scope: "image_companion", label: "陪衬配图提示词" },
 ];
 
+const PROMPT_PLATFORMS: { value: string; label: string }[] = [
+  { value: "", label: "通用" },
+  { value: "xiaohongshu", label: "小红书" },
+  { value: "toutiao", label: "头条" },
+  { value: "wechat_mp", label: "公众号" },
+];
+const platformLabel = (p: string | null) =>
+  PROMPT_PLATFORMS.find((x) => x.value === (p ?? ""))?.label ?? p ?? "通用";
+
 // 每个 scope 在编辑弹窗里的填写提示，帮助快速上手测试调优
 const scopeHints: Partial<Record<PromptScope, string>> = {
   image_search:
@@ -73,12 +82,13 @@ function PromptModal({
   initial?: PromptTemplate;
   scope: PromptScope;
   canCreateSystem: boolean;
-  onSave: (name: string, content: string, isSystem: boolean) => Promise<void>;
+  onSave: (name: string, content: string, isSystem: boolean, platform: string) => Promise<void>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [content, setContent] = useState(initial?.content ?? "");
   const [isSystem, setIsSystem] = useState(initial?.is_system ?? false);
+  const [platform, setPlatform] = useState(initial?.platform ?? "");
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
@@ -87,7 +97,7 @@ function PromptModal({
     try {
       // isSystem 初值来自 initial?.is_system，普通用户隐藏勾选框故只会透传原值：
       // 编辑系统模板时保持 is_system=true（不降级），新建时保持 false（无法越权置真）。
-      await onSave(name.trim(), content.trim(), isSystem);
+      await onSave(name.trim(), content.trim(), isSystem, platform);
       onClose();
     } finally {
       setSaving(false);
@@ -136,9 +146,27 @@ function PromptModal({
             onChange={(e) => setContent(e.target.value)}
           />
         </label>
+        <label className="aiFormGroup">
+          <span className="aiFormLabel">适用平台</span>
+          <select
+            className="aiSearchInput promptModalInput"
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+          >
+            {PROMPT_PLATFORMS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
         {canCreateSystem && (
           <label className="promptSystemCheck">
-            <input type="checkbox" checked={isSystem} onChange={(e) => setIsSystem(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={isSystem}
+              onChange={(e) => setIsSystem(e.target.checked)}
+            />
             <span>系统提示词</span>
           </label>
         )}
@@ -147,10 +175,11 @@ function PromptModal({
   );
 }
 
-export function PromptsWorkspace(
-  { scope: propScope, isMobile, onScopeChange }:
-  { scope?: PromptScope; isMobile?: boolean; onScopeChange?: (s: PromptScope) => void } = {},
-) {
+export function PromptsWorkspace({
+  scope: propScope,
+  isMobile,
+  onScopeChange,
+}: { scope?: PromptScope; isMobile?: boolean; onScopeChange?: (s: PromptScope) => void } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [scope, setScope] = useState<PromptScope>("generation");
@@ -199,20 +228,27 @@ export function PromptsWorkspace(
     return user?.role === "admin" || (!prompt.is_system && prompt.user_id === user?.id);
   }
 
-  async function handleSave(name: string, content: string, isSystem: boolean) {
+  async function handleSave(name: string, content: string, isSystem: boolean, platform: string) {
     if (modal?.editing) {
       const updated = await updatePromptTemplate(modal.editing.id, {
         name,
         content,
         scope,
         is_system: isSystem,
+        platform: platform || null,
       });
       setPrompts((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       toast("已更新", "success");
       return;
     }
 
-    const created = await createPromptTemplate({ name, content, scope, is_system: isSystem });
+    const created = await createPromptTemplate({
+      name,
+      content,
+      scope,
+      is_system: isSystem,
+      platform: platform || null,
+    });
     setPrompts((prev) => [created, ...prev]);
     toast("已创建", "success");
   }
@@ -245,7 +281,12 @@ export function PromptsWorkspace(
           <h1>提示词管理</h1>
         </div>
         <div className="topActions">
-          <button className="secondaryButton" type="button" disabled={loading} onClick={() => void reload()}>
+          <button
+            className="secondaryButton"
+            type="button"
+            disabled={loading}
+            onClick={() => void reload()}
+          >
             刷新
           </button>
           <button className="primaryButton" type="button" onClick={() => setModal({})}>
@@ -293,14 +334,20 @@ export function PromptsWorkspace(
           const editable = canEdit(prompt);
           const deletable = canDelete(prompt);
           return (
-            <article key={prompt.id} className={`promptTemplateCard${prompt.is_enabled ? "" : " disabled"}`}>
+            <article
+              key={prompt.id}
+              className={`promptTemplateCard${prompt.is_enabled ? "" : " disabled"}`}
+            >
               <div className="promptTemplateHeader">
                 <div>
                   <div className="aiCardName">{prompt.name}</div>
                   <div className="promptTemplateMeta">
                     <span
                       className="badge"
-                      style={{ fontFamily: "var(--mono, monospace)", color: "var(--text-muted, #888)" }}
+                      style={{
+                        fontFamily: "var(--mono, monospace)",
+                        color: "var(--text-muted, #888)",
+                      }}
                       title="数据库 ID"
                     >
                       ID {prompt.id}
@@ -311,12 +358,20 @@ export function PromptsWorkspace(
                     <span className={`badge ${prompt.is_enabled ? "succeeded" : "cancelled"}`}>
                       {prompt.is_enabled ? "启用" : "停用"}
                     </span>
+                    <span className="badge">{platformLabel(prompt.platform)}</span>
                   </div>
                 </div>
                 <div className="promptTemplateActions">
-                  {editable && <Toggle on={prompt.is_enabled} onChange={() => void handleToggle(prompt)} />}
                   {editable && (
-                    <button className="iconButton" type="button" onClick={() => setModal({ editing: prompt })} title="编辑">
+                    <Toggle on={prompt.is_enabled} onChange={() => void handleToggle(prompt)} />
+                  )}
+                  {editable && (
+                    <button
+                      className="iconButton"
+                      type="button"
+                      onClick={() => setModal({ editing: prompt })}
+                      title="编辑"
+                    >
                       <Pencil size={14} />
                     </button>
                   )}
