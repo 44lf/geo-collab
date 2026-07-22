@@ -1,8 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import { ImageIcon, Trash2, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ImageIcon, Trash2, Upload, X } from "lucide-react";
 import { deleteImage, listImages, uploadImage } from "../../api/image-library";
 import type { StockImage } from "../../types";
 import { useToast } from "../../components/Toast";
+
+const PAGE_SIZE = 12;
+
+// 生成页码列表；超过 7 页时用省略号折叠。与图片库 GridPagination 分页逻辑一致。
+function pageList(page: number, total: number): (number | "…")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const out: (number | "…")[] = [1];
+  const left = Math.max(2, page - 1);
+  const right = Math.min(total - 1, page + 1);
+  if (left > 2) out.push("…");
+  for (let p = left; p <= right; p++) out.push(p);
+  if (right < total - 1) out.push("…");
+  out.push(total);
+  return out;
+}
 
 export function GameMaterialPanel({
   categoryId,
@@ -16,10 +31,12 @@ export function GameMaterialPanel({
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [lightbox, setLightbox] = useState<StockImage | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const fileRef = useRef<HTMLInputElement>(null);
   const seqRef = useRef(0);
 
   useEffect(() => {
+    setCurrentPage(1);
     if (categoryId == null) {
       setImages([]);
       return;
@@ -38,6 +55,12 @@ export function GameMaterialPanel({
       });
   }, [categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 删除等导致总页数减少时，把 currentPage 钳回合法范围，避免停在空页。
+  useEffect(() => {
+    const total = Math.max(1, Math.ceil(images.length / PAGE_SIZE));
+    if (currentPage > total) setCurrentPage(total);
+  }, [images, currentPage]);
+
   async function onPick(files: FileList | null) {
     if (!files || files.length === 0 || categoryId == null) return;
     setUploading(true);
@@ -53,6 +76,7 @@ export function GameMaterialPanel({
     }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
+    if (ok > 0) setCurrentPage(1);
     toast(`上传完成：${ok}/${files.length} 张`, ok === files.length ? "success" : "error");
   }
 
@@ -68,6 +92,9 @@ export function GameMaterialPanel({
   }
 
   const count = categoryId == null ? screenshotUrlCount : images.length;
+  const totalPages = Math.max(1, Math.ceil(images.length / PAGE_SIZE));
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const pageImages = images.slice(pageStart, pageStart + PAGE_SIZE);
 
   return (
     <div className="glShots">
@@ -107,24 +134,63 @@ export function GameMaterialPanel({
           <span>暂无截图素材，点「上传图片」添加</span>
         </div>
       ) : (
-        <div className="glShotsGrid">
-          {images.map((img) => (
-            <div key={img.id} className="glShotCard">
-              <div className="glShotThumb" onClick={() => setLightbox(img)}>
-                <img src={img.url} alt={img.filename} loading="lazy" />
-                <button
-                  type="button"
-                  className="glShotDel"
-                  title="删除"
-                  onClick={(e) => { e.stopPropagation(); void onDelete(img); }}
-                >
-                  <Trash2 size={13} />
-                </button>
+        <>
+          <div className="glShotsGrid">
+            {pageImages.map((img) => (
+              <div key={img.id} className="glShotCard">
+                <div className="glShotThumb" onClick={() => setLightbox(img)}>
+                  <img src={img.url} alt={img.filename} loading="lazy" />
+                  <button
+                    type="button"
+                    className="glShotDel"
+                    title="删除"
+                    onClick={(e) => { e.stopPropagation(); void onDelete(img); }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+                <span className="glShotName mono" title={img.filename}>{img.filename}</span>
               </div>
-              <span className="glShotName mono" title={img.filename}>{img.filename}</span>
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div className="glShotsPager">
+              <button
+                type="button"
+                className="glShotsPagerBtn"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage((p) => p - 1)}
+                aria-label="上一页"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              {pageList(currentPage, totalPages).map((p, i) =>
+                p === "…" ? (
+                  <span key={`gap-${i}`} className="glShotsPagerGap">…</span>
+                ) : (
+                  <button
+                    key={p}
+                    type="button"
+                    className={`glShotsPagerBtn${p === currentPage ? " active" : ""}`}
+                    onClick={() => setCurrentPage(p)}
+                  >
+                    {p}
+                  </button>
+                ),
+              )}
+              <button
+                type="button"
+                className="glShotsPagerBtn"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => p + 1)}
+                aria-label="下一页"
+              >
+                <ChevronRight size={16} />
+              </button>
+              <span className="glShotsPagerInfo">共 {images.length} 张 · 第 {currentPage}/{totalPages} 页</span>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {lightbox && (
