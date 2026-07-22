@@ -83,3 +83,11 @@ def test_live_render_produces_png():
     out = asyncio.run(R.render_markdown_to_card_bytes(md, theme="sketch", mode="separator"))
     assert out["cover"][:8] == b"\x89PNG\r\n\x1a\n"
     assert all(c[:8] == b"\x89PNG\r\n\x1a\n" for c in out["cards"])
+
+
+def test_convert_markdown_nl2br_linebreaks():
+    """单换行 → <br>（nl2br）：多行小红书文案不挤成一坨。"""
+    from server.app.modules.xhs_cards import render as R
+
+    html = R.convert_markdown_to_html("第一行\n第二行\n第三行")
+    assert html.count("<br") >= 2  # 两处单换行都成断行

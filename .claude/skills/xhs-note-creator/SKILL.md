@@ -26,6 +26,9 @@ description: Use when turning an approved GEO article into a Xiaohongshu (Redboo
    列可用模板（返回小红书专属 + 通用模板），**让用户指定用哪个**（不要替用户默认选一个；
    优先推荐小红书专属模板、没有则用通用模板）；按该模板的语气/结构要求，把正文精简成
    小红书风格短文案（口语化、分点、适度 emoji）。
+   **换行很关键**：卡片文案**每个要点/短句单独一行**（render-markdown 里用真换行分隔），
+   标题、正文各点、推荐指数、玩家评论都各占一行——渲染会把单换行转成断行（nl2br）。
+   **千万别把整段文案写成一行/一大坨**，否则渲染出来挤成一片、可读性极差。
 3. **问用户选主题 + 分页 —— 每次都问，不设强默认**：
    - **主题**（`theme`）：`sketch` / `default` / `playful-geometric` / `neo-brutalism` /
      `botanical` / `professional` / `retro` / `terminal`
@@ -54,7 +57,12 @@ description: Use when turning an approved GEO article into a Xiaohongshu (Redboo
    title: "标题(<=15字)"
    subtitle: "副标题(<=15字)"
    ---
-   第一张卡片正文……
+   🥇 换装+养成首选｜餐厅养成记
+   不止换衣服，长安多套造型+上千种家具随便搭 🏮
+   古风/宫廷/森系随便拼，五大图鉴记录进度 🍚
+   合成经营+剧情三线并行，护肝不逼氪 🌙
+   推荐指数：★★★★★
+   🗣 玩家：冲国风换装来的，一晚上没了
    ![](上一步该卡拿到的图 url，配图关闭或三层都没有则不加这行)
 
    ---
