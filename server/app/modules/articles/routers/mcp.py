@@ -26,6 +26,11 @@ from server.app.shared.feishu_card import build_review_link, send_review_card
 # MCP 路径下没有 user JWT，跟 save_from_mcp 同款用环境变量常量
 _MCP_OPERATOR_USER_ID = int(os.environ.get("GEO_MCP_OPERATOR_USER_ID", "1"))
 
+# 小红书标题硬上限：小红书发布强制 ≤20 字，超限发布会被平台拒。入库时从机制上挡住，
+# 让主对话重写更短的标题（而非静默截断导致标题被切得生硬）。仅约束 xhs 图文，普通
+# loop 文章（头条/公众号允许长标题）不受此限。
+XHS_TITLE_MAX_CHARS = 20
+
 articles_mcp_router = APIRouter()
 
 
@@ -267,6 +272,18 @@ def save_article_from_mcp(
             status_code=400,
             detail=f"prompt_template disabled: id={payload.prompt_template_id}",
         )
+
+    # 小红书标题硬门禁：≤20 字，超限直接 400 让主对话重写（不落库、不静默截断）。
+    if payload.content_type == "xhs_image_text":
+        title_len = len(payload.title.strip())
+        if title_len > XHS_TITLE_MAX_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"xhs 标题超过{XHS_TITLE_MAX_CHARS}字上限（当前 {title_len} 字），"
+                    "小红书发布会被拒，请精简到 20 字以内后重试"
+                ),
+            )
 
     markdown_content = normalize_markdown_content(payload.markdown_content)
     # 小红书图文：#话题标签保号、别被当成标题（吞首 #、超大字号）
