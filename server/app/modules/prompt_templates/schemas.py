@@ -58,4 +58,3 @@ class PromptTemplatePatch(BaseModel):
     is_enabled: bool | None = None
     scope: PromptScope | None = None
     is_system: bool | None = None
-    platform: PromptPlatform | None = None

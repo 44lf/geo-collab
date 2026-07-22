@@ -63,3 +63,68 @@ def test_validate_platform(monkeypatch):
             _validate_platform("bogus")
     finally:
         app.cleanup()
+
+
+def test_create_and_update_platform_round_trip(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.prompt_templates.service import (
+            create_prompt_template,
+            get_prompt_template,
+            update_prompt_template,
+        )
+
+        with app.session_factory() as db:
+            template = create_prompt_template(
+                db,
+                name="t1",
+                content="c1",
+                scope="generation",
+                platform="toutiao",
+            )
+            db.commit()
+            template_id = template.id
+
+        # 重新取出，确认 create 时 platform 落库
+        with app.session_factory() as db:
+            fetched = get_prompt_template(db, template_id)
+            assert fetched is not None
+            assert fetched.platform == "toutiao"
+
+        # update 传具体平台 → 设置为该平台
+        with app.session_factory() as db:
+            fetched = get_prompt_template(db, template_id)
+            assert fetched is not None
+            update_prompt_template(
+                db,
+                fetched,
+                name="t1-renamed",
+                content="c1-updated",
+                platform="wechat_mp",
+            )
+            db.commit()
+
+        with app.session_factory() as db:
+            fetched = get_prompt_template(db, template_id)
+            assert fetched is not None
+            assert fetched.platform == "wechat_mp"
+
+        # update 传空字符串 → 切回通用（None）
+        with app.session_factory() as db:
+            fetched = get_prompt_template(db, template_id)
+            assert fetched is not None
+            update_prompt_template(
+                db,
+                fetched,
+                name="t1-renamed",
+                content="c1-updated",
+                platform="",
+            )
+            db.commit()
+
+        with app.session_factory() as db:
+            fetched = get_prompt_template(db, template_id)
+            assert fetched is not None
+            assert fetched.platform is None
+    finally:
+        app.cleanup()

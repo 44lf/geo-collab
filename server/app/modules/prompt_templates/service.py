@@ -35,6 +35,7 @@ def _visible_query(
 ):
     """构造"当前用户可见"的基础查询：未软删 且（属于本人 或 系统模板）。"""
     _validate_scope(scope)
+    _validate_platform(platform)
     query = db.query(PromptTemplate).filter(
         PromptTemplate.is_deleted == False,  # noqa: E712
         or_(PromptTemplate.user_id == user_id, PromptTemplate.is_system == True),  # noqa: E712
@@ -220,9 +221,11 @@ def update_prompt_template(
     if is_system is not None:
         template.is_system = is_system
     # platform 不走 scope/is_system 的"None=保持原值"惯例：直接应用，空/None → 通用，
-    # 这样才能把已设置的平台专属模板改回通用。
+    # 这样才能把已设置的平台专属模板改回通用。先做空串→None 归一化，再校验——
+    # 否则 "" 会被 _validate_platform 当成非法值拒绝，而不是被当成"切回通用"。
+    platform = platform or None
     _validate_platform(platform)
-    template.platform = platform or None
+    template.platform = platform
     db.flush()
     return template
 
