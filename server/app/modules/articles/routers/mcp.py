@@ -236,7 +236,10 @@ def save_article_from_mcp(
     import uuid
 
     from server.app.modules.ai_generation.converter import markdown_to_html, markdown_to_tiptap
-    from server.app.modules.ai_generation.markdown_sanitizer import normalize_markdown_content
+    from server.app.modules.ai_generation.markdown_sanitizer import (
+        escape_hashtag_headings,
+        normalize_markdown_content,
+    )
     from server.app.modules.ai_generation.models import QuestionItem
     from server.app.modules.articles.schemas import ArticleCreate
     from server.app.modules.articles.service import create_article as _create_article
@@ -266,6 +269,9 @@ def save_article_from_mcp(
         )
 
     markdown_content = normalize_markdown_content(payload.markdown_content)
+    # 小红书图文：#话题标签保号、别被当成标题（吞首 #、超大字号）
+    if payload.content_type == "xhs_image_text":
+        markdown_content = escape_hashtag_headings(markdown_content)
 
     article_payload = ArticleCreate(
         title=payload.title,

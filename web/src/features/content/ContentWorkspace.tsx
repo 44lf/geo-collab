@@ -288,7 +288,14 @@ export function ContentWorkspace({
   const canEdit = selectedArticle?.can_edit !== false;
 
   // 当前编辑器是否有未保存改动（读 ref，恒取最新值；空依赖即稳定）。
+  // xhs 图文预览（独立编辑器）的未保存态：由 XhsNotePreview 上报到此 ref，并入 isDirty。
+  const xhsDirtyRef = useRef(false);
+  const handleXhsDirty = useCallback((dirtyState: boolean) => {
+    xhsDirtyRef.current = dirtyState;
+  }, []);
+
   const isDirty = useCallback(() => {
+    if (xhsDirtyRef.current) return true; // xhs 图文预览的未保存文案
     const d = latestDraft.current;
     const e = latestEditor.current;
     const s = savedStateRef.current;
@@ -1336,7 +1343,12 @@ export function ContentWorkspace({
           </div>
 
           {isXhsArticle && selectedArticle ? (
-            <XhsNotePreview key={selectedArticle.id} article={selectedArticle} onSaved={() => void loadArticleById(selectedArticle.id)} />
+            <XhsNotePreview
+              key={selectedArticle.id}
+              article={selectedArticle}
+              onSaved={() => void loadArticleById(selectedArticle.id)}
+              onDirtyChange={handleXhsDirty}
+            />
           ) : (
             <>
               {canEdit && (
