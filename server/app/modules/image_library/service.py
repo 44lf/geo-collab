@@ -182,6 +182,41 @@ def bump_stock_image_usage(db: Session, image_ids: list[int], article_id: int) -
     )
 
 
+WEB_FALLBACK_CATEGORY_NAME = "小红书web兜底"
+
+
+def search_and_store_web_image(db: Session, keyword: str) -> tuple[str, int] | None:
+    """联网搜一张横版图 rehost MinIO，返回 (公开URL, stock_image_id)。搜不到/无 key/失败返 None（best-effort）。"""
+    from server.app.shared import baidu
+
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return None
+    category = get_or_create_companion_category(db, WEB_FALLBACK_CATEGORY_NAME)
+    if category is None:
+        return None
+    try:
+        for cand in baidu.search_landscape_images(keyword):
+            downloaded = baidu.download_image(cand.url)
+            if downloaded is None:
+                continue
+            data, mime = downloaded
+            img = store_image_bytes(
+                db,
+                category,
+                data,
+                mime,
+                source_url=cand.source_url,
+                width=cand.width,
+                height=cand.height,
+            )
+            if img is not None:
+                return f"/api/stock-images/{img.id}/file", img.id
+    except Exception:
+        logger.exception("search_and_store_web_image failed: %s", keyword)
+    return None
+
+
 def collect_stock_image_ids(content_json: dict) -> list[int]:
     """从 Tiptap content 里收集所有 image 节点的 stockImageId。"""
     out: list[int] = []

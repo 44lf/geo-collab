@@ -62,6 +62,7 @@ from server.app.modules.articles.router import (
 from server.app.modules.audit.router import router as audit_router
 from server.app.modules.auto_review.router import router as auto_review_router
 from server.app.modules.feishu.router import h5_auth_router, h5_public_router
+from server.app.modules.image_library.mcp_router import image_mcp_router
 from server.app.modules.image_library.router import files_router as stock_files_router
 from server.app.modules.image_library.router import router as stock_images_router
 from server.app.modules.loop_skills.router import (
@@ -303,6 +304,12 @@ def create_app() -> FastAPI:
         xhs_mcp_router,
         prefix="/api/xhs-cards",
         tags=["xhs-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验（router 自带 dependency）
+    )
+    app.include_router(
+        image_mcp_router,
+        prefix="/api/mcp",
+        tags=["image-mcp"],
         # 不挂 get_current_user — MCP token 在 endpoint 内单独校验（router 自带 dependency）
     )
     # auto_review 走 /api/articles 前缀（与现有 article 路由同前缀，由 MCP token 单独鉴权）

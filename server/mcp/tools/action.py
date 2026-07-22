@@ -529,6 +529,22 @@ async def import_external_reference(
 
 
 @mcp.tool()
+async def search_web_image(keyword: str) -> dict[str, Any]:
+    """Web-search ONE landscape image for a keyword, rehost to MinIO, return its URL.
+
+    Third-tier fallback for xhs card illustration (games/topics not in the stock library).
+    Does NOT insert into any article. Returns {"url": "/api/stock-images/{id}/file"} or {"url": null}
+    when no image found / GEO_BAIDU_API_KEY missing.
+
+    Args:
+        keyword: search term, e.g. a game name.
+    Returns:
+        {"ok": True, "data": {"url": str|null, "stock_image_id": int|null}, "error": None}
+    """
+    return await _apost("/api/mcp/search-web-image", json={"keyword": keyword})
+
+
+@mcp.tool()
 async def get_external_reference_status(job_id: str) -> dict[str, Any]:
     """轮询 import_external_reference 建的异步导入 job 状态。
 
