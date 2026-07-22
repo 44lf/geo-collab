@@ -114,14 +114,23 @@ async def list_question_items(
 
 
 @mcp.tool()
-async def list_prompt_templates(scope: str = "generation") -> dict[str, Any]:
-    """List prompt templates filtered by scope.
+async def list_prompt_templates(
+    scope: str = "generation", platform: str | None = None
+) -> dict[str, Any]:
+    """List prompt templates filtered by scope, optionally by platform.
 
     Args:
         scope: One of "generation", "ai_format", "image_search", "image_companion".
                "generation" = article writing prompts (most common for Loops).
+        platform: Optional platform filter. Known values: xiaohongshu / toutiao /
+            wechat_mp. When given, returns that platform's templates plus generic
+            (platform=null) ones; when omitted, returns all. Each returned item
+            includes its `platform` field.
     """
-    return await _aget("/api/mcp/prompt-templates", params={"scope": scope})
+    params: dict[str, Any] = {"scope": scope}
+    if platform:
+        params["platform"] = platform
+    return await _aget("/api/mcp/prompt-templates", params=params)
 
 
 @mcp.tool()

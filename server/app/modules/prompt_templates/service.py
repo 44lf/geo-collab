@@ -13,6 +13,10 @@ from server.app.shared.errors import ValidationError
 
 VALID_PROMPT_SCOPES = {"generation", "ai_format", "image_search", "image_companion"}
 
+# platform 是与 scope 正交的新维度：已知取值收敛在此处；schemas.py 的 PromptPlatform
+# Literal 另有一份，两处需保持一致。None=通用（跨平台适用，过滤时永远候选）。
+VALID_PROMPT_PLATFORMS = {"xiaohongshu", "toutiao", "wechat_mp"}
+
 
 def _validate_scope(scope: str | None) -> None:
     # 非法 scope 抛命名异常 ValidationError（→400），不抛裸 ValueError（无全局兜底）
@@ -20,20 +24,37 @@ def _validate_scope(scope: str | None) -> None:
         raise ValidationError(f"Invalid prompt scope: {scope}")
 
 
-def _visible_query(db: Session, *, user_id: int, scope: str | None = None):
+def _validate_platform(platform: str | None) -> None:
+    # 非法 platform 同样抛命名异常 ValidationError（→400），不抛裸 ValueError
+    if platform is not None and platform not in VALID_PROMPT_PLATFORMS:
+        raise ValidationError(f"Invalid prompt platform: {platform}")
+
+
+def _visible_query(
+    db: Session, *, user_id: int, scope: str | None = None, platform: str | None = None
+):
     """构造"当前用户可见"的基础查询：未软删 且（属于本人 或 系统模板）。"""
     _validate_scope(scope)
+    _validate_platform(platform)
     query = db.query(PromptTemplate).filter(
         PromptTemplate.is_deleted == False,  # noqa: E712
         or_(PromptTemplate.user_id == user_id, PromptTemplate.is_system == True),  # noqa: E712
     )
     if scope is not None:
         query = query.filter(PromptTemplate.scope == scope)
+    if platform is not None:
+        query = query.filter(
+            or_(PromptTemplate.platform == platform, PromptTemplate.platform.is_(None))
+        )
     return query
 
 
 def list_prompt_templates(
-    db: Session, *, scope: str | None = None, enabled_only: bool = False
+    db: Session,
+    *,
+    scope: str | None = None,
+    enabled_only: bool = False,
+    platform: str | None = None,
 ) -> list[PromptTemplate]:
     """全量列出（不做可见性过滤），仅排除软删。
 
@@ -42,22 +63,30 @@ def list_prompt_templates(
     - MCP catalog（enabled_only=True）：只把"启用"的模板递给 Loop——关闭=业务上"停用",
       不该再被拿去生文（见 save_article_from_mcp 的写入层兜底校验）。
     系统模板排在前，与 list_visible_prompts 的排序对齐。
+
+    platform 过滤语义：传入时返回「该 platform 专属 或 通用（platform IS NULL）」；
+    不传（None）则不做该维度过滤，返回全部平台。
     """
     _validate_scope(scope)
+    _validate_platform(platform)
     query = db.query(PromptTemplate).filter(PromptTemplate.is_deleted == False)  # noqa: E712
     if enabled_only:
         query = query.filter(PromptTemplate.is_enabled == True)  # noqa: E712
     if scope is not None:
         query = query.filter(PromptTemplate.scope == scope)
+    if platform is not None:
+        query = query.filter(
+            or_(PromptTemplate.platform == platform, PromptTemplate.platform.is_(None))
+        )
     return query.order_by(PromptTemplate.is_system.desc(), PromptTemplate.id).all()
 
 
 def list_visible_prompts(
-    db: Session, *, user_id: int, scope: str | None = None
+    db: Session, *, user_id: int, scope: str | None = None, platform: str | None = None
 ) -> list[PromptTemplate]:
     """列出当前用户可见的模板（本人私有 + 系统），系统模板排在前。"""
     return (
-        _visible_query(db, user_id=user_id, scope=scope)
+        _visible_query(db, user_id=user_id, scope=scope, platform=platform)
         .order_by(PromptTemplate.is_system.desc(), PromptTemplate.id)
         .all()
     )
@@ -157,14 +186,19 @@ def create_prompt_template(
     scope: str = "generation",
     user_id: int | None = None,
     is_system: bool = False,
+    platform: str | None = None,
 ) -> PromptTemplate:
     _validate_scope(scope)
+    # 与 update_prompt_template 对齐：先归一化空串→None，再校验，再落库。
+    platform = platform or None
+    _validate_platform(platform)
     template = PromptTemplate(
         name=name,
         content=content,
         scope=scope,
         user_id=user_id,
         is_system=is_system,
+        platform=platform,
     )
     db.add(template)
     db.flush()
@@ -179,6 +213,7 @@ def update_prompt_template(
     content: str,
     scope: str | None = None,
     is_system: bool | None = None,
+    platform: str | None = None,
 ) -> PromptTemplate:
     template.name = name
     template.content = content
@@ -187,6 +222,12 @@ def update_prompt_template(
         template.scope = scope
     if is_system is not None:
         template.is_system = is_system
+    # platform 不走 scope/is_system 的"None=保持原值"惯例：直接应用，空/None → 通用，
+    # 这样才能把已设置的平台专属模板改回通用。先做空串→None 归一化，再校验——
+    # 否则 "" 会被 _validate_platform 当成非法值拒绝，而不是被当成"切回通用"。
+    platform = platform or None
+    _validate_platform(platform)
+    template.platform = platform
     db.flush()
     return template
 

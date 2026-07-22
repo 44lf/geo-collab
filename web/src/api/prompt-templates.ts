@@ -13,6 +13,7 @@ export function createPromptTemplate(payload: {
   content: string;
   scope?: PromptScope;
   is_system?: boolean;
+  platform?: string | null;
 }): Promise<PromptTemplate> {
   return api<PromptTemplate>("/api/prompt-templates", {
     method: "POST",
@@ -22,7 +23,13 @@ export function createPromptTemplate(payload: {
 
 export function updatePromptTemplate(
   id: number,
-  payload: { name: string; content: string; scope?: PromptScope; is_system?: boolean },
+  payload: {
+    name: string;
+    content: string;
+    scope?: PromptScope;
+    is_system?: boolean;
+    platform?: string | null;
+  },
 ): Promise<PromptTemplate> {
   return api<PromptTemplate>(`/api/prompt-templates/${id}`, {
     method: "PUT",
@@ -44,7 +51,9 @@ export function deletePromptTemplate(id: number): Promise<void> {
   return api<void>(`/api/prompt-templates/${id}`, { method: "DELETE" });
 }
 
-export function updateUserAiFormatPreset(aiFormatPresetId: number | null): Promise<{ ai_format_preset_id: number | null }> {
+export function updateUserAiFormatPreset(
+  aiFormatPresetId: number | null,
+): Promise<{ ai_format_preset_id: number | null }> {
   return api<{ ai_format_preset_id: number | null }>("/api/users/me/settings", {
     method: "PATCH",
     body: JSON.stringify({ ai_format_preset_id: aiFormatPresetId }),
