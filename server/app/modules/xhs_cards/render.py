@@ -315,8 +315,10 @@ def generate_card_html(content: str, theme: str, page_number: int, width: int, h
         {theme_css}
 
         .card-content img {{
+            width: 100%;
+            height: auto;
             max-height: 640px;
-            object-fit: contain;
+            object-fit: cover;
         }}
 
         .card-content :not(pre) > code {{

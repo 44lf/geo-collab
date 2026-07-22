@@ -550,6 +550,111 @@ def test_save_from_mcp_xhs_no_question(monkeypatch):
         test_app.cleanup()
 
 
+def test_save_from_mcp_xhs_rejects_title_over_20(monkeypatch):
+    """小红书图文标题 >20 字 → 400（小红书发布强制 ≤20，从机制上入库时挡住），不落库。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        # 超过 20 汉字上限
+        long_title = "梦幻家园三消装扮经营三线并行养成手游超长标题一"
+        assert len(long_title) > 20
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": long_title,
+                "markdown_content": "正文\n\n#标签",
+                "content_type": "xhs_image_text",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 400, r.text
+        assert "20" in r.json()["detail"]
+        with test_app.session_factory() as db:
+            assert db.query(Article).count() == 0
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_xhs_accepts_title_exactly_20(monkeypatch):
+    """恰好 20 字（含首尾空格 strip 后）→ 落库成功；上限是含 20、非 <20。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        title_20 = "梦幻家园三消装扮经营养成手游推荐榜前二十"
+        assert len(title_20) == 20
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": f"  {title_20}  ",  # 前后空格 strip 后仍 20
+                "markdown_content": "正文\n\n#标签",
+                "content_type": "xhs_image_text",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        with test_app.session_factory() as db:
+            assert db.query(Article).count() == 1
+
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_non_xhs_title_over_20_ok(monkeypatch):
+    """非小红书内容（普通 loop 文章）标题 >20 不受此限：头条/公众号允许长标题。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        qid, tpl_id = _seed_question_and_template(test_app)
+
+        long_title = "这是一个远超二十个汉字的普通头条文章标题应当被允许通过不受小红书限制"
+        assert len(long_title) > 20
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "question_item_id": qid,
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": long_title,
+                "markdown_content": "正文",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        with test_app.session_factory() as db:
+            assert db.query(Article).count() == 1
+    finally:
+        test_app.cleanup()
+
+
 def test_save_from_mcp_rejects_unknown_content_type(monkeypatch):
     """content_type 不在白名单内 → 400，不落库。"""
     from server.app.modules.articles.models import Article

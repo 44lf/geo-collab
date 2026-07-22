@@ -91,3 +91,17 @@ def test_convert_markdown_nl2br_linebreaks():
 
     html = R.convert_markdown_to_html("第一行\n第二行\n第三行")
     assert html.count("<br") >= 2  # 两处单换行都成断行
+
+
+def test_card_img_uniform_width():
+    """卡片配图强制满宽：主题 CSS 的 max-width 只封顶、图仍按内在像素宽渲染 →
+    各卡来源分辨率不同就宽度不一。注入 width:100% 强制统一，object-fit:cover 防限高拉伸。"""
+    import re
+
+    from server.app.modules.xhs_cards import render as R
+
+    html = R.generate_card_html("正文\n\n![](/api/stock-images/1/file)", "sketch", 1, 1080, 1440)
+    assert ".card-content img" in html
+    # 强制满宽 → 宽度统一。用 [^-]width 排除主题里 max-width:100% 的误命中。
+    assert re.search(r"[^-]width:\s*100%", html)
+    assert "object-fit: cover" in html  # 限高时裁剪而非拉伸变形

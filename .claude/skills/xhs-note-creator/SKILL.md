@@ -86,6 +86,9 @@ description: Use when turning an approved GEO article into a Xiaohongshu (Redboo
 9. `save_xhs_note(source_article_id=<源文章 id>, prompt_template_id=<步骤2 选的模板 id>,
    title=<小红书标题>, markdown_content=<步骤8 拼好的 markdown>)` → 落**未审核库**
    （`review_status="pending"`），内容列表会显示「小红书图文」徽标。
+   **⚠️ `title` 硬上限 20 字**（含标点 / emoji，小红书发布强制 ≤20，后端也会挡）：写标题时
+   就控制在 20 字内。若返回 400「标题超过20字」，**精简标题到 ≤20 后重新调用本工具**
+   （封面 / 卡片图已渲染好、无需重来，只改 `title` + 重拼 markdown 再发一次即可）。
 
 # 约束 / 注意
 
@@ -93,8 +96,9 @@ description: Use when turning an approved GEO article into a Xiaohongshu (Redboo
   工具；发到小红书由人工在小红书 App 内完成。
 - **主题/分页必须问用户**：不要因为"看起来差不多"就替用户挑一个默认值——每次都问。
 - **分页 MVP caveat 必须讲给用户听**（见流程第 3 步），并在实际排版时始终手动打 `---`。
-- **小红书文案风格**：标题 <=20 字；每段落 1-2 个 emoji（不要堆砌）；结尾 5-10 个 SEO
-  `#标签`（贴合文章主题 + 小红书常见热门标签）。
+- **小红书文案风格**：标题**必须 ≤20 字**（硬上限，含标点 / emoji；超 20 后端 400 拒绝、
+  发布也会被平台拒）；每段落 1-2 个 emoji（不要堆砌）；结尾 5-10 个 SEO `#标签`
+  （贴合文章主题 + 小红书常见热门标签）。
 - **`prompt_template_id` 要传对**：是步骤 2 用户挑的那个模板的 id，不是随便传 1。
 - **卡片图片链接**：`card_urls` / `cover_url` 是 GEO 后端 `/api/xhs-cards/file/...` 形式的
   站内地址，直接原样拼进 `![](url)` 即可，不要自己改写路径。
