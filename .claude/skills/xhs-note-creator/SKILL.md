@@ -22,9 +22,10 @@ description: Use when turning an approved GEO article into a Xiaohongshu (Redboo
 
 1. **选源文章**：`list_articles(review_status="approved")` 列已审核文章供挑选（或用户已
    直接给了 `article_id`）；`get_article(article_id)` 读全文（用 `plain_text` 做精简素材）。
-2. **选精简提示词**：`list_prompt_templates(scope="generation")` 列可用模板，**让用户指定
-   用哪个**（不要替用户默认选一个）；按该模板的语气/结构要求，把正文精简成小红书风格
-   短文案（口语化、分点、适度 emoji）。
+2. **选精简提示词**：`list_prompt_templates(scope="generation", platform="xiaohongshu")`
+   列可用模板（返回小红书专属 + 通用模板），**让用户指定用哪个**（不要替用户默认选一个；
+   优先推荐小红书专属模板、没有则用通用模板）；按该模板的语气/结构要求，把正文精简成
+   小红书风格短文案（口语化、分点、适度 emoji）。
 3. **问用户选主题 + 分页 —— 每次都问，不设强默认**：
    - **主题**（`theme`）：`sketch` / `default` / `playful-geometric` / `neo-brutalism` /
      `botanical` / `professional` / `retro` / `terminal`
