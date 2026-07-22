@@ -31,6 +31,7 @@ import { Modal } from "../../components/Modal";
 import { Pagination } from "../../components/Pagination";
 import { DistributeModal, type DistributeTarget } from "./DistributeModal";
 import { buildReadonlyExtensions } from "./readonlyExtensions";
+import { XhsNotePreview } from "./XhsNotePreview";
 
 function makeEmptyDraft(): Draft {
   return {
@@ -958,6 +959,9 @@ export function ContentWorkspace({
   }
 
   const currentReviewStatus: ReviewStatus = selectedArticle?.review_status ?? "approved";
+  // 小红书图文：内容区改用专用轮播+文案预览（XhsNotePreview 自包含保存），
+  // 主 editor 仍照常挂载（hook 不条件调用）但不渲染其 EditorContent / 工具栏 / 顶部保存，避免双保存。
+  const isXhsArticle = selectedArticle?.content_type === "xhs_image_text";
 
   return (
     <>
@@ -986,10 +990,12 @@ export function ContentWorkspace({
                 <Trash2 size={16} />
                 删除
               </button>
-              <button className="primaryButton" disabled={loading || imageUploading > 0} type="button" onClick={() => void saveArticle()}>
-                <Save size={16} />
-                保存
-              </button>
+              {!isXhsArticle && (
+                <button className="primaryButton" disabled={loading || imageUploading > 0} type="button" onClick={() => void saveArticle()}>
+                  <Save size={16} />
+                  保存
+                </button>
+              )}
               <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (isDirty()) { setConfirmUnsavedNew(true); } else { resetDraft(); } }}>
                 <Plus size={16} />
                 新建
@@ -1329,25 +1335,31 @@ export function ContentWorkspace({
             ) : null}
           </div>
 
-          {canEdit && (
-            <EditorToolbar
-              editor={editor}
-              onImageUpload={handleBodyImageUpload}
-              imageSelected={!!editor?.isActive("image")}
-              onSaveImage={() => {
-                const src = editor?.getAttributes("image").src as string | undefined;
-                if (src) setSaveImageSrc(src);
-                else toast("请先选中正文中的图片", "error");
-              }}
-            />
+          {isXhsArticle && selectedArticle ? (
+            <XhsNotePreview article={selectedArticle} onSaved={() => void loadArticleById(selectedArticle.id)} />
+          ) : (
+            <>
+              {canEdit && (
+                <EditorToolbar
+                  editor={editor}
+                  onImageUpload={handleBodyImageUpload}
+                  imageSelected={!!editor?.isActive("image")}
+                  onSaveImage={() => {
+                    const src = editor?.getAttributes("image").src as string | undefined;
+                    if (src) setSaveImageSrc(src);
+                    else toast("请先选中正文中的图片", "error");
+                  }}
+                />
+              )}
+              <div className="editorWrap paper-scope">
+                <EditorContent editor={editor} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, padding: "4px 8px", fontSize: 12, color: charCount < 300 ? "#e67e22" : "#888" }}>
+                <span>正文字数：{charCount} 字</span>
+                {charCount < 300 && <span>（建议不少于 300 字）</span>}
+              </div>
+            </>
           )}
-          <div className="editorWrap paper-scope">
-            <EditorContent editor={editor} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, padding: "4px 8px", fontSize: 12, color: charCount < 300 ? "#e67e22" : "#888" }}>
-            <span>正文字数：{charCount} 字</span>
-            {charCount < 300 && <span>（建议不少于 300 字）</span>}
-          </div>
 
         </section>
       </section>
