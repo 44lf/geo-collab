@@ -113,8 +113,12 @@ def split_content_by_separator(body: str) -> list[str]:
 
 
 def convert_markdown_to_html(md: str) -> str:
-    """将 Markdown 转换为 HTML"""
-    return markdown.markdown(md, extensions=["extra"])
+    """将 Markdown 转换为 HTML。
+
+    nl2br：单个换行 → <br>（与原 Auto-Redbook 一致）。小红书文案本就分行短句，
+    不加 nl2br 会被 markdown 把单换行折成空格、挤成一大坨、可读性差。
+    """
+    return markdown.markdown(md, extensions=["extra", "nl2br"])
 
 
 def load_theme_css(theme: str) -> str:
