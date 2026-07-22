@@ -30,7 +30,7 @@ def test_game_library_endpoints_auth(monkeypatch):
         app.cleanup()
 
 
-def test_mcp_tools_count_is_35():
+def test_mcp_tools_count_is_39():
     from server.app.modules.mcp_catalog.connect_router import MCP_TOOLS_COUNT
 
-    assert MCP_TOOLS_COUNT == 35
+    assert MCP_TOOLS_COUNT == 39
