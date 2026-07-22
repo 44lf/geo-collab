@@ -1262,15 +1262,15 @@ export function ContentWorkspace({
           <div className="formRow split">
             <label>
               标题
-              <input value={draft.title} disabled={!canEdit} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+              <input value={draft.title} disabled={!canEdit || isXhsArticle} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
             </label>
             <label>
               作者
-              <input value={draft.author} disabled={!canEdit} onChange={(event) => setDraft({ ...draft, author: event.target.value })} />
+              <input value={draft.author} disabled={!canEdit || isXhsArticle} onChange={(event) => setDraft({ ...draft, author: event.target.value })} />
             </label>
             <label>
               状态
-              <select value={draft.status} disabled={!canEdit} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+              <select value={draft.status} disabled={!canEdit || isXhsArticle} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
                 <option value="draft">草稿</option>
                 <option value="ready">待发布</option>
                 <option value="archived">归档</option>
@@ -1336,7 +1336,7 @@ export function ContentWorkspace({
           </div>
 
           {isXhsArticle && selectedArticle ? (
-            <XhsNotePreview article={selectedArticle} onSaved={() => void loadArticleById(selectedArticle.id)} />
+            <XhsNotePreview key={selectedArticle.id} article={selectedArticle} onSaved={() => void loadArticleById(selectedArticle.id)} />
           ) : (
             <>
               {canEdit && (

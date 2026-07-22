@@ -7,16 +7,16 @@ import { buildReadonlyExtensions } from "./readonlyExtensions";
 
 type XhsDoc = { type: "doc"; content: Record<string, unknown>[] };
 
-/** 拆 content_json → 图节点（轮播，按序）+ 文本节点（可编辑） */
-export function splitXhsDoc(doc: unknown): { images: { src: string; alt?: string }[]; textDoc: XhsDoc } {
+/** 拆 content_json → 图节点（轮播，按序，保留完整原始节点）+ 文本节点（可编辑） */
+export function splitXhsDoc(doc: unknown): { images: Record<string, unknown>[]; textDoc: XhsDoc } {
   const content = (doc as XhsDoc | undefined)?.content;
   const nodes = Array.isArray(content) ? content : [];
-  const images: { src: string; alt?: string }[] = [];
+  const images: Record<string, unknown>[] = [];
   const textNodes: Record<string, unknown>[] = [];
   for (const n of nodes) {
     if ((n as { type?: string }).type === "image") {
-      const attrs = (n as { attrs?: { src?: string; alt?: string } }).attrs ?? {};
-      if (attrs.src) images.push({ src: attrs.src, alt: attrs.alt });
+      const attrs = (n as { attrs?: { src?: string } }).attrs ?? {};
+      if (attrs.src) images.push(n);
     } else {
       textNodes.push(n);
     }
@@ -42,9 +42,13 @@ export function XhsNotePreview({ article, onSaved }: { article: Article; onSaved
     setSaving(true);
     try {
       const copyJson = editor.getJSON() as XhsDoc;
-      const imageNodes = images.map((im) => ({ type: "image", attrs: { src: im.src, alt: im.alt ?? "" } }));
-      const content_json = { type: "doc", content: [...imageNodes, ...(copyJson.content ?? [])] };
-      const imagesHtml = images.map((im) => `<img src="${im.src}" alt="${im.alt ?? ""}" />`).join("");
+      const content_json = { type: "doc", content: [...images, ...(copyJson.content ?? [])] };
+      const imagesHtml = images
+        .map((im) => {
+          const attrs = (im as { attrs?: { src?: string; alt?: string } }).attrs ?? {};
+          return `<img src="${attrs.src ?? ""}" alt="${attrs.alt ?? ""}" />`;
+        })
+        .join("");
       const content_html = imagesHtml + editor.getHTML();
       const plain_text = editor.getText();
       await updateArticle(article.id, { title, content_json, content_html, plain_text });
@@ -64,7 +68,7 @@ export function XhsNotePreview({ article, onSaved }: { article: Article; onSaved
       <div className="xhsCarousel" style={{ position: "relative", textAlign: "center" }}>
         {n > 0 ? (
           <img
-            src={images[index].src}
+            src={(images[index] as { attrs?: { src?: string } }).attrs?.src}
             alt={`图 ${index + 1}`}
             style={{ maxWidth: "100%", maxHeight: 520, borderRadius: "var(--r)", objectFit: "contain" }}
           />
