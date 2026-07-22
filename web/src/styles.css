@@ -5451,10 +5451,10 @@ option, optgroup {
 .glShotsGrid { display: flex; flex-wrap: wrap; gap: 12px; }
 .glShotCard {
   display: flex; flex-direction: column; gap: 8px;
-  width: 148px; padding: 8px; border-radius: 8px;
+  width: 260px; padding: 8px; border-radius: 8px;
   background: #191D2D; border: 1px solid #2A2E45;
 }
-.glShotThumb { position: relative; height: 70px; border-radius: 6px; overflow: hidden; cursor: pointer; }
+.glShotThumb { position: relative; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; cursor: pointer; }
 .glShotThumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .glShotDel {
   position: absolute; top: 4px; right: 4px;
@@ -5470,6 +5470,22 @@ option, optgroup {
   display: flex; flex-direction: column; align-items: center; gap: 8px;
   padding: 30px; color: #8D94AE; text-align: center; font-size: 12px;
 }
+.glShotsPager {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding-top: 4px;
+}
+.glShotsPagerBtn {
+  min-width: 30px; height: 30px; padding: 0 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid #2A2E45; border-radius: 6px;
+  background: #191D2D; color: #B9C0D8; cursor: pointer;
+  font-size: 13px; transition: background .1s, color .1s;
+}
+.glShotsPagerBtn:hover:not(:disabled) { background: #222638; color: #F5F7FF; }
+.glShotsPagerBtn.active { background: #8B5CF6; color: #F5F7FF; border-color: #8B5CF6; }
+.glShotsPagerBtn:disabled { opacity: .4; cursor: default; }
+.glShotsPagerGap { padding: 0 4px; color: #8D94AE; }
+.glShotsPagerInfo { margin-left: 10px; font-size: 12px; color: #8D94AE; }
 .glSourceTable {
   width: 420px; flex-shrink: 0; display: flex; flex-direction: column;
   border-radius: 10px; overflow: hidden; background: #151827; border: 1px solid #2A2E45;
