@@ -4,6 +4,8 @@ import { createCategory, deleteCategory, deleteImage, getCategoryDeletePreview, 
 import type { ImageSearchResult, StockCategory, StockImage } from "../../types";
 import { useToast } from "../../components/Toast";
 
+const PAGE_SIZE = 12;
+
 type CategorySort = "created" | "name_asc" | "name_desc" | "latest_image";
 
 type PendingJump = {
@@ -61,6 +63,7 @@ export function ImageLibraryWorkspace() {
   const [editSaving, setEditSaving] = useState(false);
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Search state
   const [searchInput, setSearchInput] = useState("");
@@ -418,6 +421,9 @@ export function ImageLibraryWorkspace() {
     }
   }
 
+  const totalPages = Math.max(1, Math.ceil(images.length / PAGE_SIZE));
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const pageImages = images.slice(pageStart, pageStart + PAGE_SIZE);
   const lightboxImage = lightboxIndex !== null ? (images[lightboxIndex] ?? null) : null;
   const selectedCategory = categories.find((cat) => cat.id === selectedCategoryId) ?? null;
 
@@ -599,60 +605,73 @@ export function ImageLibraryWorkspace() {
           )}
         </aside>
 
-        <div className="imageLibraryGrid">
-          {loading && Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="imageLibraryCardSkeleton" />
-          ))}
-          {!loading && images.length === 0 && selectedCategoryId !== null && (
-            <div className="imageLibraryEmptyState">
-              <Images size={40} strokeWidth={1.2} />
-              <p className="imageLibraryEmptyTitle">这个栏目还没有图片</p>
-              <p>点击右上角「上传图片」开始添加</p>
-            </div>
-          )}
-          {!loading && images.map((img, idx) => (
-            <div
-              key={img.id}
-              id={`il-card-${img.id}`}
-              className={`imageLibraryCard${highlightedImageId === img.id ? " imageLibraryCardHighlight" : ""}`}
-            >
-              <div className="imageLibraryCardImg" onClick={() => setLightboxIndex(idx)}>
-                <img src={img.url} alt={img.filename} loading="lazy" />
-                <div className="imageLibraryCardOverlay">
-                  <span className="imageLibraryCardOverlayName">{img.filename}</span>
-                </div>
+        <div className="imageLibraryContent">
+          <div className="imageLibraryGrid">
+            {loading && Array.from({ length: PAGE_SIZE }).map((_, i) => (
+              <div key={i} className="imageLibraryCardSkeleton" />
+            ))}
+            {!loading && images.length === 0 && selectedCategoryId !== null && (
+              <div className="imageLibraryEmptyState">
+                <Images size={40} strokeWidth={1.2} />
+                <p className="imageLibraryEmptyTitle">这个栏目还没有图片</p>
+                <p>点击右上角「上传图片」开始添加</p>
               </div>
-              <div className="imageLibraryCardActions">
-                <button
-                  type="button"
-                  className="imageLibraryMenuBtn"
-                  onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === img.id ? null : img.id); }}
+            )}
+            {!loading && pageImages.map((img, localIdx) => {
+              const globalIdx = pageStart + localIdx;
+              return (
+                <div
+                  key={img.id}
+                  id={`il-card-${img.id}`}
+                  className={`imageLibraryCard${highlightedImageId === img.id ? " imageLibraryCardHighlight" : ""}`}
                 >
-                  <MoreHorizontal size={16} />
-                </button>
-                {menuOpenId === img.id && (
-                  <div className="imageLibraryDropdown" ref={menuRef}>
-                    <button type="button" onClick={() => openEdit(img)}>
-                      <Pencil size={13} /> 编辑标签
-                    </button>
-                    <button type="button" className="danger" onClick={() => handleDelete(img)}>
-                      <Trash2 size={13} /> 删除
-                    </button>
+                  <div className="imageLibraryCardImg" onClick={() => setLightboxIndex(globalIdx)}>
+                    <img src={img.url} alt={img.filename} loading="lazy" />
+                    <div className="imageLibraryCardOverlay">
+                      <span className="imageLibraryCardOverlayName">{img.filename}</span>
+                    </div>
                   </div>
-                )}
-              </div>
-              <div className="imageLibraryCardInfo">
-                <p className="imageLibraryCardName" title={img.filename}>{img.filename}</p>
-                {img.tags.length > 0 && (
-                  <div className="imageLibraryCardTags">
-                    {img.tags.map((tag) => (
-                      <span key={tag} className="imageLibraryTag">{tag}</span>
-                    ))}
+                  <div className="imageLibraryCardActions">
+                    <button
+                      type="button"
+                      className="imageLibraryMenuBtn"
+                      onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === img.id ? null : img.id); }}
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                    {menuOpenId === img.id && (
+                      <div className="imageLibraryDropdown" ref={menuRef}>
+                        <button type="button" onClick={() => openEdit(img)}>
+                          <Pencil size={13} /> 编辑标签
+                        </button>
+                        <button type="button" className="danger" onClick={() => handleDelete(img)}>
+                          <Trash2 size={13} /> 删除
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
-          ))}
+                  <div className="imageLibraryCardInfo">
+                    <p className="imageLibraryCardName" title={img.filename}>{img.filename}</p>
+                    {img.tags.length > 0 && (
+                      <div className="imageLibraryCardTags">
+                        {img.tags.map((tag) => (
+                          <span key={tag} className="imageLibraryTag">{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {!loading && totalPages > 1 && (
+            <GridPagination
+              page={currentPage}
+              totalPages={totalPages}
+              totalCount={images.length}
+              onChange={setCurrentPage}
+            />
+          )}
         </div>
       </div>
 
@@ -885,6 +904,69 @@ export function ImageLibraryWorkspace() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// 生成页码列表；超过 7 页时用省略号折叠：始终含首页、末页、当前页 ±1。
+function pageList(page: number, total: number): (number | "…")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const out: (number | "…")[] = [1];
+  const left = Math.max(2, page - 1);
+  const right = Math.min(total - 1, page + 1);
+  if (left > 2) out.push("…");
+  for (let p = left; p <= right; p++) out.push(p);
+  if (right < total - 1) out.push("…");
+  out.push(total);
+  return out;
+}
+
+function GridPagination({
+  page,
+  totalPages,
+  totalCount,
+  onChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalCount: number;
+  onChange: (p: number) => void;
+}) {
+  return (
+    <div className="imageLibraryPagination">
+      <button
+        type="button"
+        className="imageLibraryPageBtn"
+        disabled={page <= 1}
+        onClick={() => onChange(page - 1)}
+        aria-label="上一页"
+      >
+        <ChevronLeft size={16} />
+      </button>
+      {pageList(page, totalPages).map((p, i) =>
+        p === "…" ? (
+          <span key={`gap-${i}`} className="imageLibraryPageGap">…</span>
+        ) : (
+          <button
+            key={p}
+            type="button"
+            className={`imageLibraryPageBtn${p === page ? " active" : ""}`}
+            onClick={() => onChange(p)}
+          >
+            {p}
+          </button>
+        ),
+      )}
+      <button
+        type="button"
+        className="imageLibraryPageBtn"
+        disabled={page >= totalPages}
+        onClick={() => onChange(page + 1)}
+        aria-label="下一页"
+      >
+        <ChevronRight size={16} />
+      </button>
+      <span className="imageLibraryPageInfo">共 {totalCount} 张 · 第 {page}/{totalPages} 页</span>
     </div>
   );
 }

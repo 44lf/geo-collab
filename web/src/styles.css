@@ -2362,6 +2362,8 @@ option, optgroup {
 .imageLibraryCatName { font-size: 13px; font-weight: 500; color: var(--fg); }
 .imageLibraryCatBucket { font-size: 11px; color: var(--fg-3); margin-top: 2px; }
 
+.imageLibraryContent { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
 .imageLibraryGrid {
   flex: 1; overflow-y: auto; padding: 16px;
   display: grid;
@@ -2376,6 +2378,25 @@ option, optgroup {
 .imageLibraryGrid::-webkit-scrollbar-thumb { background: var(--hair-2); border-radius: 3px; }
 .imageLibraryGrid::-webkit-scrollbar-thumb:hover { background: var(--fg-3); }
 .imageLibraryEmpty { color: var(--fg-3); font-size: 13px; padding: 8px 14px; }
+
+.imageLibraryPagination {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--hair);
+}
+.imageLibraryPageBtn {
+  min-width: 30px; height: 30px; padding: 0 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--hair); border-radius: var(--r-sm);
+  background: var(--paper); color: var(--fg-2); cursor: pointer;
+  font-size: 13px; transition: background .1s, color .1s;
+}
+.imageLibraryPageBtn:hover:not(:disabled) { background: var(--hair); color: var(--fg); }
+.imageLibraryPageBtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.imageLibraryPageBtn:disabled { opacity: .4; cursor: default; }
+.imageLibraryPageGap { padding: 0 4px; color: var(--fg-3); }
+.imageLibraryPageInfo { margin-left: 10px; font-size: 12px; color: var(--fg-3); }
 
 .imageLibraryCardImg { position: relative; cursor: pointer; width: 100%; aspect-ratio: 1; overflow: hidden; background: var(--bg-2); }
 .imageLibraryCardImg img { width: 100%; height: 100%; object-fit: contain; object-position: center; display: block; }
