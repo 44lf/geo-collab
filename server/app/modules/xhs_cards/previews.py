@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 PREVIEW_PREFIX = "theme-previews"
 
+# 预览缓存版本。渲染输出变化（改示例文案 / 修 emoji 字体 / 改主题 CSS）时 bump 它，
+# 缓存 key 随之改变 → 旧缓存被绕过、启动预热自动重渲全新图。
+# v2：修 emoji 字体后启用（旧的无版本路径 theme-previews/{theme}/… = 隐式 v1，其豆腐块图弃用）。
+PREVIEW_VERSION = "v2"
+
 # 固定示例文案（frontmatter 出封面；正文出一张卡）。
 PREVIEW_SAMPLE_MD = """---
 emoji: "🍜"
@@ -45,7 +50,8 @@ _generating = False
 
 
 def preview_keys(theme: str) -> tuple[str, str]:
-    return f"{PREVIEW_PREFIX}/{theme}/cover.png", f"{PREVIEW_PREFIX}/{theme}/card.png"
+    base = f"{PREVIEW_PREFIX}/{PREVIEW_VERSION}/{theme}"
+    return f"{base}/cover.png", f"{base}/card.png"
 
 
 def _preview_urls(theme: str) -> tuple[str, str]:
@@ -121,5 +127,29 @@ def spawn_regenerate() -> bool:
         if _generating:
             return False
         _generating = True
-    threading.Thread(target=_run_regenerate, daemon=True).start()
+    try:
+        threading.Thread(target=_run_regenerate, daemon=True).start()
+    except Exception:  # noqa: BLE001 — 线程起不来（极罕见）也别把 _generating 卡死成 True
+        with _lock:
+            _generating = False
+        raise
     return True
+
+
+def preview_gallery_state() -> dict:
+    """样式库一次取全：主题预览列表 + 是否正在生成。前端据 generating 决定轮询/引导。"""
+    return {"themes": list_theme_previews(), "generating": is_generating()}
+
+
+def ensure_prewarmed() -> bool:
+    """启动预热：当前版本缓存不全就后台生成。全齐则不动。返回是否启动了本轮。
+
+    幂等靠 spawn_regenerate 的单飞锁；best-effort，失败静默（不阻塞启动）。
+    """
+    try:
+        if all(row["cached"] for row in list_theme_previews()):
+            return False
+        return spawn_regenerate()
+    except Exception:  # noqa: BLE001 — 预热失败不能拖垮 app 启动
+        logger.exception("样式库预览预热失败")
+        return False

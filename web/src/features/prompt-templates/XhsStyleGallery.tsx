@@ -1,59 +1,66 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listXhsThemes, regenerateXhsThemePreviews, type XhsThemePreview } from "../../api/xhsThemes";
 import { useToast } from "../../components/Toast";
 
 export function XhsStyleGallery() {
   const { toast } = useToast();
   const [themes, setThemes] = useState<XhsThemePreview[]>([]);
-  const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [loading, setLoading] = useState(false);
   const pollRef = useRef<number | null>(null);
+  const pollStartRef = useRef<number>(0);
 
-  async function load() {
-    setLoading(true);
-    try {
-      setThemes(await listXhsThemes());
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "加载失败", "error");
-    } finally {
-      setLoading(false);
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
     }
-  }
+  }, []);
+
+  const fetchState = useCallback(async () => {
+    const state = await listXhsThemes();
+    setThemes(state.themes);
+    setGenerating(state.generating);
+    return state;
+  }, []);
+
+  const startPoll = useCallback(() => {
+    if (pollRef.current) return; // 已在轮询
+    pollStartRef.current = Date.now();
+    pollRef.current = window.setInterval(() => {
+      void (async () => {
+        try {
+          const state = await fetchState();
+          const done = !state.generating && state.themes.every((t) => t.cached);
+          if (done || Date.now() - pollStartRef.current > 90000) stopPoll();
+        } catch (e) {
+          stopPoll();
+          toast(e instanceof Error ? e.message : "轮询失败", "error");
+        }
+      })();
+    }, 2000);
+  }, [fetchState, stopPoll, toast]);
 
   useEffect(() => {
-    void load();
-    return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current);
-    };
+    setLoading(true);
+    void fetchState()
+      .then((state) => {
+        // 服务端预热在跑 → 自动轮询点亮，首屏无需手点
+        if (state.generating) startPoll();
+      })
+      .catch((e) => toast(e instanceof Error ? e.message : "加载失败", "error"))
+      .finally(() => setLoading(false));
+    return stopPoll;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载时拉一次
   }, []);
 
   async function regenerate() {
-    setGenerating(true);
     try {
       await regenerateXhsThemePreviews();
-      const started = Date.now();
-      pollRef.current = window.setInterval(() => {
-        void (async () => {
-          try {
-            const rows = await listXhsThemes();
-            setThemes(rows);
-            if (rows.every((t) => t.cached) || Date.now() - started > 60000) {
-              if (pollRef.current) window.clearInterval(pollRef.current);
-              pollRef.current = null;
-              setGenerating(false);
-            }
-          } catch (e) {
-            if (pollRef.current) window.clearInterval(pollRef.current);
-            pollRef.current = null;
-            setGenerating(false);
-            toast(e instanceof Error ? e.message : "轮询失败", "error");
-          }
-        })();
-      }, 2000);
+      setGenerating(true);
+      startPoll();
     } catch (e) {
       toast(e instanceof Error ? e.message : "生成失败", "error");
-      setGenerating(false);
     }
   }
 
@@ -67,16 +74,31 @@ export function XhsStyleGallery() {
           <h1>小红书样式库</h1>
         </div>
         <div className="topActions">
-          <button className="secondaryButton" type="button" disabled={loading} onClick={() => void load()}>
+          <button
+            className="secondaryButton"
+            type="button"
+            disabled={loading}
+            onClick={() => void fetchState()}
+          >
             刷新
           </button>
-          <button className="primaryButton" type="button" disabled={generating} onClick={() => void regenerate()}>
+          <button
+            className="primaryButton"
+            type="button"
+            disabled={generating}
+            onClick={() => void regenerate()}
+          >
             {generating ? "生成中…" : "重新生成预览"}
           </button>
         </div>
       </header>
 
-      {noneCached && !generating && (
+      {generating && (
+        <div className="aiEmptyState">
+          <p className="aiEmptyText">正在渲染各主题预览，稍候会自动点亮…</p>
+        </div>
+      )}
+      {!generating && noneCached && (
         <div className="aiEmptyState">
           <p className="aiEmptyText">预览还没生成，点「重新生成预览」渲染各主题样卡</p>
         </div>

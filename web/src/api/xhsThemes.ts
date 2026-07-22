@@ -8,14 +8,20 @@ export interface XhsThemePreview {
   cached: boolean;
 }
 
+export interface XhsGalleryState {
+  themes: XhsThemePreview[];
+  /** 服务端是否正在后台渲染预览（启动预热或手动重生） */
+  generating: boolean;
+}
+
 interface Envelope<T> {
   ok: boolean;
   data: T;
   error: string | null;
 }
 
-export async function listXhsThemes(): Promise<XhsThemePreview[]> {
-  const res = await api<Envelope<XhsThemePreview[]>>("/api/xhs-cards/themes");
+export async function listXhsThemes(): Promise<XhsGalleryState> {
+  const res = await api<Envelope<XhsGalleryState>>("/api/xhs-cards/themes");
   return res.data;
 }
 
