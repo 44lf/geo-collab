@@ -30,43 +30,35 @@ class _FakeSession:
         pass
 
 
-def test_run_ingest_once_throttles_consecutive_taptap_detail_requests(monkeypatch):
+def test_run_ingest_once_upserts_pool_and_dedups(monkeypatch):
     from server.app.modules.game_library import registry, scheduler, service
-    from server.app.modules.game_library.sources import taptap
 
     monkeypatch.setattr(
         registry,
         "collect_pool",
         lambda *a, **k: [
-            _game("taptap", "1", "游戏1"),
-            _game("taptap", "2", "游戏2"),
-            _game("taptap", "3", "游戏3"),
+            _game("baidu", "1", "游戏1"),
+            _game("baidu", "2", "游戏2"),
+            _game("baidu", "1", "游戏1"),  # 同 (source, game_id) → 去重跳过
         ],
     )
-    detail_calls: list[str] = []
-
-    def fake_get_detail(game_id):
-        detail_calls.append(game_id)
-        return _game("taptap", game_id, f"游戏{game_id}", shots=[f"http://x/{game_id}.jpg"])
-
-    sleeps: list[float] = []
-    monkeypatch.setattr(taptap, "get_detail", fake_get_detail)
-    monkeypatch.setattr(service, "upsert_game", lambda *a, **k: None)
-    monkeypatch.setattr(scheduler.time, "sleep", sleeps.append)
+    upserts: list[str] = []
+    monkeypatch.setattr(service, "upsert_game", lambda db, game, **k: upserts.append(game.game_id))
 
     result = scheduler.run_ingest_once(
         lambda: _FakeSession(),
-        targets=[{"source": "taptap", "category": "养成", "max_games": 3}],
+        targets=[{"source": "baidu", "category": "经营", "max_games": 3}],
     )
 
-    assert result == {"targets": 1, "upserted": 3, "failed": 0}
-    assert detail_calls == ["1", "2", "3"]
-    assert sleeps == [0.3, 0.3]
+    assert result == {"targets": 1, "upserted": 2, "failed": 0}  # 去重后 2 条
+    assert upserts == ["1", "2"]
 
 
-def test_seed_targets_do_not_carry_dead_pages_parameter():
+def test_seed_targets_are_baidu_only_without_dead_pages_param():
     from server.app.modules.game_library import scheduler
 
+    assert scheduler.SEED_TARGETS
+    assert all(target["source"] == "baidu" for target in scheduler.SEED_TARGETS)
     assert all("pages" not in target for target in scheduler.SEED_TARGETS)
 
 
