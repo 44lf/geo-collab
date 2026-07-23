@@ -93,6 +93,21 @@ def test_convert_markdown_nl2br_linebreaks():
     assert html.count("<br") >= 2  # 两处单换行都成断行
 
 
+def test_cover_title_no_midword_break():
+    """封面标题不用 break-all（会把 TOP5 断成 TO/P5），改 normal + overflow-wrap，
+    让拉丁/数字词整体折行、中文仍可逐字断。"""
+    from server.app.modules.xhs_cards import render as R
+
+    html = R.generate_cover_html(
+        {"emoji": "🎮", "title": "合成游戏TOP5", "subtitle": "越玩越上头"},
+        "playful-geometric",
+        1080,
+        1440,
+    )
+    assert "word-break: break-all" not in html
+    assert "overflow-wrap: break-word" in html
+
+
 def test_split_trailing_image():
     """抽出卡片正文末尾的 ![](url)：返回去图正文 + url；无图返回 (原文, None)。"""
     from server.app.modules.xhs_cards import render as R

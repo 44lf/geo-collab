@@ -254,7 +254,8 @@ def generate_cover_html(metadata: dict, theme: str, width: int, height: int) -> 
             flex: 1;
             display: flex;
             align-items: flex-start;
-            word-break: break-all;
+            word-break: normal;
+            overflow-wrap: break-word;
         }}
 
         .cover-subtitle {{
