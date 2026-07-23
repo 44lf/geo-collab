@@ -10,7 +10,7 @@ def _game(**kw):
     from server.app.modules.game_library import types
 
     base = dict(
-        source="taptap",
+        source="baidu",
         game_id="1",
         name="X",
         score=None,
@@ -64,53 +64,34 @@ def test_normalized_matcher_forgives_format_diffs_not_substrings():
     assert not m("", "x")
 
 
-def test_collect_from_all_sources_union_and_error_vs_miss(monkeypatch):
+def test_collect_from_all_sources_hit_miss_error(monkeypatch):
+    """只剩 baidu 单源：分别验证 hit / miss / error 三态被正确记录。
+    （删 taptap 后无法再复现"两个不同真实源同时给出不同结果"，改为单源逐态断言。）"""
     from server.app.modules.game_library import ingest_service
-    from server.app.modules.game_library.sources import baidu, taptap
+    from server.app.modules.game_library.sources import baidu
 
-    # 两源都命中 → 并集 2 条
-    monkeypatch.setattr(
-        taptap,
-        "search_by_name",
-        lambda name, *, matcher=None: _game(source="taptap", score=8.5, screenshot_urls=["u"]),
-    )
+    # 命中 → 1 条 hit
     monkeypatch.setattr(
         baidu, "search_by_name", lambda name, *, matcher=None: _game(source="baidu", score=7.0)
     )
-    out = ingest_service._collect_from_all_sources("taptap,baidu", "原神")
-    assert len(out["hits"]) == 2
-    assert out["per_source"] == {"taptap": "hit", "baidu": "hit"}
+    out = ingest_service._collect_from_all_sources("baidu", "原神")
+    assert len(out["hits"]) == 1
+    assert out["per_source"] == {"baidu": "hit"}
 
-    # taptap error / baidu miss → error 与 miss 严格区分、无 hit
+    # 未命中（None）→ miss、无 hit
+    monkeypatch.setattr(baidu, "search_by_name", lambda name, *, matcher=None: None)
+    out = ingest_service._collect_from_all_sources("baidu", "原神")
+    assert out["hits"] == []
+    assert out["per_source"] == {"baidu": "miss"}
+
+    # 抛异常 → error（与 miss 严格区分）、无 hit
     def boom(name, *, matcher=None):
         raise RuntimeError("net down")
 
-    monkeypatch.setattr(taptap, "search_by_name", boom)
-    monkeypatch.setattr(baidu, "search_by_name", lambda name, *, matcher=None: None)
-    out = ingest_service._collect_from_all_sources("taptap,baidu", "原神")
+    monkeypatch.setattr(baidu, "search_by_name", boom)
+    out = ingest_service._collect_from_all_sources("baidu", "原神")
     assert out["hits"] == []
-    assert out["per_source"] == {"taptap": "error", "baidu": "miss"}
-
-
-def test_collect_taptap_hit_without_shots_calls_get_detail(monkeypatch):
-    from server.app.modules.game_library import ingest_service
-    from server.app.modules.game_library.sources import taptap
-
-    monkeypatch.setattr(
-        taptap,
-        "search_by_name",
-        lambda name, *, matcher=None: _game(game_id="42", screenshot_urls=[]),
-    )
-    called = {}
-
-    def fake_detail(gid):
-        called["gid"] = gid
-        return _game(game_id="42", screenshot_urls=["a", "b"])
-
-    monkeypatch.setattr(taptap, "get_detail", fake_detail)
-    out = ingest_service._collect_from_all_sources("taptap", "原神")
-    assert called["gid"] == "42"
-    assert out["hits"][0].screenshot_urls == ["a", "b"]
+    assert out["per_source"] == {"baidu": "error"}
 
 
 def test_has_evidence():
@@ -131,7 +112,7 @@ def test_has_evidence():
     assert _has_evidence(SimpleNamespace(score=None, description=None, comment_count=5, sources=[]))
     assert _has_evidence(
         SimpleNamespace(
-            score=None, description=None, comment_count=None, sources=[{"source": "taptap"}]
+            score=None, description=None, comment_count=None, sources=[{"source": "baidu"}]
         )
     )
 
@@ -179,15 +160,15 @@ def test_refresh_union_merges_and_resets_streak(monkeypatch):
             "_collect_from_all_sources",
             lambda source_order, name: {
                 "hits": [
-                    _game(source="taptap", score=8.5, tags=["卡牌"]),
-                    _game(source="baidu", score=7.0, tags=["策略"]),
+                    _game(source="baidu", game_id="1", score=8.5, tags=["卡牌"]),
+                    _game(source="baidu", game_id="2", score=7.0, tags=["策略"]),
                 ],
-                "per_source": {"taptap": "hit", "baidu": "hit"},
+                "per_source": {"baidu": "hit"},
             },
         )
 
         result = ingest_service.refresh_one_game(
-            app.session_factory, gid, source_order="taptap,baidu", max_shots=6
+            app.session_factory, gid, source_order="baidu", max_shots=6
         )
         assert result["outcome"] == "refreshed"
 
@@ -223,13 +204,13 @@ def test_refresh_all_miss_increments_and_culls_when_no_evidence(monkeypatch):
             "_collect_from_all_sources",
             lambda source_order, name: {
                 "hits": [],
-                "per_source": {"taptap": "miss", "baidu": "miss"},
+                "per_source": {"baidu": "miss"},
             },
         )
         result = ingest_service.refresh_one_game(
             app.session_factory,
             gid,
-            source_order="taptap,baidu",
+            source_order="baidu",
             max_shots=6,
             cull_after_misses=3,
             cull_enabled=True,
@@ -267,13 +248,13 @@ def test_refresh_all_miss_but_has_evidence_not_culled(monkeypatch):
             "_collect_from_all_sources",
             lambda source_order, name: {
                 "hits": [],
-                "per_source": {"taptap": "miss", "baidu": "miss"},
+                "per_source": {"baidu": "miss"},
             },
         )
         result = ingest_service.refresh_one_game(
             app.session_factory,
             gid,
-            source_order="taptap,baidu",
+            source_order="baidu",
             max_shots=6,
             cull_after_misses=3,
             cull_enabled=True,
@@ -310,13 +291,13 @@ def test_refresh_error_does_not_increment_streak(monkeypatch):
             "_collect_from_all_sources",
             lambda source_order, name: {
                 "hits": [],
-                "per_source": {"taptap": "error", "baidu": "miss"},
+                "per_source": {"baidu": "error"},
             },
         )
         result = ingest_service.refresh_one_game(
             app.session_factory,
             gid,
-            source_order="taptap,baidu",
+            source_order="baidu",
             max_shots=6,
             cull_after_misses=3,
             cull_enabled=True,
@@ -356,13 +337,13 @@ def test_refresh_manually_curated_is_cull_exempt(monkeypatch):
             "_collect_from_all_sources",
             lambda source_order, name: {
                 "hits": [],
-                "per_source": {"taptap": "miss", "baidu": "miss"},
+                "per_source": {"baidu": "miss"},
             },
         )
         result = ingest_service.refresh_one_game(
             app.session_factory,
             gid,
-            source_order="taptap,baidu",
+            source_order="baidu",
             max_shots=6,
             cull_after_misses=3,
             cull_enabled=True,

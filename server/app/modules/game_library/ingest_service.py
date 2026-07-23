@@ -165,11 +165,11 @@ def _collect_from_all_sources(source_order: str, name: str) -> dict:
 
     返回 {"hits": [types.Game...], "per_source": {src: "hit"|"miss"|"error"}}。
     error（网络/异常）与 miss 严格区分：error 不构成"搜不到"的证据、不计入软删 streak。
-    taptap 命中不带截图 → 补 get_detail。归一化 matcher 放宽格式差异。
+    归一化 matcher 放宽格式差异。
     """
-    from server.app.modules.game_library.sources import baidu, taptap
+    from server.app.modules.game_library.sources import baidu
 
-    srcs = {"baidu": baidu, "taptap": taptap}
+    srcs = {"baidu": baidu}
     hits: list = []
     per_source: dict[str, str] = {}
     for key in [s.strip() for s in (source_order or "").split(",") if s.strip()]:
@@ -185,11 +185,6 @@ def _collect_from_all_sources(source_order: str, name: str) -> dict:
         if hit is None:
             per_source[key] = "miss"
             continue
-        if key == "taptap" and not hit.screenshot_urls:
-            try:
-                hit = taptap.get_detail(hit.game_id)
-            except Exception:
-                logger.warning("taptap get_detail failed name=%s", name, exc_info=True)
         per_source[key] = "hit"
         hits.append(hit)
     return {"hits": hits, "per_source": per_source}
