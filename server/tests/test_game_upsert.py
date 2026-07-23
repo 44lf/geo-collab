@@ -58,7 +58,7 @@ def test_upsert_merges_two_sources_into_one_row(monkeypatch):
             service.upsert_game(
                 s,
                 _game(
-                    "taptap",
+                    "baidu",
                     "9",
                     "餐厅养成记",
                     ["养成"],
@@ -193,7 +193,7 @@ def test_upsert_none_source_does_not_override_existing_values(monkeypatch):
             service.upsert_game(
                 s,
                 _game(
-                    "taptap",
+                    "baidu",
                     "2",
                     "空值合并",
                     ["养成"],
@@ -273,7 +273,7 @@ def test_upsert_rehosts_cover_and_keeps_it_idempotent(monkeypatch):
         try:
             row = service.upsert_game(
                 s,
-                _game("taptap", "1", "封面转存", ["养成"], [], 8.0),
+                _game("baidu", "1", "封面转存", ["养成"], [], 8.0),
                 pre_downloaded=[],
                 pre_downloaded_icon=("http://cdn/icon.png", b"\xff\xd8\xff", "image/jpeg"),
             )
@@ -284,7 +284,7 @@ def test_upsert_rehosts_cover_and_keeps_it_idempotent(monkeypatch):
             # 已本地 → 再来一轮新外链/新字节都不覆盖（幂等，防外链盗链回填）。
             row2 = service.upsert_game(
                 s,
-                _game("taptap", "1", "封面转存", ["养成"], [], 8.0),
+                _game("baidu", "1", "封面转存", ["养成"], [], 8.0),
                 pre_downloaded=[],
                 pre_downloaded_icon=("http://cdn/icon2.png", b"\xff\xd8\xff", "image/jpeg"),
             )
@@ -311,7 +311,7 @@ def test_upsert_with_category_id_skips_name_resolve(monkeypatch):
             s.add(cat)
             s.flush()
             g = types.Game(
-                source="taptap",
+                source="baidu",
                 game_id="1",
                 name="餐厅养成记",
                 tags=["经营"],

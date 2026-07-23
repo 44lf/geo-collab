@@ -13,8 +13,7 @@
 - 响应字段 gamePlatform 是字符串列表,如 ["IOS","Android"],和请求参数 platId 的编码方式不同,
   gameTags/gameOfficialPic 确认恒为 list,不需要额外的类型防御。
 - gameDesc 是纯文本简介(无 HTML 标签,不需要清洗),直接映射到 Game.description。
-- 该接口响应里没有 Android 包名/iOS ID 字段(不像 taptap 的 identifier/itunes_id),
-  Game.android_package 对 baidu 结果恒为 None。
+- 该接口响应里没有 Android 包名/iOS ID 字段,Game.android_package 对 baidu 结果恒为 None。
 
 search_by_name(name) 按游戏名精确搜索(2026-07-14 抓包确认,用户提供的真实 curl):
 接口: GET lewan.baidu.com/lewanapi?action=game_query&gameName=<name>

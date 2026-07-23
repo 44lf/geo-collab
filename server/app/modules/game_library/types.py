@@ -8,14 +8,12 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 SOURCE_BAIDU = "baidu"
-SOURCE_TAPTAP = "taptap"
 
 ORDER_HOT = "hot"
 ORDER_NEW = "new"
 
 PLATFORM_ANDROID = "android"
 PLATFORM_IOS = "ios"
-PLATFORM_PC = "pc"
 
 
 @dataclass
@@ -30,7 +28,7 @@ class Game:
     icon_url: str | None = None
     screenshot_urls: list = field(default_factory=list)
     android_package: str | None = (
-        None  # 仅 taptap 提供(identifier 字段);baidu 响应无此字段,恒为 None
+        None  # baidu 响应无此字段,恒为 None（备未来源填充）
     )
     description: str | None = None
     raw: dict = field(default_factory=dict)
