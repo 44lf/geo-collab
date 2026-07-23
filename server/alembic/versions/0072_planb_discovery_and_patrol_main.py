@@ -13,85 +13,51 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0072_planb_discovery_and_patrol_main"
+revision: str = "0072_planb_discovery_patrol"
 down_revision: str | None = "0071_game_ingest_baidu_only"
 branch_labels: str | None = None
 depends_on: str | None = None
 
 
-def upgrade() -> None:
-    op.add_column(
-        "game_ingest_config",
+def _new_columns() -> list[sa.Column]:
+    """本迁移新增的 13 列；每次调用返回全新 Column 实例，避免跨 op.add_column 复用绑定状态。"""
+    return [
         sa.Column("discovery_enabled", sa.Boolean(), nullable=False, server_default="0"),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column(
             "discovery_window_start", sa.String(length=5), nullable=False, server_default="04:00"
         ),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column(
             "discovery_window_end", sa.String(length=5), nullable=False, server_default="06:00"
         ),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_seed_paths", sa.JSON(), nullable=True),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_detail_limit", sa.Integer(), nullable=False, server_default="30"),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_max_shots", sa.Integer(), nullable=False, server_default="6"),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_min_gap_seconds", sa.Integer(), nullable=False, server_default="20"),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_max_gap_seconds", sa.Integer(), nullable=False, server_default="90"),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_last_run_started_at", sa.DateTime(), nullable=True),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_last_run_finished_at", sa.DateTime(), nullable=True),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_last_run_summary", sa.JSON(), nullable=True),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("discovery_last_run_trigger", sa.String(length=12), nullable=True),
-    )
-    op.add_column(
-        "game_ingest_config",
         sa.Column("patrol_include_main", sa.Boolean(), nullable=False, server_default="0"),
-    )
+    ]
+
+
+def _existing_columns() -> set[str]:
+    return {c["name"] for c in sa.inspect(op.get_bind()).get_columns("game_ingest_config")}
+
+
+def upgrade() -> None:
+    # 幂等：只加尚不存在的列。首发（release-1.0.32）时 MySQL 非事务 DDL 已把这 13 列落库，
+    # 但末尾 alembic_version UPDATE 因旧 revision id 超 32 字符（1406 Data too long）回滚 →
+    # 线上"列已在、版本仍停 0071"。收窄 id + 幂等，让重发能安全收敛（无论列在不在）。
+    existing = _existing_columns()
+    for col in _new_columns():
+        if col.name not in existing:
+            op.add_column("game_ingest_config", col)
 
 
 def downgrade() -> None:
-    for col in (
-        "patrol_include_main",
-        "discovery_last_run_trigger",
-        "discovery_last_run_summary",
-        "discovery_last_run_finished_at",
-        "discovery_last_run_started_at",
-        "discovery_max_gap_seconds",
-        "discovery_min_gap_seconds",
-        "discovery_max_shots",
-        "discovery_detail_limit",
-        "discovery_seed_paths",
-        "discovery_window_end",
-        "discovery_window_start",
-        "discovery_enabled",
-    ):
-        op.drop_column("game_ingest_config", col)
+    existing = _existing_columns()
+    for col in reversed(_new_columns()):
+        if col.name in existing:
+            op.drop_column("game_ingest_config", col.name)
