@@ -172,8 +172,91 @@ def bold_first_line(md: str) -> str:
     return "\n".join(lines)
 
 
+def _image_cover_html(cover_image: str, title: str, subtitle: str, width: int, height: int) -> str:
+    """合成封面：游戏截图铺底(object-fit:cover) + 底部渐变蒙层 + 标题(可选副标题)白字叠加。
+
+    背景 src 走 rewrite_img_src 变内网绝对地址，让 Playwright(file://) 能拉。标题按长度
+    自适应字号；word-break:normal + overflow-wrap:break-word 让拉丁/数字词(如 TOP5)整体不拆。
+    """
+    title = title or "标题"
+    tl = len(title)
+    if tl <= 6:
+        title_size = int(width * 0.13)
+    elif tl <= 10:
+        title_size = int(width * 0.11)
+    elif tl <= 18:
+        title_size = int(width * 0.085)
+    else:
+        title_size = int(width * 0.065)
+
+    bg_img = rewrite_img_src(f'<img class="cover-bg" src="{cover_image}">')
+    subtitle_html = f'<div class="cover-subtitle">{subtitle}</div>' if subtitle else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width={width}, height={height}">
+    <title>小红书封面</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap');
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Noto Sans SC', 'Source Han Sans CN', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            width: {width}px; height: {height}px; overflow: hidden;
+        }}
+        .cover-container {{
+            position: relative; width: {width}px; height: {height}px; overflow: hidden; background: #000;
+        }}
+        .cover-bg {{
+            position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+        }}
+        .cover-scrim {{
+            position: absolute; left: 0; right: 0; bottom: 0; height: 55%;
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.78) 100%);
+        }}
+        .cover-overlay {{
+            position: absolute; left: 0; right: 0; bottom: 0;
+            padding: {int(width * 0.08)}px {int(width * 0.07)}px {int(height * 0.06)}px;
+        }}
+        .cover-title {{
+            font-weight: 900; font-size: {title_size}px; line-height: 1.35; color: #ffffff;
+            text-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+            word-break: normal; overflow-wrap: break-word;
+        }}
+        .cover-subtitle {{
+            margin-top: {int(height * 0.02)}px; font-weight: 500; font-size: {int(width * 0.05)}px;
+            line-height: 1.4; color: rgba(255, 255, 255, 0.92);
+            text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+        }}
+    </style>
+</head>
+<body>
+    <div class="cover-container">
+        {bg_img}
+        <div class="cover-scrim"></div>
+        <div class="cover-overlay">
+            <div class="cover-title">{title}</div>
+            {subtitle_html}
+        </div>
+    </div>
+</body>
+</html>"""
+
+
 def generate_cover_html(metadata: dict, theme: str, width: int, height: int) -> str:
     """生成封面 HTML"""
+    cover_image = (metadata.get("cover_image") or "").strip()
+    if cover_image:
+        return _image_cover_html(
+            cover_image,
+            metadata.get("title") or "标题",
+            metadata.get("subtitle") or "",
+            width,
+            height,
+        )
+
+    # 以下为原有文字封面逻辑，保持不变
     emoji = metadata.get("emoji") or "📝"
     title = metadata.get("title") or "标题"
     subtitle = metadata.get("subtitle") or ""
