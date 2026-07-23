@@ -3,13 +3,11 @@
 import logging
 
 from . import types
-from .sources import baidu, taptap
+from .sources import baidu
 
 logger = logging.getLogger(__name__)
 
-SOURCES = {types.SOURCE_BAIDU: baidu, types.SOURCE_TAPTAP: taptap}
-# taptap by-tag 服务端 limit 硬上限 20;百度无此限
-_PAGE_SIZE_CAP = {types.SOURCE_TAPTAP: 20}
+SOURCES = {types.SOURCE_BAIDU: baidu}
 
 
 def search(source, category, **kwargs):
@@ -19,8 +17,8 @@ def search(source, category, **kwargs):
 
 
 def collect_pool(source, category, pool_size, *, page_size_cap=None, **kwargs):
-    """按 pool_size 翻页收集(taptap 受 20 上限约束)。数据源枯竭即停。"""
-    cap = page_size_cap if page_size_cap is not None else _PAGE_SIZE_CAP.get(source, pool_size)
+    """按 pool_size 翻页收集(baidu 无单页上限)。数据源枯竭即停。"""
+    cap = page_size_cap if page_size_cap is not None else pool_size
     if cap <= 0:
         return []
 
