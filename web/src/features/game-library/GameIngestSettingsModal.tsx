@@ -211,7 +211,7 @@ export function GameIngestSettingsModal({ config, onClose, onSaved, onImported }
           <input
             className="aiSearchInput"
             value={form.source_order}
-            placeholder="如 taptap,baidu"
+            placeholder="如 baidu"
             onChange={(e) => setField("source_order", e.target.value)}
           />
         </label>

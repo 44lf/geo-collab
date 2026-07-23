@@ -17,7 +17,7 @@ def test_ingest_config_singleton_defaults(monkeypatch):
             assert cfg.enabled is False
             assert cfg.window_start == "03:00" and cfg.window_end == "06:00"
             assert cfg.batch_size == 30
-            assert cfg.source_order == "taptap,baidu"
+            assert cfg.source_order == "baidu"
             # 再取一次仍是同一行（单例）
             again = ingest_service.get_or_create_ingest_config(s)
             assert again.id == 1
