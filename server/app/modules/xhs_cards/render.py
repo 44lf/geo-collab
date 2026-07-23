@@ -139,6 +139,39 @@ def rewrite_img_src(html: str, base: str = _INTERNAL_BASE) -> str:
     return _IMG_SRC_RE.sub(rf"\g<1>{base}\g<2>\g<3>", html)
 
 
+# 卡片正文末尾的一张配图（skill 约定每卡一图放最后）。抽出来单独放进自适应 slot，
+# 让图片填充剩余空间、卡片高度锁死不被撑高。
+_TRAILING_IMG_RE = re.compile(r"\n*!\[[^\]]*\]\(([^)]+)\)\s*$")
+
+
+def split_trailing_image(content: str) -> tuple[str, str | None]:
+    """把卡片正文末尾的 ``![](url)`` 抽出来。
+
+    返回 ``(去掉尾图后的正文, 图片 url)``；正文末尾没有图片时返回 ``(原文, None)``。
+    只抽末尾那一张——skill 约定每张卡片至多一图、且放在文案最后。
+    """
+    m = _TRAILING_IMG_RE.search(content)
+    if not m:
+        return content, None
+    url = m.group(1).strip()
+    text = content[: m.start()].rstrip()
+    return text, url
+
+
+def bold_first_line(md: str) -> str:
+    """把正文第一非空行用 ``<strong>`` 包起来（小红书卡片标题行加粗）。
+
+    仅包裹首个非空行，前导空行跳过；其余行不动。markdown-extra 会原样透传内联 HTML，
+    配合 nl2br 渲染成 ``<p><strong>标题</strong><br>正文…</p>``。
+    """
+    lines = md.split("\n")
+    for i, ln in enumerate(lines):
+        if ln.strip():
+            lines[i] = f"<strong>{ln}</strong>"
+            break
+    return "\n".join(lines)
+
+
 def generate_cover_html(metadata: dict, theme: str, width: int, height: int) -> str:
     """生成封面 HTML"""
     emoji = metadata.get("emoji") or "📝"
@@ -247,9 +280,21 @@ def generate_cover_html(metadata: dict, theme: str, width: int, height: int) -> 
 
 
 def generate_card_html(content: str, theme: str, page_number: int, width: int, height: int) -> str:
-    """生成正文卡片 HTML（separator 分页模式的容器样式）"""
-    html_content = convert_markdown_to_html(content)
-    html_content = rewrite_img_src(html_content)
+    """生成正文卡片 HTML（separator 分页模式的容器样式）。
+
+    卡片高度锁死为 ``height``（固定画布，不被内容撑高）：正文按自然高度排在上方、首行加粗，
+    末尾配图抽进 ``.card-img-slot`` 自适应槽位——填充正文下方剩余空间（正文多图就小、正文少
+    图就大），既不撑高卡片也不裁正文。
+    """
+    text_md, img_url = split_trailing_image(content)
+    text_md = bold_first_line(text_md)
+    html_content = rewrite_img_src(convert_markdown_to_html(text_md))
+
+    img_html = ""
+    if img_url:
+        img_tag = rewrite_img_src(f'<img src="{img_url}">')
+        img_html = f'<div class="card-img-slot">{img_tag}</div>'
+
     theme_css = load_theme_css(theme)
 
     page_text = str(page_number) if page_number and page_number > 1 else ""
@@ -258,7 +303,7 @@ def generate_card_html(content: str, theme: str, page_number: int, width: int, h
 
     container_style = f"""
             width: {width}px;
-            min-height: {height}px;
+            height: {height}px;
             background: {bg};
             position: relative;
             padding: 50px;
@@ -268,7 +313,10 @@ def generate_card_html(content: str, theme: str, page_number: int, width: int, h
             background: rgba(255, 255, 255, 0.95);
             border-radius: 20px;
             padding: 60px;
-            min-height: calc({height}px - 100px);
+            height: calc({height}px - 100px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
             backdrop-filter: blur(10px);
         """
@@ -305,11 +353,29 @@ def generate_card_html(content: str, theme: str, page_number: int, width: int, h
 
         .card-content {{
             line-height: 1.7;
+            flex: 0 0 auto;
         }}
 
         .card-content-scale {{
             transform-origin: top left;
             will-change: transform;
+        }}
+
+        /* 配图自适应槽位：占据正文下方全部剩余空间，卡片高度锁死不被撑高。
+           正文多 → slot 小 → 图小；正文少 → slot 大 → 图大；宽度恒为满栏。 */
+        .card-img-slot {{
+            flex: 1 1 auto;
+            min-height: 0;
+            margin-top: 30px;
+            overflow: hidden;
+        }}
+
+        .card-img-slot img {{
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border-radius: 16px;
         }}
 
         {theme_css}
@@ -342,6 +408,7 @@ def generate_card_html(content: str, theme: str, page_number: int, width: int, h
             <div class="card-content">
                 <div class="card-content-scale">{html_content}</div>
             </div>
+            {img_html}
         </div>
         <div class="page-number">{page_text}</div>
     </div>
