@@ -13,10 +13,10 @@ def test_cli_builds_single_target(monkeypatch):
     monkeypatch.setattr(ingest_games, "run_ingest_once", fake_run)
     monkeypatch.setattr(ingest_games, "SessionLocal", lambda: None, raising=False)
 
-    ingest_games.main(["--source", "taptap", "--category", "国风"])
+    ingest_games.main(["--source", "baidu", "--category", "经营"])
 
-    assert captured["targets"][0]["source"] == "taptap"
-    assert captured["targets"][0]["category"] == "国风"
+    assert captured["targets"][0]["source"] == "baidu"
+    assert captured["targets"][0]["category"] == "经营"
     assert "pages" not in captured["targets"][0]
 
 
@@ -30,7 +30,7 @@ def test_cli_rejects_removed_pages_argument(monkeypatch):
     monkeypatch.setattr(ingest_games, "SessionLocal", lambda: None, raising=False)
 
     with pytest.raises(SystemExit) as exc:
-        ingest_games.main(["--source", "taptap", "--category", "国风", "--pages", "1"])
+        ingest_games.main(["--source", "baidu", "--category", "经营", "--pages", "1"])
 
     assert exc.value.code == 2
 
@@ -45,6 +45,6 @@ def test_cli_exits_nonzero_when_ingest_failed(monkeypatch):
     monkeypatch.setattr(ingest_games, "SessionLocal", lambda: None, raising=False)
 
     with pytest.raises(SystemExit) as exc:
-        ingest_games.main(["--source", "taptap", "--category", "国风"])
+        ingest_games.main(["--source", "baidu", "--category", "经营"])
 
     assert exc.value.code == 1
