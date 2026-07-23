@@ -93,15 +93,72 @@ def test_convert_markdown_nl2br_linebreaks():
     assert html.count("<br") >= 2  # 两处单换行都成断行
 
 
-def test_card_img_uniform_width():
-    """卡片配图强制满宽：主题 CSS 的 max-width 只封顶、图仍按内在像素宽渲染 →
-    各卡来源分辨率不同就宽度不一。注入 width:100% 强制统一，object-fit:cover 防限高拉伸。"""
+def test_split_trailing_image():
+    """抽出卡片正文末尾的 ![](url)：返回去图正文 + url；无图返回 (原文, None)。"""
+    from server.app.modules.xhs_cards import render as R
+
+    text, url = R.split_trailing_image("标题\n正文一行\n![](/api/stock-images/7/file)")
+    assert url == "/api/stock-images/7/file"
+    assert "![]" not in text and text.strip() == "标题\n正文一行"
+    # 无图
+    text2, url2 = R.split_trailing_image("标题\n正文没有图")
+    assert url2 is None
+    assert text2 == "标题\n正文没有图"
+
+
+def test_bold_first_line():
+    """正文第一非空行加粗（小红书卡片标题行）。"""
+    from server.app.modules.xhs_cards import render as R
+
+    out = R.bold_first_line("🥈 TOP2 | 黑暗料理王\n经营+暗黑料理\n推荐指数：★★★★☆")
+    assert out.startswith("<strong>🥈 TOP2 | 黑暗料理王</strong>")
+    # 后续行不加粗
+    assert "<strong>经营" not in out
+    # 前导空行跳过、加粗真正的首行
+    out2 = R.bold_first_line("\n\n第一行\n第二行")
+    assert "<strong>第一行</strong>" in out2 and "<strong>第二行" not in out2
+
+
+def test_card_fixed_height_and_img_slot():
+    """卡片锁定固定高（height 而非 min-height），配图进自适应 slot，首行加粗。"""
+    from server.app.modules.xhs_cards import render as R
+
+    html = R.generate_card_html(
+        "🥈 TOP2 | 黑暗料理王\n经营暗黑料理\n![](/api/stock-images/1/file)",
+        "sketch",
+        1,
+        1080,
+        1440,
+    )
+    # 固定高：容器用 height: 1440px，不再用 min-height 撑高
+    assert "height: 1440px" in html
+    assert "min-height: 1440px" not in html
+    # 配图落在自适应 slot（填充剩余空间）
+    assert "card-img-slot" in html
+    assert "http://127.0.0.1:8000/api/stock-images/1/file" in html
+    # 首行加粗
+    assert "<strong>🥈 TOP2 | 黑暗料理王</strong>" in html
+
+
+def test_card_no_image_still_fixed_height():
+    """无配图的卡片同样锁定固定高、首行加粗，且不生成 img slot。"""
+    from server.app.modules.xhs_cards import render as R
+
+    html = R.generate_card_html("纯文案标题\n正文一句", "default", 1, 1080, 1440)
+    assert "height: 1440px" in html
+    assert "min-height: 1440px" not in html
+    assert "<strong>纯文案标题</strong>" in html
+
+
+def test_card_img_slot_full_width_contain():
+    """配图槽位：满宽 + object-fit:contain —— 宽度统一(不再按内在像素宽渲染)，
+    且保全整图不裁、随剩余空间自适应缩放。"""
     import re
 
     from server.app.modules.xhs_cards import render as R
 
     html = R.generate_card_html("正文\n\n![](/api/stock-images/1/file)", "sketch", 1, 1080, 1440)
-    assert ".card-content img" in html
-    # 强制满宽 → 宽度统一。用 [^-]width 排除主题里 max-width:100% 的误命中。
+    assert "card-img-slot" in html
+    # 满宽 → 宽度统一。用 [^-]width 排除主题里 max-width:100% 的误命中。
     assert re.search(r"[^-]width:\s*100%", html)
-    assert "object-fit: cover" in html  # 限高时裁剪而非拉伸变形
+    assert "object-fit: contain" in html  # 保全整图、不裁不拉伸
