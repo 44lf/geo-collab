@@ -5163,7 +5163,7 @@ option, optgroup {
   flex-direction: column;
   gap: 28px;
   min-height: 100%;
-  padding: 48px 52px 40px;
+  padding: 0;
   background: #0D1020;
   color: #F5F7FF;
 }
