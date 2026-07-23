@@ -115,9 +115,9 @@ export function GameLibraryHeader({
   return (
     <header className="glHeader">
       <div className="glTitleZone">
-        <p className="glCrumb">素材 / 游戏语料</p>
+        <p className="eyebrow">素材</p>
         <div className="glTitleRow">
-          <h1 className="glTitle">游戏库</h1>
+          <h1>游戏库</h1>
           <span className="glCount">
             <b className="mono">{total.toLocaleString("zh-CN")}</b> 款游戏
           </span>

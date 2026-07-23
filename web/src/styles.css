@@ -5168,10 +5168,8 @@ option, optgroup {
   color: #F5F7FF;
 }
 .glHeader { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
-.glTitleZone { display: flex; flex-direction: column; gap: 14px; }
-.glCrumb { margin: 0; font-size: 13px; color: #8D94AE; }
+.glTitleZone { display: flex; flex-direction: column; }
 .glTitleRow { display: flex; align-items: center; gap: 14px; }
-.glTitle { margin: 0; font-size: 52px; font-weight: 800; line-height: 1; color: #F5F7FF; }
 .glCount {
   display: inline-flex; align-items: center; gap: 6px;
   height: 28px; padding: 0 10px; border-radius: 6px;
