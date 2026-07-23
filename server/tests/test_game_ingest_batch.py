@@ -23,7 +23,7 @@ def test_start_configured_ingest_locks_against_reentry(monkeypatch):
 
     class FakeCfg:
         batch_size = 1
-        source_order = "taptap"
+        source_order = "baidu"
         max_shots = 6
         min_gap_seconds = 0
         max_gap_seconds = 0

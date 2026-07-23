@@ -30,7 +30,6 @@ from zoneinfo import ZoneInfo
 from server.app.core.config import get_settings
 from server.app.core.time import utcnow
 from server.app.modules.game_library import ingest_service, registry, service
-from server.app.modules.game_library.sources import taptap
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +37,6 @@ SessionFactory = Callable[[], Any]
 
 _thread: threading.Thread | None = None
 _stop = threading.Event()
-_TAPTAP_DETAIL_THROTTLE_SECONDS = 0.3
 
 # 尝试上限 = batch_size × 此倍数。搜不到的游戏不占名额（只有 refreshed 计入 batch_size），
 # 但整池都搜不到时用它兜底，避免一晚把全库刷一遍、猛打源站。
@@ -50,8 +48,6 @@ _running = False
 
 SEED_TARGETS = [
     {"source": "baidu", "category": "经营", "max_games": 30, "max_shots": 6},
-    {"source": "taptap", "category": "养成", "max_games": 30, "max_shots": 6},
-    {"source": "taptap", "category": "国风", "max_games": 30, "max_shots": 6},
 ]
 
 
@@ -94,7 +90,6 @@ def run_ingest_once(session_factory: SessionFactory, *, targets: list[dict] | No
             continue
 
         seen: set[tuple[str, str]] = set()
-        detail_requests = 0
         try:
             for game in pool:
                 key = (game.source, game.game_id)
@@ -102,11 +97,6 @@ def run_ingest_once(session_factory: SessionFactory, *, targets: list[dict] | No
                     continue
                 seen.add(key)
                 try:
-                    if source == "taptap" and not game.screenshot_urls:
-                        if detail_requests > 0:
-                            time.sleep(_TAPTAP_DETAIL_THROTTLE_SECONDS)
-                        detail_requests += 1
-                        game = taptap.get_detail(game.game_id)
                     service.upsert_game(db, game, max_screenshots=max_shots)
                     db.commit()
                     upserted += 1
