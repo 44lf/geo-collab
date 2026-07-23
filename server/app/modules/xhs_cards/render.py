@@ -84,7 +84,7 @@ def parse_markdown_string(md: str) -> dict:
 
     metadata 缺省的 `emoji`/`title`/`subtitle` 补空串。
     """
-    yaml_pattern = r"^---\s*\n(.*?)\n---\s*\n"
+    yaml_pattern = r"^---\s*\n(.*?)\n---\s*(?:\n|$)"
     yaml_match = re.match(yaml_pattern, md, re.DOTALL)
 
     metadata: dict = {}

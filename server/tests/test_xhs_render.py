@@ -72,6 +72,8 @@ def test_cover_image_composed():
     assert "linear-gradient" in html  # 底部渐变蒙层保证文字可读
     assert "女生爱玩的宝藏游戏" in html
     assert "梦想城镇同款·更冷门" in html
+    assert "word-break: normal" in html
+    assert "overflow-wrap: break-word" in html
 
 
 def test_cover_without_image_is_text_cover():
@@ -214,3 +216,16 @@ def test_card_img_slot_full_width_contain():
     # 满宽 → 宽度统一。用 [^-]width 排除主题里 max-width:100% 的误命中。
     assert re.search(r"[^-]width:\s*100%", html)
     assert "object-fit: contain" in html  # 保全整图、不裁不拉伸
+
+
+def test_parse_frontmatter_only_no_trailing_newline():
+    """frontmatter-only(无正文、结尾无换行)也能解析出 metadata —— 合成封面单图流是
+    frontmatter-only，别因缺尾换行把 cover_image 丢了、退回文字封面。"""
+    from server.app.modules.xhs_cards import render as R
+
+    out = R.parse_markdown_string(
+        '---\ncover_image: "/api/stock-images/9/file"\ntitle: "钩子"\n---'
+    )
+    assert out["metadata"].get("cover_image") == "/api/stock-images/9/file"
+    assert out["metadata"].get("title") == "钩子"
+    assert out["body"].strip() == ""
