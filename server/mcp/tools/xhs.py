@@ -119,24 +119,24 @@ async def get_xhs_status(job_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def save_xhs_note(
-    source_article_id: int,
     prompt_template_id: int,
     title: str,
     markdown_content: str,
+    source_article_id: int | None = None,
     model_label: str | None = None,
 ) -> dict[str, Any]:
     """Persist a rendered Xiaohongshu image-text note into GEO's review queue (pending).
 
-    Use AFTER get_xhs_status returns done. Assemble markdown_content as:
-    cover image + each card image (as ![](/api/xhs-cards/file/...) links) + the
+    Assemble markdown_content as the cover/card image link(s) (as ![](url)) + the
     Xiaohongshu copy text (title / body / SEO #tags) at the end. Lands review_status=pending
     with content_type="xhs_image_text" so the content list badges it as 小红书图文.
 
     Args:
-        source_article_id: the approved article this note derives from.
-        prompt_template_id: the template used to condense (list_prompt_templates).
-        title: note title (<=300 chars).
+        prompt_template_id: the template used to write/condense (list_prompt_templates).
+        title: note title (<=20 chars for xhs; over 20 → 400 from backend).
         markdown_content: image links + copy text (see above).
+        source_article_id: the approved article this derives from — OPTIONAL. Omit for
+            game-sourced notes (xhs-game-hook) that have no source article.
         model_label: optional writer label.
 
     Returns:
@@ -148,8 +148,9 @@ async def save_xhs_note(
         "title": title,
         "markdown_content": markdown_content,
         "content_type": "xhs_image_text",
-        "source_article_id": source_article_id,
     }
+    if source_article_id is not None:
+        body["source_article_id"] = source_article_id
     if model_label:
         body["model_label"] = model_label
     return await _apost("/api/articles/save-from-mcp", json=body)

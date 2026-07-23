@@ -550,6 +550,44 @@ def test_save_from_mcp_xhs_no_question(monkeypatch):
         test_app.cleanup()
 
 
+def test_save_from_mcp_xhs_without_source_article(monkeypatch):
+    """游戏来源单图图文：无 source_article_id、无 question_item_id → 落库 pending，
+    content_type 正确，metrics 不含 source_article_id。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": "梦想城镇同款宝藏游戏",
+                "markdown_content": "![](/api/stock-images/1/file)\n\n正文文案\n\n#梦想城镇 #适合女生玩的游戏",
+                "content_type": "xhs_image_text",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        aid = r.json()["article_id"]
+        with test_app.session_factory() as db:
+            art = db.get(Article, aid)
+            assert art is not None
+            assert art.review_status == "pending"
+            assert art.content_type == "xhs_image_text"
+            assert "source_article_id" not in (art.metrics or {})
+    finally:
+        test_app.cleanup()
+
+
 def test_save_from_mcp_xhs_rejects_title_over_20(monkeypatch):
     """小红书图文标题 >20 字 → 400（小红书发布强制 ≤20，从机制上入库时挡住），不落库。"""
     from server.app.modules.articles.models import Article
