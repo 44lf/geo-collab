@@ -315,6 +315,7 @@ def list_games(
     min_score=None,
     q=None,
     kind=None,
+    source=None,
     sort="score",
     is_active=True,
     limit=50,
@@ -333,6 +334,10 @@ def list_games(
         conds.append(
             Game.stock_category_id.in_(select(StockCategory.id).where(StockCategory.kind == kind))
         )
+    if source:
+        # sources 是 [{"source": ..., "source_game_id": ...}] JSON 列；JSON_SEARCH 按 $[*].source
+        # 命中即该游戏含此源（MySQL-only，本仓库 MySQL 唯一）。NULL sources 天然不命中、被过滤掉。
+        conds.append(func.json_search(Game.sources, "one", source, None, "$[*].source").isnot(None))
     count_stmt = select(func.count()).select_from(Game)
     if conds:
         count_stmt = count_stmt.where(*conds)

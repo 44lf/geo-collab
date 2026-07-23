@@ -547,6 +547,16 @@ def create_app() -> FastAPI:
 
         _logging.getLogger(__name__).exception("start_game_ingest failed")
 
+    # Plan B 扩库（应用宝榜单发现）定时线程，与补全巡检同 env 总闸、独立进程内锁。
+    try:
+        from server.app.modules.game_library.planb.discovery_scheduler import start_game_discovery
+
+        start_game_discovery(SessionLocal)
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).exception("start_game_discovery failed")
+
     # TapTap cookie 体检：GEO_TAPTAP_COOKIE_CHECK_ENABLED=true 时启动后台线程，纯 HTTP 探
     # account-profile/v1/me，失效则置 expired + 飞书喊人重登（不自动登录）。失败只记日志、不致命。
     try:

@@ -22,6 +22,7 @@ export function listGames(params?: {
   min_score?: number;
   q?: string;
   kind?: "main" | "companion";
+  source?: string;
   sort?: "score" | "least_used" | "recent";
   limit?: number;
   offset?: number;
@@ -31,6 +32,7 @@ export function listGames(params?: {
   if (params?.min_score != null) p.set("min_score", String(params.min_score));
   if (params?.q) p.set("q", params.q);
   if (params?.kind) p.set("kind", params.kind);
+  if (params?.source) p.set("source", params.source);
   if (params?.sort) p.set("sort", params.sort);
   if (params?.limit != null) p.set("limit", String(params.limit));
   if (params?.offset != null) p.set("offset", String(params.offset));
@@ -62,6 +64,13 @@ export function patchIngestConfig(patch: GameIngestConfigPatch): Promise<GameIng
 
 export function startIngestRun(): Promise<GameIngestRunStartResponse> {
   return api<GameIngestRunStartResponse>("/api/game-library/ingest/run", { method: "POST" });
+}
+
+// 扩库（应用宝榜单发现）立即跑一批。补全（按名巡检）走上面的 startIngestRun。
+export function startDiscoveryRun(): Promise<GameIngestRunStartResponse> {
+  return api<GameIngestRunStartResponse>("/api/game-library/ingest/discovery/run", {
+    method: "POST",
+  });
 }
 
 // 抓取/导入运行日志：复用通用 report_events(user JWT)，按 source_module=game_ingest 过滤。

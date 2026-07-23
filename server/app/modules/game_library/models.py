@@ -98,4 +98,34 @@ class GameIngestConfig(Base):
     last_run_finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_run_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_run_trigger: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    # 补全巡检是否也覆盖 main 游戏（默认只巡检 companion；开启后 select_due_games 放宽覆盖主推）。
+    patrol_include_main: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    # ---- 扩库（应用宝榜单发现）独立字段：与补全共用单例行，但另一套窗口/开关/游标。见 0072 迁移。
+    discovery_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    discovery_window_start: Mapped[str] = mapped_column(
+        String(5), nullable=False, server_default="04:00"
+    )
+    discovery_window_end: Mapped[str] = mapped_column(
+        String(5), nullable=False, server_default="06:00"
+    )
+    # 种子榜单路径列表(JSON)；NULL = 用 planb.yingyongbao 内置 LIST_PATHS。
+    discovery_seed_paths: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    discovery_detail_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="30"
+    )
+    discovery_max_shots: Mapped[int] = mapped_column(Integer, nullable=False, server_default="6")
+    discovery_min_gap_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="20"
+    )
+    discovery_max_gap_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="90"
+    )
+    discovery_last_run_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    discovery_last_run_finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    discovery_last_run_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    discovery_last_run_trigger: Mapped[str | None] = mapped_column(String(12), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

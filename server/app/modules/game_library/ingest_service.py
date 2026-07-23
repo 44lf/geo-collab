@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from server.app.core.time import utcnow
 from server.app.modules.game_library.models import Game, GameIngestConfig
-from server.app.modules.image_library.models import StockCategory
+from server.app.modules.image_library.models import StockCategory, StockImage
+from server.app.modules.image_library.service import source_url_sha256
 from server.app.shared.errors import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,19 @@ _WRITABLE = {
     "max_shots",
     "cull_after_misses",
     "cull_enabled",
+    "patrol_include_main",
+}
+
+# 扩库（应用宝榜单发现）可写字段：API 用 nested "discovery" 组，落 DB 时前缀成 discovery_<key> 列。
+_DISCOVERY_WRITABLE = {
+    "enabled",
+    "window_start",
+    "window_end",
+    "seed_paths",
+    "detail_limit",
+    "max_shots",
+    "min_gap_seconds",
+    "max_gap_seconds",
 }
 
 
@@ -40,7 +54,8 @@ def get_or_create_ingest_config(db: Session) -> GameIngestConfig:
 
 def update_ingest_config(db: Session, patch: dict) -> GameIngestConfig:
     cfg = get_or_create_ingest_config(db)
-    data = {k: v for k, v in (patch or {}).items() if k in _WRITABLE}
+    patch = patch or {}
+    data = {k: v for k, v in patch.items() if k in _WRITABLE}
     for key in ("window_start", "window_end"):
         if key in data and not _HHMM.match(str(data[key])):
             raise ValidationError(f"{key} 必须是 HH:MM")
@@ -59,8 +74,35 @@ def update_ingest_config(db: Session, patch: dict) -> GameIngestConfig:
         raise ValidationError("min_gap_seconds 不能大于 max_gap_seconds")
     for k, v in data.items():
         setattr(cfg, k, v)
+
+    disc = patch.get("discovery")
+    if isinstance(disc, dict):
+        _apply_discovery_patch(cfg, disc)
+
     db.flush()
     return cfg
+
+
+def _apply_discovery_patch(cfg: GameIngestConfig, disc: dict) -> None:
+    """把 nested discovery 组落到 discovery_<key> 列（含校验）。seed_paths 允许 None=用内置。"""
+    d = {k: v for k, v in disc.items() if k in _DISCOVERY_WRITABLE}
+    for key in ("window_start", "window_end"):
+        if key in d and not _HHMM.match(str(d[key])):
+            raise ValidationError(f"discovery.{key} 必须是 HH:MM")
+    for key in ("detail_limit", "max_shots", "min_gap_seconds", "max_gap_seconds"):
+        if key in d and int(d[key]) <= 0:
+            raise ValidationError(f"discovery.{key} 必须为正整数")
+    lo = int(d.get("min_gap_seconds", cfg.discovery_min_gap_seconds))
+    hi = int(d.get("max_gap_seconds", cfg.discovery_max_gap_seconds))
+    if lo > hi:
+        raise ValidationError("discovery.min_gap_seconds 不能大于 max_gap_seconds")
+    if "seed_paths" in d:
+        sp = d["seed_paths"]
+        if sp is not None and not (isinstance(sp, list) and all(isinstance(p, str) for p in sp)):
+            raise ValidationError("discovery.seed_paths 必须是字符串列表或 null")
+        d["seed_paths"] = [p.strip() for p in sp if p.strip()] if sp else None
+    for k, v in d.items():
+        setattr(cfg, f"discovery_{k}", v)
 
 
 def _iso(dt):
@@ -71,7 +113,7 @@ def _iso(dt):
     return dt.isoformat() + ("Z" if dt.tzinfo is None else "")
 
 
-def ingest_config_to_dict(cfg, *, running: bool) -> dict:
+def ingest_config_to_dict(cfg, *, running: bool, discovery_running: bool = False) -> dict:
     return {
         "enabled": cfg.enabled,
         "window_start": cfg.window_start,
@@ -83,11 +125,27 @@ def ingest_config_to_dict(cfg, *, running: bool) -> dict:
         "max_shots": cfg.max_shots,
         "cull_after_misses": cfg.cull_after_misses,
         "cull_enabled": cfg.cull_enabled,
+        "patrol_include_main": cfg.patrol_include_main,
         "running": running,
         "last_run_started_at": _iso(cfg.last_run_started_at),
         "last_run_finished_at": _iso(cfg.last_run_finished_at),
         "last_run_summary": cfg.last_run_summary,
         "last_run_trigger": cfg.last_run_trigger,
+        "discovery": {
+            "enabled": cfg.discovery_enabled,
+            "window_start": cfg.discovery_window_start,
+            "window_end": cfg.discovery_window_end,
+            "seed_paths": cfg.discovery_seed_paths,
+            "detail_limit": cfg.discovery_detail_limit,
+            "max_shots": cfg.discovery_max_shots,
+            "min_gap_seconds": cfg.discovery_min_gap_seconds,
+            "max_gap_seconds": cfg.discovery_max_gap_seconds,
+            "running": discovery_running,
+            "last_run_started_at": _iso(cfg.discovery_last_run_started_at),
+            "last_run_finished_at": _iso(cfg.discovery_last_run_finished_at),
+            "last_run_summary": cfg.discovery_last_run_summary,
+            "last_run_trigger": cfg.discovery_last_run_trigger,
+        },
     }
 
 
@@ -119,18 +177,25 @@ def record_ingest_run_event(
         db.close()
 
 
-def select_due_games(db: Session, *, limit: int) -> list[int]:
-    """选出待巡检的 companion-only 游戏 id，按 last_verified_at 升序（未巡检的 NULL 优先）。
+def select_due_games(db: Session, *, limit: int, include_main: bool = False) -> list[int]:
+    """选出待巡检的游戏 id，按 last_verified_at 升序（未巡检的 NULL 优先）。
 
-    只挂在 kind='companion' 栏目下的游戏才自动巡检；main 栏目手工维护，不进这条自动化。
+    默认只挂在 kind='companion' 栏目下的游戏才自动巡检；main 栏目手工维护、不进这条自动化。
+    `include_main=True`（config `patrol_include_main`）时放宽到覆盖 main——补全会给主推游戏
+    的空字段填值（`upsert_game` 只填空/取更全，不覆盖已有），且 main 天然豁免自动软删
+    （见 `_is_cull_exempt`），故对手工维护的主推安全。
+
     注意：不用 `.nullsfirst()`——MySQL（含 8.0.46）不支持 `ORDER BY ... NULLS FIRST` 语法
     （会报 1064 语法错误）。MySQL 对 ASC 排序里 NULL 的默认语义就是排最前，因此裸 `.asc()`
     已经等价于 NULLS FIRST，不需要（也不能用）显式子句。
     """
-    comp = select(StockCategory.id).where(StockCategory.kind == "companion")
+    conds = [Game.is_active.is_(True)]
+    if not include_main:
+        comp = select(StockCategory.id).where(StockCategory.kind == "companion")
+        conds.append(Game.stock_category_id.in_(comp))
     stmt = (
         select(Game.id)
-        .where(Game.is_active.is_(True), Game.stock_category_id.in_(comp))
+        .where(*conds)
         .order_by(Game.last_verified_at.asc())
         .limit(max(1, int(limit)))
     )
@@ -167,9 +232,9 @@ def _collect_from_all_sources(source_order: str, name: str) -> dict:
     error（网络/异常）与 miss 严格区分：error 不构成"搜不到"的证据、不计入软删 streak。
     归一化 matcher 放宽格式差异。
     """
-    from server.app.modules.game_library.sources import baidu
+    from server.app.modules.game_library.sources import baidu, ninegame
 
-    srcs = {"baidu": baidu}
+    srcs = {"baidu": baidu, "ninegame": ninegame}
     hits: list = []
     per_source: dict[str, str] = {}
     for key in [s.strip() for s in (source_order or "").split(",") if s.strip()]:
@@ -218,6 +283,24 @@ def _is_cull_exempt(db: Session, g: Game) -> bool:
     return False
 
 
+def _existing_shot_hashes(db: Session, category_id: int | None) -> set[str]:
+    """该素材桶里已入库图片的 source_url_hash 集合。下载循环据此跳过已存在的 URL，
+    避免每轮软 LRU 巡检对同一批截图重复下载 + 重复付费竖转横（数据幂等但成本不幂等）。"""
+    if category_id is None:
+        return set()
+    rows = (
+        db.execute(
+            select(StockImage.source_url_hash).where(
+                StockImage.category_id == category_id,
+                StockImage.source_url_hash.isnot(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {h for h in rows if h}
+
+
 def refresh_one_game(
     session_factory,
     game_id: int,
@@ -233,7 +316,7 @@ def refresh_one_game(
     无证据软删：全源 miss(无 hit 无 error) → not_found_streak+1；达阈值且无证据且不豁免 → is_active=False。
     per-game 隔离：异常吞掉记日志。返回 {"outcome": refreshed|not_found|error|culled, "per_source": {...}}。
     """
-    from server.app.modules.game_library import service
+    from server.app.modules.game_library import landscape, service
     from server.app.shared import image_download
 
     db = session_factory()
@@ -243,6 +326,7 @@ def refresh_one_game(
             return {"outcome": "error", "per_source": {}, "game_id": game_id, "name": None}
         name, category_id = game.name, game.stock_category_id
         icon_local = bool(game.icon_url and game.icon_url.startswith("/api/stock-images/"))
+        existing_shot_hashes = _existing_shot_hashes(db, category_id)
     finally:
         db.close()
 
@@ -255,9 +339,15 @@ def refresh_one_game(
     for hit in hits:
         shots: list[tuple[str, bytes, str]] = []
         for url in list(dict.fromkeys(hit.screenshot_urls or []))[:max_shots]:
+            h = source_url_sha256(url)
+            if h in existing_shot_hashes:
+                continue  # 已入库：跳过下载 + 竖转横，省一次付费调用（评审 #1）
             got = image_download.download_image(url)
             if got:
-                shots.append((url, got[0], got[1]))
+                # 竖图入库前扩成横图（best-effort，非竖图/未启用/失败原样返回）。仍在 session 外。
+                data, mime = landscape.to_landscape_if_portrait(got[0], got[1])
+                shots.append((url, data, mime))
+                existing_shot_hashes.add(h)  # 本轮内跨 hit 去重，同 URL 不转两次
         hit_shots.append((hit, shots))
 
     # 封面同样在 session 外下载：已是本地地址（转存过）就跳过，否则挑最优图标下一份。

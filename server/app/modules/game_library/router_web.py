@@ -43,13 +43,22 @@ def web_list_games(
     min_score: float | None = None,
     q: str | None = None,
     kind: str | None = None,
+    source: str | None = None,
     sort: str = Query("score", pattern="^(score|least_used|recent)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     return service.list_games(
-        db, tag=tag, min_score=min_score, q=q, kind=kind, sort=sort, limit=limit, offset=offset
+        db,
+        tag=tag,
+        min_score=min_score,
+        q=q,
+        kind=kind,
+        source=source,
+        sort=sort,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -126,24 +135,34 @@ def web_import_image_categories(payload: ImageCategoryImportRequest, db: Session
 @game_library_web_router.get("/ingest/config", response_model=GameIngestConfigRead)
 def web_get_ingest_config(db: Session = Depends(get_db)):
     from server.app.modules.game_library import scheduler
+    from server.app.modules.game_library.planb import discovery_scheduler
 
     cfg = ingest_service.get_or_create_ingest_config(db)
     db.commit()
     return ingest_service.ingest_config_to_dict(
-        cfg, running=scheduler.is_configured_ingest_running()
+        cfg,
+        running=scheduler.is_configured_ingest_running(),
+        discovery_running=discovery_scheduler.is_discovery_running(),
     )
 
 
 @game_library_web_router.patch("/ingest/config", response_model=GameIngestConfigRead)
 def web_patch_ingest_config(payload: GameIngestConfigPatch, db: Session = Depends(get_db)):
     from server.app.modules.game_library import scheduler
+    from server.app.modules.game_library.planb import discovery_scheduler
 
     cfg = ingest_service.update_ingest_config(db, payload.model_dump(exclude_unset=True))
     db.commit()
-    if cfg.enabled and bg_session_factory is not None:
-        scheduler.start_game_ingest(bg_session_factory)
+    if bg_session_factory is not None:
+        # 补全巡检 / 扩库发现两条线程各按自己的 enabled 懒启动（幂等，已在跑则 no-op）。
+        if cfg.enabled:
+            scheduler.start_game_ingest(bg_session_factory)
+        if cfg.discovery_enabled:
+            discovery_scheduler.start_game_discovery(bg_session_factory)
     return ingest_service.ingest_config_to_dict(
-        cfg, running=scheduler.is_configured_ingest_running()
+        cfg,
+        running=scheduler.is_configured_ingest_running(),
+        discovery_running=discovery_scheduler.is_discovery_running(),
     )
 
 
@@ -152,6 +171,7 @@ def web_patch_ingest_config(payload: GameIngestConfigPatch, db: Session = Depend
 )
 def web_start_ingest_run(db: Session = Depends(get_db)):
     from server.app.modules.game_library import scheduler
+    from server.app.modules.game_library.planb import discovery_scheduler
 
     if bg_session_factory is None:
         raise HTTPException(status_code=503, detail="ingest executor 未就绪")
@@ -165,6 +185,35 @@ def web_start_ingest_run(db: Session = Depends(get_db)):
     return {
         "started": started,
         "status": ingest_service.ingest_config_to_dict(
-            cfg, running=scheduler.is_configured_ingest_running()
+            cfg,
+            running=scheduler.is_configured_ingest_running(),
+            discovery_running=discovery_scheduler.is_discovery_running(),
+        ),
+    }
+
+
+@game_library_web_router.post(
+    "/ingest/discovery/run", response_model=GameIngestRunStartResponse, status_code=202
+)
+def web_start_discovery_run(db: Session = Depends(get_db)):
+    """扩库（应用宝榜单发现）立即跑一批，绕过时间窗；正在跑 → 409。"""
+    from server.app.modules.game_library import scheduler
+    from server.app.modules.game_library.planb import discovery_scheduler
+
+    if bg_session_factory is None:
+        raise HTTPException(status_code=503, detail="ingest executor 未就绪")
+    if discovery_scheduler.is_discovery_running():
+        ingest_service.get_or_create_ingest_config(db)
+        db.commit()
+        raise HTTPException(status_code=409, detail="扩库正在进行中")
+    started = discovery_scheduler.start_configured_discovery(bg_session_factory, trigger="manual")
+    cfg = ingest_service.get_or_create_ingest_config(db)
+    db.commit()
+    return {
+        "started": started,
+        "status": ingest_service.ingest_config_to_dict(
+            cfg,
+            running=scheduler.is_configured_ingest_running(),
+            discovery_running=discovery_scheduler.is_discovery_running(),
         ),
     }

@@ -19,7 +19,6 @@ export type NavKey =
   | "content"
   | "prompts"
   | "quality-reference"
-  | "image-library"
   | "game-library"
   | "videos"
   | "media"
@@ -365,7 +364,12 @@ export type AccountBrowserSession = {
 };
 
 export type AccountLoginSessionStatus =
-  "pending" | "queued" | "starting" | "active" | "failed" | "cancelled";
+  | "pending"
+  | "queued"
+  | "starting"
+  | "active"
+  | "failed"
+  | "cancelled";
 
 export type AccountLoginSessionStatusResponse = {
   status: AccountLoginSessionStatus;
@@ -580,7 +584,23 @@ export type GameDetail = {
   is_active: boolean;
 };
 
-// ── 游戏库 ingest 配置(陪衬定时抓取)────────────────────────────────────────
+// ── 游戏库自动采集配置：补全(按名巡检，顶层字段) + 扩库(榜单发现，discovery 子对象)──────
+export type GameDiscoveryConfig = {
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  seed_paths: string[] | null;
+  detail_limit: number;
+  max_shots: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+  running: boolean;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  last_run_summary: Record<string, unknown> | null;
+  last_run_trigger: string | null;
+};
+
 export type GameIngestConfig = {
   enabled: boolean;
   window_start: string;
@@ -592,12 +612,25 @@ export type GameIngestConfig = {
   max_shots: number;
   cull_after_misses: number;
   cull_enabled: boolean;
+  patrol_include_main: boolean;
   running: boolean;
   last_run_started_at: string | null;
   last_run_finished_at: string | null;
   last_run_summary: Record<string, unknown> | null;
   last_run_trigger: string | null;
+  discovery: GameDiscoveryConfig;
 };
+
+export type GameDiscoveryConfigPatch = Partial<{
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  seed_paths: string[] | null;
+  detail_limit: number;
+  max_shots: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+}>;
 
 export type GameIngestConfigPatch = Partial<{
   enabled: boolean;
@@ -610,6 +643,8 @@ export type GameIngestConfigPatch = Partial<{
   max_shots: number;
   cull_after_misses: number;
   cull_enabled: boolean;
+  patrol_include_main: boolean;
+  discovery: GameDiscoveryConfigPatch;
 }>;
 
 export type GameIngestRunStartResponse = { started: boolean; status: GameIngestConfig };
@@ -770,7 +805,7 @@ export const navItems: {
     ],
   },
   { key: "quality-reference", label: "高质量库", icon: Gem },
-  { key: "image-library", label: "游戏库", icon: Gamepad2 },
+  { key: "game-library", label: "游戏库", icon: Gamepad2 },
   { key: "videos", label: "视频库", icon: Film },
   { key: "media", label: "媒体矩阵", icon: RadioTower },
   { key: "tasks", label: "分发引擎", icon: Send },

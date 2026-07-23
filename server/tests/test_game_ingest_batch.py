@@ -295,6 +295,86 @@ def test_refresh_one_game_error_path_still_advances_last_verified_at(monkeypatch
 
 
 @pytest.mark.mysql
+def test_refresh_skips_already_stored_screenshots(monkeypatch):
+    """评审 #1：已入库的截图 URL 不再重复下载+付费竖转横；只新 URL 才走下载。"""
+    from server.tests.utils import build_test_app
+
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.game_library import ingest_service, types
+        from server.app.modules.game_library.models import Game
+        from server.app.modules.image_library.models import StockCategory, StockImage
+        from server.app.modules.image_library.service import source_url_sha256
+
+        stored_url = "https://cdn.example/already.jpg"
+        new_url = "https://cdn.example/fresh.jpg"
+
+        s = app.session_factory()
+        try:
+            comp = StockCategory(name="c-skip", bucket_name="c-skip", kind="companion")
+            s.add(comp)
+            s.flush()
+            g = Game(
+                name="跳过测试",
+                name_normalized="跳过测试",
+                stock_category_id=comp.id,
+                is_active=True,
+            )
+            s.add(g)
+            s.flush()
+            # 预置一张已入库图片，其 source_url_hash 命中 stored_url
+            s.add(
+                StockImage(
+                    category_id=comp.id,
+                    minio_key="k.jpg",
+                    filename="k.jpg",
+                    source_url=stored_url,
+                    source_url_hash=source_url_sha256(stored_url),
+                )
+            )
+            s.commit()
+            game_id = g.id
+        finally:
+            s.close()
+
+        hit = types.Game(
+            source="baidu",
+            game_id="1",
+            name="跳过测试",
+            score=8.0,
+            tags=[],
+            platforms=[],
+            comment_count=1,
+            icon_url=None,
+            screenshot_urls=[stored_url, new_url],
+            description="d",
+            raw={},
+        )
+        monkeypatch.setattr(
+            ingest_service,
+            "_collect_from_all_sources",
+            lambda source_order, name: {"hits": [hit], "per_source": {"baidu": "hit"}},
+        )
+
+        downloaded: list[str] = []
+
+        def fake_download(url, **kwargs):
+            downloaded.append(url)
+            return None  # 不真下载；只关心哪些 URL 被尝试
+
+        monkeypatch.setattr("server.app.shared.image_download.download_image", fake_download)
+
+        ingest_service.refresh_one_game(
+            app.session_factory, game_id, source_order="baidu", max_shots=6
+        )
+
+        assert stored_url not in downloaded  # 已入库 → 跳过下载+竖转横
+        assert new_url in downloaded  # 新 URL → 仍尝试
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
 def test_select_due_games_companion_only_lru(monkeypatch):
     from server.tests.utils import build_test_app
 

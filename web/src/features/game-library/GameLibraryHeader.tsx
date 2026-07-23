@@ -15,6 +15,9 @@ type Props = {
   onQ: (v: string) => void;
   sort: SortKey;
   onSort: (s: SortKey) => void;
+  /** 来源筛选（空串=全部）。值为 Game.sources 里的源 key。 */
+  source: string;
+  onSource: (v: string) => void;
   /** 当前分组（新建游戏默认归属此分组）。 */
   newGameKind: Seg;
   /** 「从图片库导入」/「新建游戏」等操作完成后通知父级重拉游戏列表。 */
@@ -44,6 +47,8 @@ export function GameLibraryHeader({
   onQ,
   sort,
   onSort,
+  source,
+  onSource,
   newGameKind,
   onGamesChanged,
   selectedGame,
@@ -91,7 +96,20 @@ export function GameLibraryHeader({
       const next = await patchIngestConfig({ enabled: !ingest.enabled });
       setIngest(next);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "更新抓取开关失败", "error");
+      toast(e instanceof Error ? e.message : "更新补全开关失败", "error");
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  async function onToggleDiscovery() {
+    if (!ingest || toggling) return;
+    setToggling(true);
+    try {
+      const next = await patchIngestConfig({ discovery: { enabled: !ingest.discovery.enabled } });
+      setIngest(next);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "更新扩库开关失败", "error");
     } finally {
       setToggling(false);
     }
@@ -144,6 +162,18 @@ export function GameLibraryHeader({
           <option value="least_used">取材最少</option>
           <option value="recent">最近取材</option>
         </select>
+        <select
+          className="glSortSelect"
+          value={source}
+          onChange={(e) => onSource(e.target.value)}
+          aria-label="来源筛选"
+        >
+          <option value="">全部来源</option>
+          <option value="yingyongbao">应用宝</option>
+          <option value="ninegame">九游</option>
+          <option value="baidu">百度</option>
+          <option value="taptap">TapTap</option>
+        </select>
 
         <button type="button" className="glHeaderBtn" onClick={() => setCreateOpen(true)}>
           <Plus size={16} />
@@ -168,53 +198,69 @@ export function GameLibraryHeader({
             onClick={() => setFlyoutOpen((v) => !v)}
           >
             <CalendarClock size={16} />
-            陪衬抓取
+            自动采集
           </button>
           {flyoutOpen && (
             <div className="glIngestFlyout">
-              <div className="glIngestFlyoutLeft">
-                <CalendarClock size={17} color="#A99BFF" aria-hidden />
-                <div className="glIngestFlyoutTextGroup">
-                  <span className="glIngestFlyoutTitle">陪衬游戏定时抓取</span>
-                  <span className="glIngestFlyoutSub">仅用于陪衬库，主推游戏手动维护</span>
-                </div>
-              </div>
-              <div className="glIngestFlyoutRight">
-                {ingestLoading || !ingest ? (
-                  <span className="glIngestFlyoutSummary">加载中…</span>
-                ) : (
-                  <>
+              {ingestLoading || !ingest ? (
+                <span className="glIngestFlyoutSummary">加载中…</span>
+              ) : (
+                <>
+                  <div className="glIngestFlyoutRow">
+                    <div className="glIngestFlyoutTextGroup">
+                      <span className="glIngestFlyoutTitle">补全 · 按名巡检</span>
+                      <span className="glIngestFlyoutSub">
+                        {ingest.running
+                          ? "补全中…"
+                          : ingest.last_run_finished_at
+                            ? `每天 ${ingest.window_start}–${ingest.window_end} · 上次 ${formatTimestamp(ingest.last_run_finished_at)}`
+                            : `每天 ${ingest.window_start}–${ingest.window_end} · 尚未运行`}
+                      </span>
+                    </div>
                     <button
                       type="button"
                       className={`glIngestToggle${ingest.enabled ? " glIngestToggleOn" : ""}`}
                       role="switch"
                       aria-checked={ingest.enabled}
-                      aria-label="启用陪衬游戏定时抓取"
+                      aria-label="启用补全定时巡检"
                       disabled={toggling}
                       onClick={() => void onToggleEnabled()}
                     >
                       <span className="glIngestToggleKnob" />
                     </button>
-                    <span className="glIngestFlyoutTime mono">
-                      每天 {ingest.window_start}–{ingest.window_end}
-                    </span>
-                    <span className="glIngestFlyoutSummary">
-                      {ingest.running
-                        ? "抓取中…"
-                        : ingest.last_run_finished_at
-                          ? `上次 ${formatTimestamp(ingest.last_run_finished_at)}`
-                          : "尚未运行"}
-                    </span>
+                  </div>
+                  <div className="glIngestFlyoutRow">
+                    <div className="glIngestFlyoutTextGroup">
+                      <span className="glIngestFlyoutTitle">扩库 · 榜单发现</span>
+                      <span className="glIngestFlyoutSub">
+                        {ingest.discovery.running
+                          ? "扩库中…"
+                          : ingest.discovery.last_run_finished_at
+                            ? `每天 ${ingest.discovery.window_start}–${ingest.discovery.window_end} · 上次 ${formatTimestamp(ingest.discovery.last_run_finished_at)}`
+                            : `每天 ${ingest.discovery.window_start}–${ingest.discovery.window_end} · 尚未运行`}
+                      </span>
+                    </div>
                     <button
                       type="button"
-                      className="glIngestConfigBtn"
-                      onClick={() => setSettingsOpen(true)}
+                      className={`glIngestToggle${ingest.discovery.enabled ? " glIngestToggleOn" : ""}`}
+                      role="switch"
+                      aria-checked={ingest.discovery.enabled}
+                      aria-label="启用扩库定时发现"
+                      disabled={toggling}
+                      onClick={() => void onToggleDiscovery()}
                     >
-                      配置
+                      <span className="glIngestToggleKnob" />
                     </button>
-                  </>
-                )}
-              </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="glIngestConfigBtn"
+                    onClick={() => setSettingsOpen(true)}
+                  >
+                    配置
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

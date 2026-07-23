@@ -5,19 +5,30 @@ import { Modal } from "../../components/Modal";
 import { useToast } from "../../components/Toast";
 
 const EVENT_LABEL: Record<string, string> = {
-  ingest_batch: "立即抓一批",
+  ingest_batch: "立即补全",
   ingest_window: "定时窗口",
   ingest_import: "图库导入",
+  discovery_batch: "扩库发现",
 };
 
-// 展示顺序 + 中文标签。counts 里同名 key（refreshed/created/not_found/culled/error）也复用。
+// 展示顺序 + 中文标签。counts 里同名 key 复用（补全:refreshed/created/not_found/culled/error；
+// 扩库:discovered/upserted/new/comments/failed）。chip 只在该 key 存在时渲染，两方向天然各显各的。
 const BUCKETS = [
   { key: "refreshed", label: "刷新" },
   { key: "created", label: "新建" },
   { key: "not_found", label: "跳过" },
   { key: "culled", label: "删除" },
   { key: "error", label: "错误" },
+  { key: "discovered", label: "发现" },
+  { key: "upserted", label: "落库" },
+  { key: "new", label: "新增" },
+  { key: "comments", label: "精选评论" },
+  { key: "failed", label: "失败" },
 ];
+
+type Dir = "all" | "patrol" | "discovery";
+const dirOf = (eventType: string): Dir =>
+  eventType === "discovery_batch" ? "discovery" : "patrol";
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
@@ -31,6 +42,7 @@ export function GameIngestLogModal({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [dir, setDir] = useState<Dir>("all");
 
   function load(next: number | null) {
     setLoading(true);
@@ -71,56 +83,77 @@ export function GameIngestLogModal({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="glLogBody">
+        <div className="glGroupSwitch">
+          {(
+            [
+              { key: "all", label: "全部" },
+              { key: "discovery", label: "扩库" },
+              { key: "patrol", label: "补全" },
+            ] as { key: Dir; label: string }[]
+          ).map((it) => (
+            <button
+              key={it.key}
+              type="button"
+              className={`glSegBtn${dir === it.key ? " active" : ""}`}
+              onClick={() => setDir(it.key)}
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+
         {loaded && items.length === 0 && (
           <div className="glLogEmpty">
-            暂无运行记录 —— 跑一次「立即抓一批」或「从图片库导入」后这里就会有。
+            暂无运行记录 —— 跑一次「立即补全一批」/「立即扩库一批」或「从图片库导入」后这里就会有。
           </div>
         )}
 
-        {items.map((ev) => {
-          const counts = ev.payload_json?.counts ?? {};
-          const games = ev.payload_json?.games ?? {};
-          const isOpen = expanded.has(ev.id);
-          const detailBuckets = BUCKETS.filter((b) => (games[b.key]?.length ?? 0) > 0);
-          return (
-            <div key={ev.id} className="glLogCard">
-              <div className="glLogCardHead">
-                <span className="glLogBadge">{EVENT_LABEL[ev.event_type] ?? ev.event_type}</span>
-                <span className="glLogTime mono">{fmtTime(ev.created_at)}</span>
-              </div>
-              <div className="glLogMsg">{ev.message}</div>
-              <div className="glLogChips">
-                {BUCKETS.filter((b) => typeof counts[b.key] === "number").map((b) => (
-                  <span key={b.key} className={`glLogChip glLogChip-${b.key}`}>
-                    {b.label} {counts[b.key] as number}
-                  </span>
-                ))}
-                {typeof counts.attempts === "number" && (
-                  <span className="glLogChip glLogChip-attempts mono">尝试 {counts.attempts}</span>
-                )}
-                {counts.cap_reached === true && (
-                  <span className="glLogChip glLogChip-cap">已达尝试上限</span>
-                )}
-              </div>
-              {detailBuckets.length > 0 && (
-                <button type="button" className="glLogToggle" onClick={() => toggle(ev.id)}>
-                  {isOpen ? "收起明细 ▲" : "查看明细 ▼"}
-                </button>
-              )}
-              {isOpen &&
-                detailBuckets.map((b) => (
-                  <div key={b.key} className="glLogDetailRow">
-                    <span className={`glLogDetailLabel glLogChip-${b.key}`}>{b.label}</span>
-                    <span className="glLogDetailNames">
-                      {(games[b.key] ?? [])
-                        .map((g) => g.name || `#${g.id ?? "?"}`)
-                        .join("、")}
+        {items
+          .filter((ev) => dir === "all" || dirOf(ev.event_type) === dir)
+          .map((ev) => {
+            const counts = ev.payload_json?.counts ?? {};
+            const games = ev.payload_json?.games ?? {};
+            const isOpen = expanded.has(ev.id);
+            const detailBuckets = BUCKETS.filter((b) => (games[b.key]?.length ?? 0) > 0);
+            return (
+              <div key={ev.id} className="glLogCard">
+                <div className="glLogCardHead">
+                  <span className="glLogBadge">{EVENT_LABEL[ev.event_type] ?? ev.event_type}</span>
+                  <span className="glLogTime mono">{fmtTime(ev.created_at)}</span>
+                </div>
+                <div className="glLogMsg">{ev.message}</div>
+                <div className="glLogChips">
+                  {BUCKETS.filter((b) => typeof counts[b.key] === "number").map((b) => (
+                    <span key={b.key} className={`glLogChip glLogChip-${b.key}`}>
+                      {b.label} {counts[b.key] as number}
                     </span>
-                  </div>
-                ))}
-            </div>
-          );
-        })}
+                  ))}
+                  {typeof counts.attempts === "number" && (
+                    <span className="glLogChip glLogChip-attempts mono">
+                      尝试 {counts.attempts}
+                    </span>
+                  )}
+                  {counts.cap_reached === true && (
+                    <span className="glLogChip glLogChip-cap">已达尝试上限</span>
+                  )}
+                </div>
+                {detailBuckets.length > 0 && (
+                  <button type="button" className="glLogToggle" onClick={() => toggle(ev.id)}>
+                    {isOpen ? "收起明细 ▲" : "查看明细 ▼"}
+                  </button>
+                )}
+                {isOpen &&
+                  detailBuckets.map((b) => (
+                    <div key={b.key} className="glLogDetailRow">
+                      <span className={`glLogDetailLabel glLogChip-${b.key}`}>{b.label}</span>
+                      <span className="glLogDetailNames">
+                        {(games[b.key] ?? []).map((g) => g.name || `#${g.id ?? "?"}`).join("、")}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            );
+          })}
 
         {cursor != null && (
           <button

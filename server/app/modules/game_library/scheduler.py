@@ -291,6 +291,7 @@ def run_configured_ingest_once(
         max_gap = cfg.max_gap_seconds
         cull_after_misses = cfg.cull_after_misses
         cull_enabled = cfg.cull_enabled
+        patrol_include_main = cfg.patrol_include_main
     finally:
         db.close()
 
@@ -328,7 +329,7 @@ def run_configured_ingest_once(
 
     db = session_factory()
     try:
-        due = ingest_service.select_due_games(db, limit=1)
+        due = ingest_service.select_due_games(db, limit=1, include_main=patrol_include_main)
     finally:
         db.close()
 
@@ -397,7 +398,9 @@ def _run_configured_batch(session_factory: SessionFactory, *, trigger: str) -> N
             cull_after_misses = cfg.cull_after_misses
             cull_enabled = cfg.cull_enabled
             attempt_cap = batch_size * _ATTEMPT_MULTIPLIER
-            due = ingest_service.select_due_games(db, limit=attempt_cap)
+            due = ingest_service.select_due_games(
+                db, limit=attempt_cap, include_main=cfg.patrol_include_main
+            )
         finally:
             db.close()
 

@@ -44,6 +44,35 @@ class QueryGamesRequest(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
 
 
+class GameDiscoveryConfigRead(BaseModel):
+    """扩库（应用宝榜单发现）配置回显，作为 GameIngestConfigRead 的 discovery 子对象。"""
+
+    enabled: bool = False
+    window_start: str = "04:00"
+    window_end: str = "06:00"
+    seed_paths: list[str] | None = None
+    detail_limit: int = 30
+    max_shots: int = 6
+    min_gap_seconds: int = 20
+    max_gap_seconds: int = 90
+    running: bool = False
+    last_run_started_at: str | None = None
+    last_run_finished_at: str | None = None
+    last_run_summary: dict | None = None
+    last_run_trigger: str | None = None
+
+
+class GameDiscoveryConfigPatch(BaseModel):
+    enabled: bool | None = None
+    window_start: str | None = None
+    window_end: str | None = None
+    seed_paths: list[str] | None = None
+    detail_limit: int | None = Field(default=None, ge=1)
+    max_shots: int | None = Field(default=None, ge=1)
+    min_gap_seconds: int | None = Field(default=None, ge=1)
+    max_gap_seconds: int | None = Field(default=None, ge=1)
+
+
 class GameIngestConfigRead(BaseModel):
     enabled: bool
     window_start: str
@@ -55,11 +84,13 @@ class GameIngestConfigRead(BaseModel):
     max_shots: int
     cull_after_misses: int
     cull_enabled: bool
+    patrol_include_main: bool = False
     running: bool = False
     last_run_started_at: str | None = None
     last_run_finished_at: str | None = None
     last_run_summary: dict | None = None
     last_run_trigger: str | None = None
+    discovery: GameDiscoveryConfigRead = Field(default_factory=GameDiscoveryConfigRead)
 
 
 class GameIngestConfigPatch(BaseModel):
@@ -73,6 +104,8 @@ class GameIngestConfigPatch(BaseModel):
     max_shots: int | None = Field(default=None, ge=1)
     cull_after_misses: int | None = Field(default=None, ge=1)
     cull_enabled: bool | None = None
+    patrol_include_main: bool | None = None
+    discovery: GameDiscoveryConfigPatch | None = None
 
 
 class GameListItem(BaseModel):

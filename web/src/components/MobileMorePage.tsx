@@ -31,7 +31,7 @@ export function MobileMorePage({
     {
       title: "素材",
       rows: [
-        { key: "image-library", label: "游戏库", icon: Gamepad2 },
+        { key: "game-library", label: "游戏库", icon: Gamepad2 },
         { key: "videos", label: "视频库", icon: Film },
         { key: "media", label: "媒体矩阵", icon: RadioTower },
       ],

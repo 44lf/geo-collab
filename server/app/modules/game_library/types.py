@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 SOURCE_BAIDU = "baidu"
+SOURCE_NINEGAME = "ninegame"
+SOURCE_YINGYONGBAO = "yingyongbao"
 
 ORDER_HOT = "hot"
 ORDER_NEW = "new"

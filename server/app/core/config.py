@@ -205,6 +205,20 @@ class Settings(BaseSettings):
         120  # GEO_BAIDU_NEG_CACHE_SECONDS 同名搜图失败的负缓存 TTL，省得本批反复打
     )
 
+    # 游戏库存图竖转横（Seedream 4.0 扩图）：入库前把竖屏截图扩成 16:9 横图，供文章配图/封面。
+    # best-effort，key 缺 / 未启用 / 非图 / 失败 → 原样保留竖图（见 game_library/landscape.py）。
+    game_landscape_enabled: bool = False  # GEO_GAME_LANDSCAPE_ENABLED，默认关（生产配好 key 再开）
+    game_landscape_api_key: str = ""  # GEO_GAME_LANDSCAPE_API_KEY（火山方舟 Ark Key）
+    # 直接点名基础模型，非某账号私有 ep 接入点（后者跨 key 会 404）。
+    game_landscape_model: str = "doubao-seedream-4-0-250828"  # GEO_GAME_LANDSCAPE_MODEL
+    game_landscape_base_url: str = (
+        "https://ark.cn-beijing.volces.com/api/v3"  # GEO_GAME_LANDSCAPE_BASE_URL
+    )
+    game_landscape_size: str = (
+        "2048x1152"  # GEO_GAME_LANDSCAPE_SIZE 输出横图尺寸（须 >=921600 像素）
+    )
+    game_landscape_timeout_seconds: int = 120  # GEO_GAME_LANDSCAPE_TIMEOUT_SECONDS
+
     # MCP server（Claude Code 通过 stdio spawn 调用 GEO 能力）
     # 注意：MCP server 子进程的 GEO_API_BASE_URL 由 server/mcp/config.py 直接读 os.environ，
     # 不进 Settings——避免与服务端进程的 mcp_token 校验路径耦合。

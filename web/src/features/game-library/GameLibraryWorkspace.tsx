@@ -22,6 +22,7 @@ export function GameLibraryWorkspace() {
   const [q, setQ] = useState("");
   const [seg, setSeg] = useState<Seg>("main");
   const [sort, setSort] = useState<SortKey>("score");
+  const [source, setSource] = useState(""); // 来源筛选，空串=全部
   const [page, setPage] = useState(0); // 0-based，当前分组内翻页
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -35,10 +36,18 @@ export function GameLibraryWorkspace() {
   const reloadGames = useCallback(() => {
     const seq = ++seqRef.current;
     const query = q.trim() || undefined;
+    const src = source || undefined;
     const other: Seg = seg === "main" ? "companion" : "main";
     return Promise.all([
-      listGames({ q: query, kind: seg, sort, limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
-      listGames({ q: query, kind: other, limit: 1 }),
+      listGames({
+        q: query,
+        kind: seg,
+        source: src,
+        sort,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+      }),
+      listGames({ q: query, kind: other, source: src, limit: 1 }),
     ])
       .then(([cur, oth]) => {
         if (seq !== seqRef.current) return;
@@ -57,19 +66,19 @@ export function GameLibraryWorkspace() {
         toast(e instanceof Error ? e.message : "加载游戏失败", "error");
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, seg, sort, page]);
+  }, [q, seg, sort, source, page]);
 
-  // 过滤键（搜索/分组/排序）变化时回到第 1 页，避免停在越界页码上。
+  // 过滤键（搜索/分组/排序/来源）变化时回到第 1 页，避免停在越界页码上。
   useEffect(() => {
     setPage(0);
-  }, [q, seg, sort]);
+  }, [q, seg, sort, source]);
 
-  // 列表重拉：过滤键或页码变化时触发（服务端 name like + kind + sort + 分页），竞态防护 + 防抖。
+  // 列表重拉：过滤键或页码变化时触发（服务端 name like + kind + source + sort + 分页），竞态防护 + 防抖。
   useEffect(() => {
     const timer = setTimeout(() => void reloadGames(), q ? 250 : 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, seg, sort, page]);
+  }, [q, seg, sort, source, page]);
 
   const total = mainCount + companionCount;
   const segCount = seg === "main" ? mainCount : companionCount;
@@ -117,6 +126,8 @@ export function GameLibraryWorkspace() {
         onQ={setQ}
         sort={sort}
         onSort={setSort}
+        source={source}
+        onSource={setSource}
         newGameKind={seg}
         onGamesChanged={reloadGames}
         selectedGame={detail}
