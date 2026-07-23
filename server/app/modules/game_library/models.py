@@ -87,9 +87,7 @@ class GameIngestConfig(Base):
     batch_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="30")
     min_gap_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="20")
     max_gap_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="90")
-    source_order: Mapped[str] = mapped_column(
-        String(50), nullable=False, server_default="baidu"
-    )
+    source_order: Mapped[str] = mapped_column(String(50), nullable=False, server_default="baidu")
     max_shots: Mapped[int] = mapped_column(Integer, nullable=False, server_default="6")
     # 无证据自动软删：连续几轮全源 miss 才软删 + 总开关。
     cull_after_misses: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")

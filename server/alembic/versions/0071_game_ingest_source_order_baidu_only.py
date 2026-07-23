@@ -23,8 +23,7 @@ def upgrade() -> None:
         server_default="baidu",
     )
     op.execute(
-        "UPDATE game_ingest_config SET source_order='baidu' "
-        "WHERE source_order='taptap,baidu'"
+        "UPDATE game_ingest_config SET source_order='baidu' WHERE source_order='taptap,baidu'"
     )
 
 
@@ -37,6 +36,5 @@ def downgrade() -> None:
         server_default="taptap,baidu",
     )
     op.execute(
-        "UPDATE game_ingest_config SET source_order='taptap,baidu' "
-        "WHERE source_order='baidu'"
+        "UPDATE game_ingest_config SET source_order='taptap,baidu' WHERE source_order='baidu'"
     )

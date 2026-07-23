@@ -27,9 +27,7 @@ class Game:
     comment_count: int | None = None
     icon_url: str | None = None
     screenshot_urls: list = field(default_factory=list)
-    android_package: str | None = (
-        None  # baidu 响应无此字段,恒为 None（备未来源填充）
-    )
+    android_package: str | None = None  # baidu 响应无此字段,恒为 None（备未来源填充）
     description: str | None = None
     raw: dict = field(default_factory=dict)
 
