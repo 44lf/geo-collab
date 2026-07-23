@@ -51,6 +51,45 @@ def test_render_markdown_orchestration_separator(monkeypatch):
     assert len(out["cards"]) == 2  # A / B 两张
 
 
+def test_cover_image_composed():
+    """metadata 带 cover_image → 合成封面：游戏图铺底(object-fit:cover, 绝对 src) +
+    底部渐变蒙层 + 标题/副标题叠加。"""
+    from server.app.modules.xhs_cards import render as R
+
+    html = R.generate_cover_html(
+        {
+            "cover_image": "/api/stock-images/5/file",
+            "title": "女生爱玩的宝藏游戏",
+            "subtitle": "梦想城镇同款·更冷门",
+        },
+        "playful-geometric",
+        1080,
+        1440,
+    )
+    assert 'class="cover-bg"' in html
+    assert "http://127.0.0.1:8000/api/stock-images/5/file" in html  # rewrite_img_src 后绝对 src
+    assert "object-fit: cover" in html  # 背景铺满
+    assert "linear-gradient" in html  # 底部渐变蒙层保证文字可读
+    assert "女生爱玩的宝藏游戏" in html
+    assert "梦想城镇同款·更冷门" in html
+    assert "word-break: normal" in html
+    assert "overflow-wrap: break-word" in html
+
+
+def test_cover_without_image_is_text_cover():
+    """无 cover_image → 维持现有文字封面(渐变+emoji+title)，不含背景图。"""
+    from server.app.modules.xhs_cards import render as R
+
+    html = R.generate_cover_html(
+        {"emoji": "🎮", "title": "合成游戏TOP5", "subtitle": "越玩越上头"},
+        "playful-geometric",
+        1080,
+        1440,
+    )
+    assert 'class="cover-bg"' not in html
+    assert "合成游戏TOP5" in html
+
+
 def test_rewrite_img_src():
     from server.app.modules.xhs_cards import render as R
 
@@ -177,3 +216,16 @@ def test_card_img_slot_full_width_contain():
     # 满宽 → 宽度统一。用 [^-]width 排除主题里 max-width:100% 的误命中。
     assert re.search(r"[^-]width:\s*100%", html)
     assert "object-fit: contain" in html  # 保全整图、不裁不拉伸
+
+
+def test_parse_frontmatter_only_no_trailing_newline():
+    """frontmatter-only(无正文、结尾无换行)也能解析出 metadata —— 合成封面单图流是
+    frontmatter-only，别因缺尾换行把 cover_image 丢了、退回文字封面。"""
+    from server.app.modules.xhs_cards import render as R
+
+    out = R.parse_markdown_string(
+        '---\ncover_image: "/api/stock-images/9/file"\ntitle: "钩子"\n---'
+    )
+    assert out["metadata"].get("cover_image") == "/api/stock-images/9/file"
+    assert out["metadata"].get("title") == "钩子"
+    assert out["body"].strip() == ""
