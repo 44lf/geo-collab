@@ -8,7 +8,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0071_game_ingest_source_order_baidu_only"
+revision: str = "0071_game_ingest_baidu_only"
 down_revision: str | None = "0070_prompt_template_platform"
 branch_labels: str | None = None
 depends_on: str | None = None

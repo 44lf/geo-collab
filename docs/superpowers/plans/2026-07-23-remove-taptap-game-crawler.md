@@ -40,7 +40,7 @@
 - `server/scripts/ingest_games.py` — `--source` choices 去 taptap
 
 **修改（配置/前端/迁移）:**
-- 新增 `server/alembic/versions/0071_game_ingest_source_order_baidu_only.py`
+- 新增 `server/alembic/versions/0071_game_ingest_baidu_only.py`
 - `web/src/features/game-library/GameIngestSettingsModal.tsx` — placeholder `如 taptap,baidu` → `如 baidu`
 
 **修改（测试）:**
@@ -269,7 +269,7 @@ git commit -m "refactor(game-library): restrict ingest CLI to baidu source"
 
 **Files:**
 - Modify: `server/app/modules/game_library/models.py:90-92`
-- Create: `server/alembic/versions/0071_game_ingest_source_order_baidu_only.py`
+- Create: `server/alembic/versions/0071_game_ingest_baidu_only.py`
 - Modify: `web/src/features/game-library/GameIngestSettingsModal.tsx:214`
 - Test: `server/tests/test_game_ingest_config.py:20`、`server/tests/test_game_ingest_batch.py`
 
@@ -289,18 +289,18 @@ git commit -m "refactor(game-library): restrict ingest CLI to baidu source"
 
 - [ ] **Step 2: 写迁移 0071**
 
-先确认当前 head：`alembic heads`（应为 `0070`）。新建 `server/alembic/versions/0071_game_ingest_source_order_baidu_only.py`：
+先确认当前 head：`alembic heads`（应为 `0070`）。新建 `server/alembic/versions/0071_game_ingest_baidu_only.py`：
 
 ```python
 """game_ingest_config.source_order 默认改 baidu-only + 规整存量行
 
-Revision ID: 0071_game_ingest_source_order_baidu_only
+Revision ID: 0071_game_ingest_baidu_only
 Revises: 0070_prompt_template_platform
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0071_game_ingest_source_order_baidu_only"
+revision = "0071_game_ingest_baidu_only"
 down_revision = "0070_prompt_template_platform"
 branch_labels = None
 depends_on = None
@@ -343,7 +343,7 @@ def downgrade() -> None:
 
 - [ ] **Step 5: 迁移可加载 + 前端门禁**
 
-Run: `python -c "import server.alembic.versions.0071_game_ingest_source_order_baidu_only as m; print(m.revision, m.down_revision)"`（若模块名带数字前缀不便 import,改用 `alembic history | head` 确认链接不断）
+Run: `python -c "import server.alembic.versions.0071_game_ingest_baidu_only as m; print(m.revision, m.down_revision)"`（若模块名带数字前缀不便 import,改用 `alembic history | head` 确认链接不断）
 Run: `pnpm --filter @geo/web typecheck`
 Expected: 迁移链接不断;typecheck 通过
 
@@ -355,7 +355,7 @@ Expected: PASS（需 DB 的用例无 `GEO_TEST_DATABASE_URL` 时跳过）
 - [ ] **Step 7: Commit**
 
 ```bash
-git add server/app/modules/game_library/models.py server/alembic/versions/0071_game_ingest_source_order_baidu_only.py web/src/features/game-library/GameIngestSettingsModal.tsx server/tests/test_game_ingest_config.py server/tests/test_game_ingest_batch.py
+git add server/app/modules/game_library/models.py server/alembic/versions/0071_game_ingest_baidu_only.py web/src/features/game-library/GameIngestSettingsModal.tsx server/tests/test_game_ingest_config.py server/tests/test_game_ingest_batch.py
 git commit -m "refactor(game-library): default source_order to baidu-only + migration"
 ```
 
