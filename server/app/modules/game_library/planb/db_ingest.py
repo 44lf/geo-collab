@@ -14,6 +14,7 @@ from typing import Any
 from server.app.modules.articles.formatting.document import _normalize_game_name
 from server.app.modules.game_library import ingest_service, landscape, service
 from server.app.modules.game_library.models import Game
+from server.app.modules.image_library.service import source_url_sha256
 from server.app.shared import image_download
 
 from . import adapter
@@ -25,13 +26,22 @@ logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Any]
 
 
-def _download_shots(urls: list[str], max_shots: int) -> list[tuple[str, bytes, str]]:
+def _download_shots(
+    urls: list[str], max_shots: int, skip_hashes: set[str] | None = None
+) -> list[tuple[str, bytes, str]]:
+    """下载截图（session 外）。skip_hashes 里已入库的 source_url_hash 直接跳过，省重复下载 +
+    重复付费竖转横（与巡检腿 refresh_one_game 同口径，评审 #2）。"""
+    seen = set(skip_hashes or ())
     out: list[tuple[str, bytes, str]] = []
     for url in list(dict.fromkeys(urls or []))[:max_shots]:
+        h = source_url_sha256(url)
+        if h in seen:
+            continue
         got = image_download.download_image(url)
         if got:
             data, mime = landscape.to_landscape_if_portrait(got[0], got[1])
             out.append((url, data, mime))
+            seen.add(h)  # 本轮内同 URL 不重复下
     return out
 
 
@@ -67,23 +77,41 @@ def ingest_discovery(
     for pg in games:
         try:
             tg = adapter.to_types_game(pg)
-            shots = _download_shots(pg.screenshot_urls, max_shots)
+            norm = _normalize_game_name(pg.name) or pg.name
+
+            # ① 短读：定位既有行 + 复用其素材桶 + 取已入库截图 hash（省重复下载/竖转横）。
+            # 撞已有行必须锚定该行 + 复用它的桶：绝不让 upsert 按"本次抓到的原始名"re-resolve 分类，
+            # 把老游戏（含手工 main）的 stock_category 改指到新建空桶、孤立原截图（桶名精确匹配 ≠
+            # name_normalized，去书名号/前缀后二者跨源撞名会分叉）。只取标量，行留到 ② 重新 get。
+            db = session_factory()
+            try:
+                existing_row = db.query(Game).filter(Game.name_normalized == norm).first()
+                existed = existing_row is not None
+                existing_id = existing_row.id if existing_row else None
+                category_id = existing_row.stock_category_id if existing_row else None
+                skip_hashes = ingest_service._existing_shot_hashes(db, category_id)
+            finally:
+                db.close()
+
+            # session 外：下载截图（跳过已入库）+ 图标。
+            shots = _download_shots(pg.screenshot_urls, max_shots, skip_hashes=skip_hashes)
             pre_icon: tuple[str, bytes, str] | None = None
             if pg.icon_url:
                 got = image_download.download_image(pg.icon_url)
                 if got:
                     pre_icon = (pg.icon_url, got[0], got[1])
 
+            # ② 短写：重新 get 既有行（不跨 session 传 detached ORM）+ 显式复用桶。
             db = session_factory()
             try:
-                norm = _normalize_game_name(pg.name) or pg.name
-                existed = db.query(Game).filter(Game.name_normalized == norm).first() is not None
+                game_row = db.get(Game, existing_id) if existing_id else None
                 row = service.upsert_game(
                     db,
                     tg,
                     max_screenshots=max_shots,
                     pre_downloaded=shots,
-                    category_id=None,
+                    category_id=category_id,
+                    game_row=game_row,
                     pre_downloaded_icon=pre_icon,
                 )
                 if pg.highlight_comments:

@@ -43,7 +43,7 @@ def web_list_games(
     min_score: float | None = None,
     q: str | None = None,
     kind: str | None = None,
-    source: str | None = None,
+    source: str | None = Query(None, pattern="^(baidu|ninegame|yingyongbao|taptap)$"),
     sort: str = Query("score", pattern="^(score|least_used|recent)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
