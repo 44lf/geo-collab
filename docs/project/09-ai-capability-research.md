@@ -1,6 +1,6 @@
 # 09 · AI 能力与工程实践
 
-> 关联文档：[01 需求分析](./01-requirements-analysis.md) · [03 技术架构](./03-technical-architecture.md) · 仓库 `AI_GENERATION.md`
+> 关联文档：[01 需求分析](./01-requirements-analysis.md) · [03 技术架构](./03-technical-architecture.md) · 仓库 `docs/AI_GENERATION.md`
 >
 > 本文记录项目中 AI 能力的落地与工程选型，结论均以代码为准。
 
@@ -51,7 +51,7 @@ finalize_node     会话 status = done / failed
 | 执行位置 | 生文跑在 **API server 后台线程**（无独立 worker） | 复用 DB session 工厂，免额外进程；`client_request_id` 幂等支持重试 |
 | 超时 | 格式模型独立超时 `GEO_AI_FORMAT_TIMEOUT_SECONDS`（默认 120） | 与主写作解耦，避免互相拖累 |
 
-> 设计 rationale 与 LangGraph 图详见仓库 `AI_GENERATION.md`；实现见 [03 §7 AI 管线](./03-technical-architecture.md)。
+> 设计 rationale 与 LangGraph 图详见仓库 `docs/AI_GENERATION.md`；实现见 [03 §7 AI 管线](./03-technical-architecture.md)。
 
 ---
 

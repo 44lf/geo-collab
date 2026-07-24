@@ -12,8 +12,10 @@ X display 上。系统部署在 Linux 服务器上，因此本模块不做平台
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import threading
@@ -1016,6 +1018,101 @@ def reconcile_leaked_sessions(*, is_alive: Callable[[ManagedProcess], bool] | No
             entry.novnc_port,
         )
     return reclaimed
+
+
+@dataclass
+class HarvestResult:
+    """chromium OS 收割结果：杀掉数 + SIGKILL 仍不死的 pid（survived 非空＝不该归还锁）。"""
+
+    killed: int
+    survived: list[int]
+
+
+def _read_ppid(stat_path: Path) -> int:
+    # /proc/<pid>/stat: "pid (comm) state ppid ..."；comm 可含空格/括号，故取最后一个 ')' 之后第 2 字段
+    data = stat_path.read_text()
+    rparen = data.rfind(")")
+    fields = data[rparen + 2 :].split()
+    return int(fields[1])
+
+
+def _read_proc_table() -> list[tuple[int, int, list[str]]]:
+    """扫 /proc，返回 [(pid, ppid, cmdline_args)]。非 Linux（无 /proc）返回空。"""
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return []
+    rows: list[tuple[int, int, list[str]]] = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+            ppid = _read_ppid(entry / "stat")
+        except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError):
+            continue
+        args = [a for a in raw.decode("utf-8", "replace").split("\x00") if a]
+        rows.append((int(entry.name), ppid, args))
+    return rows
+
+
+def _cmdline_targets_profile(args: list[str], profile_dir: str) -> bool:
+    if f"--user-data-dir={profile_dir}" in args:
+        return True
+    for i, a in enumerate(args):
+        if a == "--user-data-dir" and i + 1 < len(args) and args[i + 1] == profile_dir:
+            return True
+    return False
+
+
+def harvest_chromium_by_profile(
+    profile_dir: Path,
+    *,
+    proc_scan: Callable[[], list[tuple[int, int, list[str]]]] | None = None,
+    kill: Callable[[int], None] | None = None,
+    is_alive: Callable[[int], bool] | None = None,
+    settle_timeout: float = 2.0,
+) -> HarvestResult:
+    """OS 级 SIGKILL 指定 persistent profile 的 chromium 进程树（含子进程）。
+
+    纯 OS 系统调用、不碰 Playwright 句柄，可从任意线程安全调用。seed＝cmdline 含
+    `--user-data-dir=<profile_dir>` 的进程；再按 ppid 展开整棵树（renderer/gpu 未必带 flag）。
+    survived 非空＝SIGKILL 都没杀死，交调用方决定不归还锁。非 Linux（无 /proc）no-op。
+    """
+    scan = proc_scan or _read_proc_table
+    do_kill = kill or (lambda pid: os.kill(pid, signal.SIGKILL))  # type: ignore[attr-defined]
+    alive = is_alive or (lambda pid: Path(f"/proc/{pid}").exists())
+
+    rows = scan()
+    target = profile_dir.as_posix()
+    children: dict[int, list[int]] = {}
+    for pid, ppid, _args in rows:
+        children.setdefault(ppid, []).append(pid)
+
+    targets: set[int] = set()
+    stack = [pid for pid, _ppid, args in rows if _cmdline_targets_profile(args, target)]
+    while stack:
+        pid = stack.pop()
+        if pid in targets:
+            continue
+        targets.add(pid)
+        stack.extend(children.get(pid, []))
+
+    if not targets:
+        return HarvestResult(killed=0, survived=[])
+
+    for pid in targets:
+        try:
+            do_kill(pid)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    deadline = time.monotonic() + settle_timeout
+    survived = list(targets)
+    while survived and time.monotonic() < deadline:
+        time.sleep(0.05)
+        survived = [pid for pid in survived if alive(pid)]
+
+    return HarvestResult(killed=len(targets) - len(survived), survived=survived)
 
 
 def _cleanup_x11_socket(display_number: int) -> None:

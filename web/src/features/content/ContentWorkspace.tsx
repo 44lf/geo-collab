@@ -1,16 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBlocker } from "react-router-dom";
-import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
-import type { NodeViewProps } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
-import { TextStyle } from "@tiptap/extension-text-style";
-import Color from "@tiptap/extension-color";
-import Highlight from "@tiptap/extension-highlight";
-import Underline from "@tiptap/extension-underline";
-import TextAlign from "@tiptap/extension-text-align";
-import { Plus, Save, Search, Trash2, Upload, ChevronRight, Check, Send, ShieldCheck, ListChecks } from "lucide-react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import { Plus, Save, Search, Trash2, Upload, ChevronRight, Check, Send, ShieldCheck, ListChecks, RefreshCw } from "lucide-react";
 import { useToast } from "../../components/Toast";
 import {
   approveArticle,
@@ -20,8 +11,8 @@ import {
   deleteArticle,
   deleteArticleGroup,
   getArticle,
+  listArticleFeed,
   listArticleGroups,
-  listArticles,
   revokeArticleApproval,
   updateArticle,
   updateArticleCover,
@@ -31,7 +22,7 @@ import {
 import { listAccounts } from "../../api/accounts";
 import { uploadAsset as uploadAssetRequest } from "../../api/assets";
 import { assetSrc, assetThumbSrc, countWords, emptyDoc, newClientRequestId, singleFlight, withAssetToken } from "../../api/core";
-import type { Account, Article, ArticleCreatePayload, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleSummary, ArticleUpdatePayload, Draft, ReviewStatus } from "../../types";
+import type { Account, Article, ArticleCreatePayload, ArticleFeedItem, ArticleGroup, ArticleGroupUpdateItemsPayload, ArticleGroupWithMembers, ArticleSummary, ArticleUpdatePayload, Draft, ReviewStatus } from "../../types";
 import { formatDateTime } from "../../utils/dateFormat";
 import { EditorToolbar } from "../../components/editor/EditorToolbar";
 import { ImageSaveDialog } from "../../components/editor/ImageSaveDialog";
@@ -39,6 +30,8 @@ import { ArticleListItem, ReviewBadge, formatArticleTemplateSource } from "../..
 import { Modal } from "../../components/Modal";
 import { Pagination } from "../../components/Pagination";
 import { DistributeModal, type DistributeTarget } from "./DistributeModal";
+import { buildReadonlyExtensions } from "./readonlyExtensions";
+import { XhsNotePreview } from "./XhsNotePreview";
 
 function makeEmptyDraft(): Draft {
   return {
@@ -176,150 +169,21 @@ function sortJsonValue(value: unknown): unknown {
 
 const EMPTY_BODY_STATE = stableStringify(normalizeEditorDocument(emptyDoc, "save"));
 
-const CustomTextStyle = TextStyle.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      fontSize: {
-        default: null,
-        parseHTML: (el: HTMLElement) => el.style.fontSize || null,
-        renderHTML: (attrs: Record<string, unknown>) =>
-          attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {},
-      },
-    };
-  },
-});
-
-function ImageResizeView({ node, updateAttributes, selected }: NodeViewProps) {
-  const attrs = node.attrs as {
-    src: string;
-    alt: string;
-    title: string;
-    assetId: string | null;
-    stockImageId: number | null;
-    width: string;
-    progress: number | null;
-  };
-  const imgRef = useRef<HTMLImageElement>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
-  const [imgError, setImgError] = useState(false);
-
-  const isPending = typeof attrs.assetId === "string" && attrs.assetId.startsWith("pending-");
-
-  useEffect(() => {
-    setImgError(false);
-  }, [attrs.src]);
-
-  useEffect(() => {
-    return () => {
-      cleanupRef.current?.();
-    };
-  }, []);
-
-  function startResize(e: React.MouseEvent) {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = imgRef.current?.offsetWidth ?? 300;
-    const containerWidth = imgRef.current?.parentElement?.offsetWidth || 600;
-
-    function onMove(ev: MouseEvent) {
-      const pct = Math.min(
-        100,
-        Math.max(10, Math.round(((startWidth + ev.clientX - startX) / containerWidth) * 100)),
-      );
-      updateAttributes({ width: `${pct}%` });
-    }
-    function onUp() {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      cleanupRef.current = null;
-    }
-    cleanupRef.current = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }
-
-  return (
-    <NodeViewWrapper style={{ display: "block", position: "relative", width: attrs.width ?? "100%" }}>
-      {isPending && imgError ? (
-        <div className="imgUploadingPlaceholder">
-          <span>{attrs.progress != null ? `上传中 ${attrs.progress}%` : "上传中…"}</span>
-          {attrs.progress != null && (
-            <div className="imgUploadProgress">
-              <div className="imgUploadProgressBar" style={{ width: `${attrs.progress}%` }} />
-            </div>
-          )}
-        </div>
-      ) : (
-        <img
-          ref={imgRef}
-          src={attrs.src}
-          alt={attrs.alt ?? ""}
-          title={attrs.title ?? ""}
-          data-asset-id={attrs.assetId ?? undefined}
-          data-stock-image-id={attrs.stockImageId ?? undefined}
-          style={{ width: "100%", display: "block", borderRadius: "var(--r)" }}
-          draggable={false}
-          onError={() => { if (isPending) setImgError(true); }}
-          onLoad={() => setImgError(false)}
-        />
-      )}
-      {selected && <div className="imgResizeHandle" onMouseDown={startResize} />}
-    </NodeViewWrapper>
-  );
-}
-
-const CustomImage = Image.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      assetId: {
-        default: null,
-        parseHTML: (el) => el.getAttribute("data-asset-id"),
-        renderHTML: (attrs) => (attrs.assetId ? { "data-asset-id": attrs.assetId } : {}),
-      },
-      stockImageId: {
-        default: null,
-        parseHTML: (el) => {
-          const value = el.getAttribute("data-stock-image-id");
-          return value ? Number(value) : null;
-        },
-        renderHTML: (attrs) => (attrs.stockImageId ? { "data-stock-image-id": attrs.stockImageId } : {}),
-      },
-      width: {
-        // 新插入的图片默认显示宽度（编辑器内）。已有文章在 content_json 里存了
-        // 显式宽度、旧 HTML 也走下面的 parseHTML 回落，不受此默认值影响。
-        default: "30%",
-        parseHTML: (el) => el.style.width || "100%",
-        renderHTML: (attrs) => ({ style: `width: ${attrs.width ?? "100%"}` }),
-      },
-      progress: {
-        default: null,
-        parseHTML: () => null,
-        renderHTML: () => ({}),
-      },
-    };
-  },
-  addNodeView() {
-    return ReactNodeViewRenderer(ImageResizeView);
-  },
-});
+// CustomTextStyle / ImageResizeView / CustomImage 已抽到 ./readonlyExtensions（与只读 reader 复用同一套
+// Tiptap 扩展定义）；编辑器扩展改由 buildReadonlyExtensions() 构建。
 
 const LIST_PAGE_SIZE = 10;
-const ARTICLE_FETCH_LIMIT = 200;
 
 type UnifiedListItem =
-  | { type: "article"; article: ArticleSummary; sortTime: number }
-  | { type: "group"; group: ArticleGroup; sortTime: number };
+  | { type: "article"; article: ArticleSummary }
+  | { type: "group"; group: ArticleGroupWithMembers };
 
 interface Props {
   isActive?: boolean;
   reviewTab?: ReviewStatus;
   onReviewTabChange?: (t: ReviewStatus) => void;
   isMobile?: boolean;
+  deepLinkArticleId?: number;
 }
 
 export function ContentWorkspace({
@@ -327,9 +191,16 @@ export function ContentWorkspace({
   reviewTab: reviewTabProp,
   onReviewTabChange,
   isMobile,
+  deepLinkArticleId,
 }: Props = {}) {
   const { toast } = useToast();
-  const [articles, setArticles] = useState<ArticleSummary[]>([]);
+  // 主列表数据源：服务端合并分页 feed（散篇文章 + 分组混排的一页）+ 两 tab 计数。
+  const [feedItems, setFeedItems] = useState<ArticleFeedItem[]>([]);
+  const [feedCounts, setFeedCounts] = useState<{ pending: number; approved: number }>({
+    pending: 0,
+    approved: 0,
+  });
+  // groups 仅供「加入分组」选择器与分组编辑用（需全量分组列表），不再喂主列表。
   const [groups, setGroups] = useState<ArticleGroup[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [selectedArticleIds, setSelectedArticleIds] = useState<number[]>([]);
@@ -337,6 +208,7 @@ export function ContentWorkspace({
   const [articlePage, setArticlePage] = useState(0);
   const [draft, setDraft] = useState<Draft>(makeEmptyDraft);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [statusText, setStatusText] = useState("");
   const [pendingCoverUrl, setPendingCoverUrl] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
@@ -348,17 +220,27 @@ export function ContentWorkspace({
   const [confirmDeleteArticle, setConfirmDeleteArticle] = useState(false);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(false);
   const [confirmUnsavedNew, setConfirmUnsavedNew] = useState(false);
-  const [reviewTab, setReviewTab] = useState<ReviewStatus>("pending");
+  const [reviewTab, setReviewTab] = useState<ReviewStatus>(reviewTabProp ?? "pending");
   const [reviewBusyId, setReviewBusyId] = useState<number | null>(null);
 
+  // reviewTab 由 URL 段 /content/:status 驱动。tab 切换（点击或浏览器前进/后退）都经 reviewTabProp 变化，
+  // 由本 effect 统一 setReviewTab + 重取该 tab 第 0 页——单一入口，避免与 selectReviewTab 双取。
+  // 首次挂载时 reviewTab 已用 prop 初始化，prop===当前 tab 故跳过（初始拉取交给 mount 的 manualRefresh）。
   useEffect(() => {
-    if (reviewTabProp) setReviewTab(reviewTabProp);
+    if (!reviewTabProp || reviewTabProp === reviewTab) return;
+    setReviewTab(reviewTabProp);
+    setSelectedArticleIds([]);
+    void refreshArticles(query, 0, reviewTabProp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewTabProp]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [distributeTarget, setDistributeTarget] = useState<DistributeTarget | null>(null);
 
   const pasteImageRef = useRef<(file: File) => void>(() => {});
   const isInitialMountRef = useRef(true);
+  const refreshingRef = useRef(false);
+  const lastAutoRefreshRef = useRef(0);
+  const manualRefreshRef = useRef<() => void>(() => {});
   const [charCount, setCharCount] = useState(0);
   const [imageUploading, setImageUploading] = useState(0);
   const pendingBlobsRef = useRef<Set<string>>(new Set());
@@ -369,16 +251,10 @@ export function ContentWorkspace({
   }, []);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Link.configure({ openOnClick: false }),
-      CustomImage.configure({ allowBase64: false }),
-      CustomTextStyle,
-      Color,
-      Highlight.configure({ multicolor: true }),
-      Underline,
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
-    ],
+    // 扩展集合抽到共享工厂（与高质量库只读 reader 复用同一套定义）；每次返回全新实例，
+    // 不跨 editor 共享扩展对象。Tiptap v3 注意事项（StarterKit 已内置 link/underline，禁止重复注册）
+    // 详见 buildReadonlyExtensions 的注释。
+    extensions: buildReadonlyExtensions(),
     content: emptyDoc,
     onUpdate({ editor }) {
       setCharCount(editor.getText().replace(/\s/g, "").length);
@@ -390,7 +266,8 @@ export function ContentWorkspace({
       transformPastedHTML(html) {
         return html.replace(/ style="[^"]*"/gi, "");
       },
-      handlePaste(_, event) {
+      handlePaste(view, event) {
+        if (!view.editable) return false;
         const items = Array.from(event.clipboardData?.items ?? []);
         const imageItem = items.find((item) => item.type.startsWith("image/"));
         if (!imageItem) return false;
@@ -407,9 +284,18 @@ export function ContentWorkspace({
   const latestEditor = useRef(editor);
   latestEditor.current = editor;
   const savedStateRef = useRef<{ title: string; author: string; cover_asset_id: number | string | null; bodyState: string } | null>(null);
+  // 只读判定：无选中(新建草稿)/属主/admin 皆可编辑；仅他人分享时 can_edit===false → 只读
+  const canEdit = selectedArticle?.can_edit !== false;
 
   // 当前编辑器是否有未保存改动（读 ref，恒取最新值；空依赖即稳定）。
+  // xhs 图文预览（独立编辑器）的未保存态：由 XhsNotePreview 上报到此 ref，并入 isDirty。
+  const xhsDirtyRef = useRef(false);
+  const handleXhsDirty = useCallback((dirtyState: boolean) => {
+    xhsDirtyRef.current = dirtyState;
+  }, []);
+
   const isDirty = useCallback(() => {
+    if (xhsDirtyRef.current) return true; // xhs 图文预览的未保存文案
     const d = latestDraft.current;
     const e = latestEditor.current;
     const s = savedStateRef.current;
@@ -426,8 +312,9 @@ export function ContentWorkspace({
   }, []);
 
   // 路由切换拦截：离开「内容管理」且有未保存改动时确认（覆盖侧栏点击、移动端导航、浏览器前进/后退）。
+  const inWorkspace = (p: string) => p.startsWith("/content") || p.startsWith("/article");
   const blocker = useBlocker(
-    ({ nextLocation }) => isDirty() && !nextLocation.pathname.startsWith("/content"),
+    ({ nextLocation }) => isDirty() && !inWorkspace(nextLocation.pathname),
   );
   const promptingRef = useRef(false);
   useEffect(() => {
@@ -456,13 +343,31 @@ export function ContentWorkspace({
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
-  const groupedArticleIdSet = useMemo(() => {
-    const ids = new Set<number>();
-    for (const g of groups) for (const item of g.items) ids.add(item.article_id);
-    return ids;
-  }, [groups]);
+  // 深链进入 /article/:id：等 editor 就绪后按 id 载入；仅在 id 变化时触发（换 id 经未保存守卫）。
+  // useEditor 首帧返回 null，未就绪时调 loadArticleById 会被 editor?. 静默跳过、停在空白，故必须 gate 在 editor。
+  const lastDeepLinkRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!editor || !deepLinkArticleId) return;
+    if (lastDeepLinkRef.current === deepLinkArticleId) return;
+    lastDeepLinkRef.current = deepLinkArticleId;
+    void loadArticleGuarded(() => loadArticleById(deepLinkArticleId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, deepLinkArticleId]);
 
-  const articleById = useMemo(() => Object.fromEntries(articles.map((a) => [a.id, a])), [articles]);
+  // 只读降级基线：非作者打开分享文章时禁用编辑器 DOM 输入(programmatic 写入另由下方逐项屏蔽)。
+  useEffect(() => {
+    editor?.setEditable(canEdit);
+  }, [editor, canEdit]);
+
+  // articleById：本页出现过的文章（散篇 + 分组内嵌组员），供分组展开 / 分发 / 勾选反查。
+  const articleById = useMemo(() => {
+    const map: Record<number, ArticleSummary> = {};
+    for (const it of feedItems) {
+      if (it.kind === "article" && it.article) map[it.article.id] = it.article;
+      if (it.kind === "group" && it.group) for (const m of it.group.members) map[m.id] = m;
+    }
+    return map;
+  }, [feedItems]);
 
   function groupReviewCounts(group: ArticleGroup): { total: number; approved: number } {
     if (group.review_summary) return group.review_summary;
@@ -478,67 +383,44 @@ export function ContentWorkspace({
     return { total, approved };
   }
 
-  // 组在某标签是否可见：有该状态成员就出现（混合组两个标签都在）。空组(total=0)算 pending。
-  function groupHasStatus(group: ArticleGroup, status: ReviewStatus): boolean {
-    const counts = groupReviewCounts(group);
-    if (counts.total === 0) return status === "pending";
-    const pendingCount = counts.total - counts.approved;
-    return status === "approved" ? counts.approved > 0 : pendingCount > 0;
-  }
+  // 主列表直接用服务端返回的混排项（已按 created_at 倒序合并 + 切好当前页），前端不再合并/排序/切片。
+  const unifiedList: UnifiedListItem[] = useMemo(
+    () =>
+      feedItems.map((it) =>
+        it.kind === "article"
+          ? { type: "article" as const, article: it.article as ArticleSummary }
+          : { type: "group" as const, group: it.group as ArticleGroupWithMembers },
+      ),
+    [feedItems],
+  );
 
-  // Tab counts: standalone (ungrouped) articles + groups, split by (derived) review status.
-  const reviewCounts = useMemo(() => {
-    let pending = 0;
-    let approved = 0;
-    for (const article of articles) {
-      if (groupedArticleIdSet.has(article.id)) continue;
-      if (article.review_status === "approved") approved += 1;
-      else pending += 1;
-    }
-    for (const group of groups) {
-      if (groupHasStatus(group, "pending")) pending += 1;
-      if (groupHasStatus(group, "approved")) approved += 1;
-    }
-    return { pending, approved };
-  }, [articles, groups, groupedArticleIdSet, articleById]);
+  const pagedUnifiedList = unifiedList; // 服务端已切页
+  const reviewCounts = feedCounts; // 角标用服务端计数
+  const totalArticlePages = Math.max(1, Math.ceil(feedCounts[reviewTab] / LIST_PAGE_SIZE));
 
-  const unifiedList = useMemo(() => {
-    const items: UnifiedListItem[] = [];
-    for (const article of articles) {
-      if (groupedArticleIdSet.has(article.id)) continue;
-      if (article.review_status !== reviewTab) continue;
-      items.push({ type: "article", article, sortTime: new Date(article.created_at).getTime() });
-    }
-    // 混合组双标签可见：当前标签有对应状态成员就纳入。
-    for (const group of groups) {
-      if (!groupHasStatus(group, reviewTab)) continue;
-      if (!query || group.name.toLowerCase().includes(query.toLowerCase()) || group.items.some((item) => articleById[item.article_id])) {
-        items.push({ type: "group", group, sortTime: new Date(group.created_at).getTime() });
-      }
-    }
-    return items.sort((a, b) => b.sortTime - a.sortTime);
-  }, [articles, groups, groupedArticleIdSet, query, reviewTab, articleById]);
-
-  const totalArticlePages = Math.max(1, Math.ceil(unifiedList.length / LIST_PAGE_SIZE));
-  const pagedUnifiedList = unifiedList.slice(articlePage * LIST_PAGE_SIZE, (articlePage + 1) * LIST_PAGE_SIZE);
-
-  useEffect(() => {
-    if (articlePage >= totalArticlePages) {
-      setArticlePage(totalArticlePages - 1);
-    }
-  }, [articlePage, totalArticlePages]);
-
-  async function refreshArticles(nextQuery = query, nextPage = articlePage) {
+  // 一页一查：入参 (query, page, tab)。翻页 / 切 tab / 改搜索都触发重取。
+  async function refreshArticles(
+    nextQuery = query,
+    nextPage = articlePage,
+    nextTab: ReviewStatus = reviewTab,
+  ) {
     try {
-      const allArticles: ArticleSummary[] = [];
-      for (let skip = 0; ; skip += ARTICLE_FETCH_LIMIT) {
-        const params = new URLSearchParams({ skip: String(skip), limit: String(ARTICLE_FETCH_LIMIT) });
-        if (nextQuery) params.set("q", nextQuery);
-        const batch = await listArticles(params);
-        allArticles.push(...batch);
-        if (batch.length < ARTICLE_FETCH_LIMIT) break;
+      const resp = await listArticleFeed({
+        review_status: nextTab,
+        q: nextQuery || undefined,
+        skip: nextPage * LIST_PAGE_SIZE,
+        limit: LIST_PAGE_SIZE,
+      });
+      // 删到当前页空且非首页：按 counts 夹紧页码回退再取，避免卡在空页。
+      if (resp.items.length === 0 && nextPage > 0) {
+        const lastPage = Math.max(0, Math.ceil(resp.counts[nextTab] / LIST_PAGE_SIZE) - 1);
+        if (lastPage < nextPage) {
+          await refreshArticles(nextQuery, lastPage, nextTab);
+          return;
+        }
       }
-      setArticles(allArticles);
+      setFeedItems(resp.items);
+      setFeedCounts(resp.counts);
       setArticlePage(nextPage);
     } catch {
       toast("加载文章列表失败", "error");
@@ -554,9 +436,23 @@ export function ContentWorkspace({
     }
   }
 
+  // 列表 + 分组一起重拉，并驱动「刷新中」指示。refreshingRef 防重入（聚焦事件可能连发、或与手动
+  // 点击撞车）。闭包读当前 query / articlePage，故 refreshArticles() 用默认参即保留当前搜索与页码。
+  async function manualRefresh() {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setRefreshing(true);
+    try {
+      await Promise.all([refreshArticles(), refreshGroups()]);
+    } finally {
+      refreshingRef.current = false;
+      setRefreshing(false);
+    }
+  }
+  manualRefreshRef.current = manualRefresh;
+
   useEffect(() => {
-    void refreshArticles();
-    void refreshGroups();
+    void manualRefresh();
     listAccounts().then(setAccounts).catch(() => {});
   }, []);
 
@@ -566,9 +462,27 @@ export function ContentWorkspace({
       return;
     }
     if (!isActive) return;
-    void refreshArticles();
-    void refreshGroups();
+    void manualRefresh();
   }, [isActive]);
+
+  // 窗口 / 标签重新获得焦点时自动拉最新——覆盖「停在内容管理页、后台又生成了新文章」的场景
+  // （子 tab 切换与审核操作都不触发重拉）。经 manualRefreshRef 调最新闭包，故只订阅一次；
+  // 轻 throttle 5s 防 alt-tab 频繁触发；只更新列表数据、不动编辑器 / 草稿，编辑中也安全。
+  useEffect(() => {
+    function onFocus() {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastAutoRefreshRef.current < 5000) return;
+      lastAutoRefreshRef.current = now;
+      manualRefreshRef.current();
+    }
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   function resetDraft() {
     setDraft(makeEmptyDraft());
@@ -577,6 +491,37 @@ export function ContentWorkspace({
     editor?.commands.setContent(emptyDoc);
     setSelectedArticleIds([]);
     savedStateRef.current = null;
+  }
+
+  // 把已拉取的文章详情灌入编辑器：setSelectedArticle → setDraft → setContent → 算 bodyState → 写 savedStateRef。
+  // loadArticle（列表点选）与 loadArticleById（深链）共用，集中保证「先 setContent 再算 bodyState 再写 ref」的顺序，
+  // 避免两处各自照抄、日后单边改漏导致离开时误弹「未保存」。
+  function applyLoadedArticleDetail(detail: Article) {
+    setSelectedArticle(detail);
+    setDraft({
+      id: detail.id,
+      title: detail.title,
+      author: detail.author ?? "",
+      cover_asset_id: detail.cover_asset_id,
+      status: detail.status,
+      version: detail.version,
+      stock_category_ids: detail.stock_category_ids ?? [],
+    });
+    const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
+    // 用最新 editor 实例（latestEditor.current）而非闭包 editor：深链走 await getArticle 期间，
+    // editor 可能被销毁重建（React StrictMode 的 mount→unmount→remount，或任何触发 useEditor 重建的
+    // re-render）。闭包捕获的旧实例此时已 isDestroyed，setContent 灌给它不会渲染到 DOM → 正文空白。
+    const ed = latestEditor.current;
+    ed?.commands.setContent(displayDoc);
+    const bodyState = ed
+      ? editorBodyState(ed)
+      : stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save"));
+    savedStateRef.current = {
+      title: detail.title?.trim() ?? "",
+      author: detail.author?.trim() ?? "",
+      cover_asset_id: detail.cover_asset_id,
+      bodyState,
+    };
   }
 
   async function loadArticle(article: ArticleSummary) {
@@ -595,32 +540,47 @@ export function ContentWorkspace({
     setStatusText("加载中");
     try {
       const detail = await getArticle(article.id);
-      setSelectedArticle(detail);
-      setDraft({
-        id: detail.id,
-        title: detail.title,
-        author: detail.author ?? "",
-        cover_asset_id: detail.cover_asset_id,
-        status: detail.status,
-        version: detail.version,
-        stock_category_ids: detail.stock_category_ids ?? [],
-      });
-      const displayDoc = normalizeEditorDocument(detail.content_json || emptyDoc, "display");
-      editor?.commands.setContent(displayDoc);
-      const bodyState = editor
-        ? editorBodyState(editor)
-        : stableStringify(normalizeEditorDocument(detail.content_json || emptyDoc, "save"));
-      savedStateRef.current = {
-        title: detail.title?.trim() ?? "",
-        author: detail.author?.trim() ?? "",
-        cover_asset_id: detail.cover_asset_id,
-        bodyState,
-      };
+      applyLoadedArticleDetail(detail);
     } catch (error) {
       toast(error instanceof Error ? error.message : "加载文章失败", "error");
     } finally {
       setLoading(false);
       setStatusText("");
+    }
+  }
+
+  // 统一「载入另一篇文章」入口：当前有未保存改动先确认，取消则不载入。
+  // 列表点选与深链换 id 都经此守卫（顺带修好现有列表点选直接冲掉未保存内容的老 gap）。
+  async function loadArticleGuarded(loader: () => Promise<void>) {
+    if (isDirty() && !window.confirm("当前文章有未保存内容，确定切换吗？未保存的修改将丢失。")) {
+      return;
+    }
+    await loader();
+  }
+
+  // 按 id 直接载入（深链用）：不依赖列表 summary 预填，直接拉详情经 applyLoadedArticleDetail 灌入编辑器。
+  async function loadArticleById(id: number) {
+    setPendingCoverUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
+    setLoading(true);
+    setStatusText("加载中");
+    try {
+      const detail = await getArticle(id);
+      applyLoadedArticleDetail(detail);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "加载文章失败", "error");
+    } finally {
+      setLoading(false);
+      setStatusText("");
+    }
+  }
+
+  async function copyArticleLink(id: number) {
+    const url = `${window.location.origin}/article/${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("链接已复制", "success");
+    } catch {
+      toast(`复制失败，链接：${url}`, "info"); // 无剪贴板权限时把链接显示出来供手动复制
     }
   }
 
@@ -682,11 +642,7 @@ export function ContentWorkspace({
           });
       if (!saved) return null;
       applySavedArticle(saved, contentJson);
-      setArticles((prev) =>
-        prev.some((a) => a.id === saved.id)
-          ? prev.map((a) => (a.id === saved.id ? { ...a, ...saved, published_count: a.published_count } : a))
-          : [saved, ...prev],
-      );
+      void refreshArticles(); // 重取当前 feed 页，让新建/改动的文章反映到列表
       if (!quiet) toast("文章已保存", "success");
       return saved;
     } catch (error) {
@@ -715,9 +671,7 @@ export function ContentWorkspace({
         if (savedStateRef.current) {
           savedStateRef.current = { ...savedStateRef.current, cover_asset_id: saved.cover_asset_id };
         }
-        setArticles((prev) =>
-          prev.map((a) => (a.id === saved.id ? { ...a, cover_asset_id: saved.cover_asset_id, version: saved.version } : a)),
-        );
+        void refreshArticles(); // 封面变化反映到列表卡片
         toast("封面已上传并保存", "success");
       } else {
         toast("封面已上传，保存文章后生效", "success");
@@ -807,7 +761,7 @@ export function ContentWorkspace({
       const deletedId = draft.id;
       await deleteArticle(deletedId);
       resetDraft();
-      setArticles((prev) => prev.filter((a) => a.id !== deletedId));
+      void refreshArticles(); // 重取当前页（内部会在删到空页时回退页码）
       toast("文章已删除", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "删除失败", "error");
@@ -825,20 +779,20 @@ export function ContentWorkspace({
     }
     setLoading(true);
     try {
-      let group = editingGroupId
+      const group = editingGroupId
         ? await updateArticleGroup(editingGroupId, { name, version: groups.find((item) => item.id === editingGroupId)?.version })
         : await createArticleGroup({ name });
       if (!editingGroupId && selectedArticleIds.length > 0) {
         const payload: ArticleGroupUpdateItemsPayload = {
           items: selectedArticleIds.map((articleId, index) => ({ article_id: articleId, sort_order: index })),
         };
-        group = await updateArticleGroupItems(group.id, { ...payload, version: group.version });
+        await updateArticleGroupItems(group.id, { ...payload, version: group.version });
       }
       const isEditing = Boolean(editingGroupId);
       setGroupName("");
       setEditingGroupId(null);
       setSelectedArticleIds([]);
-      setGroups((prev) => (isEditing ? prev.map((g) => (g.id === group.id ? group : g)) : [group, ...prev]));
+      void manualRefresh(); // 新建/更新分组反映到 feed 列表 + 分组选择器
       toast(isEditing ? "分组已更新" : "分组已创建", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "保存分组失败", "error");
@@ -856,7 +810,7 @@ export function ContentWorkspace({
       setEditingGroupId(null);
       setGroupName("");
       setSelectedArticleIds([]);
-      setGroups((prev) => prev.filter((g) => g.id !== deletedGroupId));
+      void manualRefresh(); // 删除分组反映到 feed 列表 + 分组选择器
       toast("分组已删除", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "删除分组失败", "error");
@@ -878,8 +832,7 @@ export function ContentWorkspace({
   }
 
   async function searchArticles() {
-    setArticlePage(0);
-    await refreshArticles(query, 0);
+    await refreshArticles(query, 0, reviewTab);
   }
 
   async function addArticleToGroup() {
@@ -894,10 +847,10 @@ export function ContentWorkspace({
           { article_id: groupPickerArticle.id, sort_order: group.items.length },
         ],
       };
-      const updated = await updateArticleGroupItems(group.id, { ...payload, version: group.version });
+      await updateArticleGroupItems(group.id, { ...payload, version: group.version });
       setGroupPickerArticle(null);
       setGroupPickerSelectedId(null);
-      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+      void manualRefresh(); // 加入分组后：feed 列表与分组选择器都需刷新（含新版本号）
       toast("文章已加入分组", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "加入分组失败", "error");
@@ -914,8 +867,8 @@ export function ContentWorkspace({
           .filter((item) => item.article_id !== articleId)
           .map((item, index) => ({ article_id: item.article_id, sort_order: index })),
       };
-      const updated = await updateArticleGroupItems(group.id, { ...payload, version: group.version });
-      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+      await updateArticleGroupItems(group.id, { ...payload, version: group.version });
+      void manualRefresh(); // 移出分组后：feed 列表与分组选择器都需刷新（含新版本号）
       toast("文章已移出分组", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "移出分组失败", "error");
@@ -925,22 +878,25 @@ export function ContentWorkspace({
   }
 
   async function changeArticlePage(nextPage: number) {
-    setArticlePage(Math.min(Math.max(nextPage, 0), totalArticlePages - 1));
+    const clamped = Math.min(Math.max(nextPage, 0), totalArticlePages - 1);
+    await refreshArticles(query, clamped, reviewTab);
   }
 
   function applyReviewedArticle(updated: Article) {
-    setArticles((prev) =>
-      prev.map((a) => (a.id === updated.id ? { ...a, review_status: updated.review_status, version: updated.version } : a)),
-    );
     setSelectedArticle((prev) => (prev && prev.id === updated.id ? { ...prev, review_status: updated.review_status, version: updated.version } : prev));
     setDraft((prev) => (prev.id === updated.id ? { ...prev, version: updated.version } : prev));
+    void refreshArticles(); // 审核后该文可能离开当前 tab，重取当前 feed 页 + counts
   }
 
   function selectReviewTab(tab: ReviewStatus) {
-    setReviewTab(tab);
-    onReviewTabChange?.(tab);
-    setArticlePage(0);
     setSelectedArticleIds([]);
+    if (onReviewTabChange) {
+      // URL 驱动：navigate 后 reviewTabProp 变化 → 同步 effect 负责 setReviewTab + 重取，避免双取。
+      onReviewTabChange(tab);
+    } else {
+      setReviewTab(tab);
+      void refreshArticles(query, 0, tab);
+    }
   }
 
   async function approveOne(articleId: number) {
@@ -973,11 +929,9 @@ export function ContentWorkspace({
     setReviewBusyId(-group.id);
     try {
       const updated = await approveGroup(group.id);
-      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
-      // Reflect approval on the member articles already loaded.
       const memberIds = new Set(updated.items.map((item) => item.article_id));
-      setArticles((prev) => prev.map((a) => (memberIds.has(a.id) ? { ...a, review_status: "approved" } : a)));
       setSelectedArticle((prev) => (prev && memberIds.has(prev.id) ? { ...prev, review_status: "approved" } : prev));
+      void manualRefresh(); // 组内成员审核状态变化 + counts：重取 feed 页 + groups
       toast("分组已全部通过审核", "success");
     } catch (error) {
       toast(error instanceof Error ? error.message : "分组审核失败", "error");
@@ -1012,6 +966,9 @@ export function ContentWorkspace({
   }
 
   const currentReviewStatus: ReviewStatus = selectedArticle?.review_status ?? "approved";
+  // 小红书图文：内容区改用专用轮播+文案预览（XhsNotePreview 自包含保存），
+  // 主 editor 仍照常挂载（hook 不条件调用）但不渲染其 EditorContent / 工具栏 / 顶部保存，避免双保存。
+  const isXhsArticle = selectedArticle?.content_type === "xhs_image_text";
 
   return (
     <>
@@ -1025,18 +982,33 @@ export function ContentWorkspace({
             {imageUploading > 0 && <span className="statusHint">图片传输中</span>}
             {loading && statusText ? <span className="statusHint">{statusText}</span> : null}
           </div>
-          <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
-            <Trash2 size={16} />
-            删除
+          {draft.id ? (
+            <button className="secondaryButton" type="button" onClick={() => void copyArticleLink(draft.id!)}>
+              复制链接
+            </button>
+          ) : null}
+          <button className="secondaryButton" disabled={refreshing} type="button" onClick={() => void manualRefresh()} title="拉取最新列表">
+            <RefreshCw size={16} className={refreshing ? "spin" : ""} />
+            刷新
           </button>
-          <button className="primaryButton" disabled={loading || imageUploading > 0} type="button" onClick={() => void saveArticle()}>
-            <Save size={16} />
-            保存
-          </button>
-          <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (isDirty()) { setConfirmUnsavedNew(true); } else { resetDraft(); } }}>
-            <Plus size={16} />
-            新建
-          </button>
+          {canEdit && (
+            <>
+              <button className="dangerButton" disabled={!draft.id || loading} type="button" onClick={() => setConfirmDeleteArticle(true)}>
+                <Trash2 size={16} />
+                删除
+              </button>
+              {!isXhsArticle && (
+                <button className="primaryButton" disabled={loading || imageUploading > 0} type="button" onClick={() => void saveArticle()}>
+                  <Save size={16} />
+                  保存
+                </button>
+              )}
+              <button className="secondaryButton" disabled={loading} type="button" onClick={() => { if (isDirty()) { setConfirmUnsavedNew(true); } else { resetDraft(); } }}>
+                <Plus size={16} />
+                新建
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -1099,7 +1071,7 @@ export function ContentWorkspace({
                       draftId={draft.id}
                       selectedIds={selectedArticleIds}
                       onToggle={toggleSelectedArticle}
-                      onSelect={(article) => void loadArticle(article)}
+                      onSelect={(article) => void loadArticleGuarded(() => loadArticle(article))}
                     />
                     <div className="articleRowActions">
                       {item.article.review_status === "pending" ? (
@@ -1122,6 +1094,13 @@ export function ContentWorkspace({
                         }}
                       >
                         加入分组
+                      </button>
+                      <button
+                        className="inlineMiniButton"
+                        type="button"
+                        onClick={() => void copyArticleLink(item.article.id)}
+                      >
+                        复制链接
                       </button>
                     </div>
                   </div>
@@ -1206,7 +1185,7 @@ export function ContentWorkspace({
                               onChange={() => toggleSelectedArticle(article.id)}
                             />
                           </label>
-                          <button type="button" onClick={() => void loadArticle(article)}>
+                          <button type="button" onClick={() => void loadArticleGuarded(() => loadArticle(article))}>
                             <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                               <strong>{article.title}</strong>
                               <span
@@ -1244,7 +1223,9 @@ export function ContentWorkspace({
                 </div>
               );
             })}
-            {unifiedList.length === 0 ? <p className="emptyText">暂无文章</p> : null}
+            {unifiedList.length === 0 ? (
+              <p className="emptyText">{refreshing && feedItems.length === 0 ? "加载中…" : "暂无文章"}</p>
+            ) : null}
           </div>
 
           <Pagination
@@ -1280,18 +1261,23 @@ export function ContentWorkspace({
         </aside>
 
         <section className="editorPane">
+          {selectedArticle && !canEdit && (
+            <div style={{ margin: "0 0 12px", padding: "8px 12px", borderRadius: 8, background: "#fff7ed", color: "#9a3412", fontSize: 13, border: "1px solid #fed7aa" }}>
+              你正在查看他人分享的文章，仅可阅读，无法编辑或审核。
+            </div>
+          )}
           <div className="formRow split">
             <label>
               标题
-              <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+              <input value={draft.title} disabled={!canEdit || isXhsArticle} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
             </label>
             <label>
               作者
-              <input value={draft.author} onChange={(event) => setDraft({ ...draft, author: event.target.value })} />
+              <input value={draft.author} disabled={!canEdit || isXhsArticle} onChange={(event) => setDraft({ ...draft, author: event.target.value })} />
             </label>
             <label>
               状态
-              <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+              <select value={draft.status} disabled={!canEdit || isXhsArticle} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
                 <option value="draft">草稿</option>
                 <option value="ready">待发布</option>
                 <option value="archived">归档</option>
@@ -1304,15 +1290,17 @@ export function ContentWorkspace({
               <div className="coverPreview">
                 {(pendingCoverUrl ?? assetSrc(draft.cover_asset_id)) ? <img alt="封面" src={pendingCoverUrl ?? assetThumbSrc(draft.cover_asset_id) ?? assetSrc(draft.cover_asset_id)!} /> : <span>封面</span>}
               </div>
-              <label className="fileButton">
-                <Upload size={16} />
-                上传封面
-                <input accept="image/*" type="file" onChange={(event) => { void handleCoverUpload(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} />
-              </label>
+              {canEdit && (
+                <label className="fileButton">
+                  <Upload size={16} />
+                  上传封面
+                  <input accept="image/*" type="file" onChange={(event) => { void handleCoverUpload(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} />
+                </label>
+              )}
               {selectedArticle ? <span className="metaText">正文图片 {selectedArticle.body_assets.length} 张</span> : null}
             </section>
 
-            {selectedArticle ? (
+            {selectedArticle && canEdit ? (
               <div className={`reviewStrip ${currentReviewStatus === "approved" ? "approved" : "pending"}`}>
                 <div className="reviewStripLeft">
                   <ShieldCheck size={18} />
@@ -1354,23 +1342,36 @@ export function ContentWorkspace({
             ) : null}
           </div>
 
-          <EditorToolbar
-            editor={editor}
-            onImageUpload={handleBodyImageUpload}
-            imageSelected={!!editor?.isActive("image")}
-            onSaveImage={() => {
-              const src = editor?.getAttributes("image").src as string | undefined;
-              if (src) setSaveImageSrc(src);
-              else toast("请先选中正文中的图片", "error");
-            }}
-          />
-          <div className="editorWrap paper-scope">
-            <EditorContent editor={editor} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, padding: "4px 8px", fontSize: 12, color: charCount < 300 ? "#e67e22" : "#888" }}>
-            <span>正文字数：{charCount} 字</span>
-            {charCount < 300 && <span>（建议不少于 300 字）</span>}
-          </div>
+          {isXhsArticle && selectedArticle ? (
+            <XhsNotePreview
+              key={selectedArticle.id}
+              article={selectedArticle}
+              onSaved={() => void loadArticleById(selectedArticle.id)}
+              onDirtyChange={handleXhsDirty}
+            />
+          ) : (
+            <>
+              {canEdit && (
+                <EditorToolbar
+                  editor={editor}
+                  onImageUpload={handleBodyImageUpload}
+                  imageSelected={!!editor?.isActive("image")}
+                  onSaveImage={() => {
+                    const src = editor?.getAttributes("image").src as string | undefined;
+                    if (src) setSaveImageSrc(src);
+                    else toast("请先选中正文中的图片", "error");
+                  }}
+                />
+              )}
+              <div className="editorWrap paper-scope">
+                <EditorContent editor={editor} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, padding: "4px 8px", fontSize: 12, color: charCount < 300 ? "#e67e22" : "#888" }}>
+                <span>正文字数：{charCount} 字</span>
+                {charCount < 300 && <span>（建议不少于 300 字）</span>}
+              </div>
+            </>
+          )}
 
         </section>
       </section>

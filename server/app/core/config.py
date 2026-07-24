@@ -22,7 +22,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     db_name: str | None = None
     jwt_secret: str = ""
     publish_max_concurrent_records: int = 5
+    publish_park_cooldown_seconds: float = 60.0
+    publish_harvest_enabled: bool = True
+    publish_harvest_rejoin_seconds: float = 5.0
     publish_record_timeout_seconds: int = 300
     # 断网/弱网发布重试（见 docs/superpowers/specs/2026-06-23-publish-network-retry-design.md）
     publish_retry_enabled: bool = True  # GEO_PUBLISH_RETRY_ENABLED
@@ -93,6 +96,13 @@ class Settings(BaseSettings):
     # 飞书自建应用凭据（问题库从多维表同步、以及未来发布采集写回 都用它换 tenant_access_token）
     feishu_app_id: str | None = None  # GEO_FEISHU_APP_ID
     feishu_app_secret: str | None = None  # GEO_FEISHU_APP_SECRET
+    # 飞书审核卡片 + 端内 H5 免登（B 档）
+    feishu_public_base_url: str | None = Field(
+        default=None, validation_alias="GEO_PUBLIC_BASE_URL"
+    )  # GEO_PUBLIC_BASE_URL 评审链接根（无尾斜杠）
+    feishu_review_card_enabled: bool = False  # GEO_FEISHU_REVIEW_CARD_ENABLED 发卡总开关
+    feishu_review_chat_id: str | None = None  # GEO_FEISHU_REVIEW_CHAT_ID 目标群 chat_id
+    feishu_h5_enabled: bool = False  # GEO_FEISHU_H5_ENABLED H5 免登开关（复用 app_id/secret）
     # 问题池定时镜像同步（应用内后台线程）。默认关闭，避免本地 / 测试打真实飞书。
     question_pool_auto_sync_enabled: bool = False  # GEO_QUESTION_POOL_AUTO_SYNC_ENABLED
     question_pool_sync_interval_seconds: int = (
@@ -101,6 +111,17 @@ class Settings(BaseSettings):
     pipeline_scheduler_enabled: bool = False  # GEO_PIPELINE_SCHEDULER_ENABLED
     pipeline_scheduler_interval_seconds: int = 60  # GEO_PIPELINE_SCHEDULER_INTERVAL_SECONDS
     scheduler_tz: str = "Asia/Shanghai"  # GEO_SCHEDULER_TZ
+    # 游戏库定时入库（应用内后台线程）。默认关闭，避免本地 / 测试打真实爬包源。
+    # env 总闸：是否起后台线程；起了之后每 tick 再读 DB game_ingest_config.enabled + 时间窗判断
+    # 要不要真的干活（按名刷新迁移集，软 LRU）。
+    game_ingest_scheduler_enabled: bool = False  # GEO_GAME_INGEST_SCHEDULER_ENABLED
+    # 已废弃：旧「按体裁定时发现」loop 的轮询间隔，新 config-driven loop 不读它。
+    # 保留字段防止已设置该 env var 的部署报未知配置；`run_ingest_once` 手动 CLI 路径不用它。
+    game_ingest_interval_seconds: int = 21600  # GEO_GAME_INGEST_INTERVAL_SECONDS（6 小时，已废弃）
+    game_ingest_targets: str = ""  # GEO_GAME_INGEST_TARGETS（JSON；仅手动 CLI 种子用，定时不再读）
+    game_ingest_poll_seconds: int = (
+        120  # GEO_GAME_INGEST_POLL_SECONDS（窗口外/关闭/本窗已满时的轮询步长）
+    )
     # TapTap cookie 体检（应用内后台线程，纯 HTTP 探测 account-profile/v1/me）。默认关闭。
     taptap_cookie_check_enabled: bool = False  # GEO_TAPTAP_COOKIE_CHECK_ENABLED
     taptap_cookie_check_interval_seconds: int = (
@@ -184,6 +205,20 @@ class Settings(BaseSettings):
         120  # GEO_BAIDU_NEG_CACHE_SECONDS 同名搜图失败的负缓存 TTL，省得本批反复打
     )
 
+    # 游戏库存图竖转横（Seedream 4.0 扩图）：入库前把竖屏截图扩成 16:9 横图，供文章配图/封面。
+    # best-effort，key 缺 / 未启用 / 非图 / 失败 → 原样保留竖图（见 game_library/landscape.py）。
+    game_landscape_enabled: bool = False  # GEO_GAME_LANDSCAPE_ENABLED，默认关（生产配好 key 再开）
+    game_landscape_api_key: str = ""  # GEO_GAME_LANDSCAPE_API_KEY（火山方舟 Ark Key）
+    # 直接点名基础模型，非某账号私有 ep 接入点（后者跨 key 会 404）。
+    game_landscape_model: str = "doubao-seedream-4-0-250828"  # GEO_GAME_LANDSCAPE_MODEL
+    game_landscape_base_url: str = (
+        "https://ark.cn-beijing.volces.com/api/v3"  # GEO_GAME_LANDSCAPE_BASE_URL
+    )
+    game_landscape_size: str = (
+        "2048x1152"  # GEO_GAME_LANDSCAPE_SIZE 输出横图尺寸（须 >=921600 像素）
+    )
+    game_landscape_timeout_seconds: int = 120  # GEO_GAME_LANDSCAPE_TIMEOUT_SECONDS
+
     # MCP server（Claude Code 通过 stdio spawn 调用 GEO 能力）
     # 注意：MCP server 子进程的 GEO_API_BASE_URL 由 server/mcp/config.py 直接读 os.environ，
     # 不进 Settings——避免与服务端进程的 mcp_token 校验路径耦合。
@@ -194,6 +229,10 @@ class Settings(BaseSettings):
     # 密钥 = Fernet urlsafe-base64 32 字节，用 `python -m server.scripts.gen_secret_key` 生成。
     secret_key: str = ""  # GEO_SECRET_KEY，单密钥
     secret_keys: str = ""  # GEO_SECRET_KEYS，逗号分隔多密钥（轮换；非空时优先于 secret_key）
+
+    # 对抗评审质量门：quality-reference pick 默认挑几条参考 + 单条正文截断长度
+    adversarial_topk: int = 3  # GEO_ADVERSARIAL_TOPK
+    adversarial_ref_truncate_chars: int = 4000  # GEO_ADVERSARIAL_REF_TRUNCATE_CHARS
 
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env", extra="ignore")
 

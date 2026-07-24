@@ -58,8 +58,13 @@ def pick_image_id(query: ImageQuery, db: Session) -> int | None:
     stmt = select(StockImage.id).where(StockImage.category_id.in_(query.category_ids))
     if query.excluded_ids:
         stmt = stmt.where(StockImage.id.notin_(query.excluded_ids))
-    # func.rand() 是 MySQL 的随机排序（本仓库 MySQL only）；取一张
-    stmt = stmt.order_by(func.rand()).limit(1)
+    # 软 LRU：从没用过的图优先，其次用量少优先，平局随机。
+    # MySQL ASC 下 NULL 排最前，符合 last_used_at=None 的新图优先语义。
+    stmt = stmt.order_by(
+        StockImage.last_used_at.asc(),
+        StockImage.use_count.asc(),
+        func.rand(),
+    ).limit(1)
     return db.execute(stmt).scalar_one_or_none()
 
 

@@ -14,8 +14,7 @@ ensure_data_dirs()
 def _env_int(name: str, default: int) -> int:
     """读取整数环境变量；缺失 / 空 / 非法时回落默认值。
 
-    连接池参数在 import 期（建 engine 时）就要确定，故直接读 os.environ、不走 Settings 缓存，
-    与 hot_lists 直读 GEO_HOTLIST_API_URL 的处理一致。
+    连接池参数在 import 期（建 engine 时）就要确定，故直接读 os.environ、不走 Settings 缓存。
     """
     raw = os.environ.get(name)
     if raw is None or not raw.strip():

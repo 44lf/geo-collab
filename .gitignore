@@ -33,6 +33,10 @@ ai-generation-demo.html
 
 # 本机工作笔记，不入仓
 plan.md
+.workbuddy/
+
+# 本机 VS Code 任务配置（硬编码个人 conda 路径），不入仓
+.vscode/
 
 # 本机 Windows 便捷上线入口（双击跑 deploy.sh），只自己用、不入仓
 deploy.cmd
@@ -47,3 +51,6 @@ spike_*_capture.json
 
 # Pencil demo 生成的图片素材（demo.pen 本地引用，不入仓）
 images/
+
+# 本地参考副本，不提交（见 2026-07-21-xhs-note-creator-design.md）
+Auto-Redbook-Skills-main/

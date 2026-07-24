@@ -60,7 +60,39 @@ def get_test_database_url() -> str:
         and os.environ.get("GEO_ALLOW_NON_TEST_DATABASE_FOR_TESTS") != "1"
     ):
         raise RuntimeError("Refusing to run tests unless the MySQL database name contains 'test'")
-    return url
+    return _worker_database_url(url)
+
+
+# pytest-xdist 并行支持：整个测试架构是「共库 + TRUNCATE 复用」，并行 worker 直接共库会
+# 互相清数据。所以每个 xdist worker 用独立库（<base>_gw0 / <base>_gw1 ...），不存在则自动
+# CREATE（CI 里以 root 连接有建库权限；本地用 -n 并行时账号需有 CREATE DATABASE 权限）。
+# 串行跑（无 PYTEST_XDIST_WORKER）行为与从前完全一致。
+_worker_databases_ready: set[str] = set()
+
+
+def _worker_database_url(url: str) -> str:
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker:
+        return url
+    parsed = urlparse(url)
+    worker_db = f"{parsed.path.lstrip('/')}_{worker}"
+    if worker_db not in _worker_databases_ready:
+        import pymysql
+
+        conn = pymysql.connect(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or 3306,
+            user=parsed.username or "root",
+            password=parsed.password or "",
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"CREATE DATABASE IF NOT EXISTS `{worker_db}` CHARACTER SET utf8mb4")
+            conn.commit()
+        finally:
+            conn.close()
+        _worker_databases_ready.add(worker_db)
+    return parsed._replace(path=f"/{worker_db}").geturl()
 
 
 def _model_modules() -> None:
@@ -71,12 +103,18 @@ def _model_modules() -> None:
     import server.app.modules.articles.models  # noqa: F401
     import server.app.modules.audit.models  # noqa: F401
     import server.app.modules.auto_review.models  # noqa: F401
+    import server.app.modules.game_library.models  # noqa: F401
     import server.app.modules.image_library.models  # noqa: F401
+    import server.app.modules.loop_skills.models  # noqa: F401
     import server.app.modules.pipelines.models  # noqa: F401
     import server.app.modules.prompt_templates.models  # noqa: F401
+    import server.app.modules.quality_reference.models  # noqa: F401
+    import server.app.modules.report.models  # noqa: F401
     import server.app.modules.skills.models  # noqa: F401
     import server.app.modules.system.models  # noqa: F401
     import server.app.modules.tasks.models  # noqa: F401
+    import server.app.modules.video.models  # noqa: F401
+    import server.app.modules.xhs_cards.models  # noqa: F401
 
 
 def _make_engine() -> Engine:
@@ -114,6 +152,12 @@ def reset_test_database(engine: Engine, *, create_schema: bool = True) -> None:
                     sa.text(
                         "ALTER TABLE articles ADD FULLTEXT INDEX ft_articles "
                         "(title, author, plain_text) WITH PARSER ngram"
+                    )
+                )
+                conn.execute(
+                    sa.text(
+                        "ALTER TABLE quality_reference ADD FULLTEXT INDEX "
+                        "ftx_quality_reference_plain (plain_text) WITH PARSER ngram"
                     )
                 )
         finally:
@@ -163,6 +207,8 @@ def build_test_app(monkeypatch) -> TestApp:
     # 关闭发布前随机延迟（错峰防封）：否则执行真实发布的集成测试会被 10-120s 睡眠拖到超时。
     # 延迟逻辑本身由 test_publish_pre_delay.py 用注入的 sleep 单测覆盖，无需在集成测试里真等。
     monkeypatch.setenv("GEO_PUBLISH_PRE_DELAY_ENABLED", "false")
+    # 小红书样式库预览预热在测试里关掉：否则每次 build_test_app 都会起真 chromium 渲染 8 主题。
+    monkeypatch.setenv("GEO_XHS_PREVIEW_PREWARM_ENABLED", "false")
     get_settings.cache_clear()
 
     from server.app.modules.tasks import executor as _tasks_mod

@@ -14,7 +14,9 @@ provider 判定只看 model 串前缀/关键字；新增模型族在 `_provider_
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -132,6 +134,103 @@ def _is_anthropic_relay(provider: str, base_kwargs: dict[str, Any]) -> bool:
     return host not in _OFFICIAL_ANTHROPIC_HOSTS
 
 
+def _via_responses_enabled() -> bool:
+    """豆包联网走 Ark Responses API 的开关（默认开）。回滚：GEO_DOUBAO_WEB_SEARCH_VIA_RESPONSES=0。
+
+    照 GEO_TOUTIAO_DRIVER 的 os.environ 直读范式（见 tasks/drivers/__init__.py），保持本模块
+    不依赖 config/get_settings 的解耦现状。
+    """
+    return os.environ.get("GEO_DOUBAO_WEB_SEARCH_VIA_RESPONSES", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _wrap_responses_as_chat(resp: Any) -> Any:
+    """Ark Responses API 返回（litellm ResponsesAPIResponse）→ chat/completions 同构对象。
+
+    只暴露下游真读的字段（见调研契约边界）：message.content / reasoning_content / annotations
+    与 usage.prompt/completion/total_tokens。字段映射：
+      - content ← output 里 message.content[] 的 output_text.text 拼接
+      - reasoning_content ← output 里 reasoning.summary[] 的 summary_text.text 拼接
+      - annotations ← 同 message 的 content[].annotations（url_citation）
+      - usage.prompt/completion/total_tokens ← usage.input_tokens/output_tokens/total_tokens
+    联网证据统一映射进 annotations，不填 server_tool_use（_web_search_was_used 先走 annotations 分支）。
+    """
+    d = resp.model_dump() if hasattr(resp, "model_dump") else (resp or {})
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    annotations: list[Any] = []
+    for item in d.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "message":
+            for c in item.get("content") or []:
+                if not isinstance(c, dict):
+                    continue
+                if c.get("text"):
+                    content_parts.append(c["text"])
+                for a in c.get("annotations") or []:
+                    annotations.append(a)
+        elif item.get("type") == "reasoning":
+            for s in item.get("summary") or []:
+                if isinstance(s, dict) and s.get("text"):
+                    reasoning_parts.append(s["text"])
+    usage_d = d.get("usage") or {}
+    message = SimpleNamespace(
+        content="".join(content_parts),
+        reasoning_content="".join(reasoning_parts) or None,
+        annotations=annotations or None,
+        tool_calls=None,
+    )
+    usage = SimpleNamespace(
+        prompt_tokens=usage_d.get("input_tokens"),
+        completion_tokens=usage_d.get("output_tokens"),
+        total_tokens=usage_d.get("total_tokens"),
+        server_tool_use=None,
+    )
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+
+
+def _doubao_web_search_completion(
+    *, base_kwargs: dict[str, Any], model: str, deep_thinking: bool, logger: Any
+) -> Any:
+    """豆包联网走 Ark Responses API + tools:[{type:web_search}]（litellm.responses 原生支持
+    volcengine，需 litellm≥1.86.0）。chat/completions 的 web_search_options 豆包不认，故独立走这条。
+
+    system 消息落顶层 instructions、其余落 input；深度思考走 Ark 原生 thinking（经 extra_body）；
+    max_tokens→max_output_tokens；api_key/api_base/timeout 透传。返回值包装成 chat 同构。
+    """
+    import litellm
+
+    messages = base_kwargs.get("messages") or []
+    instructions = "\n".join(
+        m.get("content", "") for m in messages if isinstance(m, dict) and m.get("role") == "system"
+    )
+    input_items = [
+        {"type": "message", "role": m["role"], "content": m.get("content", "")}
+        for m in messages
+        if isinstance(m, dict) and m.get("role") != "system"
+    ]
+    kwargs: dict[str, Any] = {
+        "model": model,  # 保留 volcengine/ 前缀，litellm 路由用
+        "input": input_items,
+        "tools": [{"type": "web_search"}],
+    }
+    if instructions:
+        kwargs["instructions"] = instructions
+    if base_kwargs.get("max_tokens") is not None:
+        kwargs["max_output_tokens"] = base_kwargs["max_tokens"]
+    for k in ("api_key", "api_base", "timeout"):
+        if base_kwargs.get(k) is not None:
+            kwargs[k] = base_kwargs[k]
+    if deep_thinking:
+        kwargs["extra_body"] = {"thinking": {"type": "enabled"}}  # Ark 原生深度思考
+    return _wrap_responses_as_chat(litellm.responses(**kwargs))
+
+
 def completion_with_capabilities(
     *,
     completion: Callable[..., Any],
@@ -159,6 +258,8 @@ def completion_with_capabilities(
     # 分层 best-effort 降级：联网层失败 → 保留深度思考重试；深度思考也失败 → 退回能力前的原始调用。
     provider = _provider_of(model)
     requested_web = web_search  # 原始请求；下方失败回退会改 web_search，结果日志要按原始请求措辞
+    # 豆包联网走 Ark Responses API（开关默认开）；chat/completions 的 web_search_options 豆包不认。
+    doubao_via_responses = provider == "doubao" and _via_responses_enabled()
 
     # 联网搜索：先判定本次到底会不会真发送 + 走哪条渠道 / 为何跳过。
     # 方案2：Anthropic 经中转网关不支持服务端联网（litellm 翻译的 web_search_20250305 会被 name 校验拒），
@@ -171,6 +272,8 @@ def completion_with_capabilities(
             skip_reason = (
                 f"Anthropic 中转网关(base_url={_api_base_of(base_kwargs)})不支持服务端联网"
             )
+        elif doubao_via_responses:
+            search_sent, search_channel = True, "Responses API + web_search 工具"
         elif provider == "moonshot":
             search_sent, search_channel = True, "Moonshot $web_search 工具循环"
         elif _supports_native_web_search_options(provider):
@@ -190,13 +293,35 @@ def completion_with_capabilities(
             else (f"，跳过：{skip_reason}" if requested_web else "")
         ),
         deep_thinking,
-        f"（reasoning_effort={REASONING_EFFORT}）" if deep_thinking else "",
+        (
+            # 豆包走 Responses 分支用 Ark 原生 thinking，其它走 chat 的 reasoning_effort——如实标注
+            (
+                "（Ark thinking）"
+                if doubao_via_responses
+                else f"（reasoning_effort={REASONING_EFFORT}）"
+            )
+            if deep_thinking
+            else ""
+        ),
     )
 
     # 执行联网路径，返回后判定「实际是否用了」并打结果日志。
     if search_sent:
         try:
-            if provider == "moonshot":
+            if doubao_via_responses:
+                # 豆包：走 Ark Responses API（深度思考也在这条里，不再单独用 chat 的 reasoning_effort）
+                resp = _doubao_web_search_completion(
+                    base_kwargs=base_kwargs,
+                    model=model,
+                    deep_thinking=deep_thinking,
+                    logger=logger,
+                )
+                search_status = (
+                    "已使用（检测到检索引用/证据）"
+                    if _web_search_was_used(resp)
+                    else "已启用（Responses web_search），但本次未检测到检索证据"
+                )
+            elif provider == "moonshot":
                 resp, rounds = _moonshot_web_search_loop(completion, thinking_kwargs, logger)
                 search_status = (
                     f"已使用（$web_search，{rounds} 轮检索）"

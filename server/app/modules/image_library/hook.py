@@ -36,6 +36,7 @@ def insert_images_for_article(
     from server.app.modules.articles.service import get_article
     from server.app.modules.image_library.inserter import insert_images_at_positions
     from server.app.modules.image_library.selector import ImageQuery, select_images
+    from server.app.modules.image_library.service import bump_stock_image_usage
 
     article = get_article(db, article_id)
     if article is None or article.is_deleted:
@@ -52,5 +53,6 @@ def insert_images_for_article(
     article.content_json = dumps_content_json(new_content_json)
     article.version += 1
     article.updated_at = utcnow()
+    bump_stock_image_usage(db, [ref.id for ref in refs], article_id)
     db.flush()
     _logger.info("inserted %d images into article %s", len(refs), article_id)

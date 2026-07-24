@@ -8,9 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Geo 协作平台** — 多平台内容自动化发布平台。后端 FastAPI + SQLAlchemy/Alembic（MySQL only），前端 React 19 + Vite + TypeScript + Tiptap，浏览器自动化 Playwright + Xvfb/x11vnc/websockify/noVNC（远程人工接管），AI 生文走 LiteLLM + LangGraph，生产部署用 Docker Compose。
 
-仓库里还 vendored 一个独立的 Node 子服务 `services/dailyhot-api/`（第三方 [DailyHotApi](https://github.com/imsyy/DailyHotApi)，热榜聚合，端口 6688）——后端 `hot_lists` 模块只是它的反向代理。这是仓库内**唯一**的非 Python 子服务，本地默认不跑、CI 不测；详见下文「热榜」与 `hot_lists/` 模块。
-
-**设计文档 / 在途计划**：模块级 rationale 见各专题文档（`AI_GENERATION.md`、`DEPLOYMENT.md`）；feature 级计划 / 设计稿按日期命名落在 `docs/plans/YYYY-MM-DD-*.md` 与 `docs/specs/*-design.md`（superpowers 流程产出在 `docs/superpowers/`）。改某块前先 grep `docs/` 找有没有现成计划，避免与在途方案打架。`openspec/` 是新引入的变更提案工作流（`changes/` + `specs/`），目前主要走 archive。
+**设计文档 / 在途计划**：模块级 rationale 见各专题文档（`docs/AI_GENERATION.md`、`docs/DEPLOYMENT.md`）；feature 级计划 / 设计稿按日期命名落在 `docs/plans/YYYY-MM-DD-*.md` 与 `docs/specs/*-design.md`（superpowers 流程产出在 `docs/superpowers/`）。改某块前先 grep `docs/` 找有没有现成计划，避免与在途方案打架。`openspec/` 是新引入的变更提案工作流（`changes/` + `specs/`），目前主要走 archive。
 
 ## Dev Commands
 
@@ -72,14 +70,14 @@ pnpm --filter @geo/web format:check  # prettier --check src（去掉 :check 直�
 
 > 前端**没有单元测试框架**（无 vitest / jest）——`typecheck` + `build` 就是前端的 CI 门禁，没有 `pnpm test`。
 
-CI（`.github/workflows/ci.yml`，push 到 main 和所有 PR 触发）：**后端 ruff check / ruff format / mypy / pytest、前端 typecheck + build 都是硬门禁**；只剩前端 eslint 仍是 `continue-on-error` 的非阻塞步骤（存量 lint error 清完后再删掉 `continue-on-error` 变硬门禁）。CI 用 `mysql:8.0` service 起临时测试库 `geo_test`。
+CI（GitLab，`.gitlab-ci.yml`，MR 与分支 push 触发）：硬门禁是 **`backend-lint`（ruff check / ruff format --check / mypy）+ `frontend`（typecheck + build）**；`backend-test`（pytest，`mysql:8.0` service、库 `geo_test`）当前因一个早红的无关测试被整体禁用（job 名前加点隐藏）；`security-audit`（pip-audit）非阻塞、仅 requirements 变更或夜间 schedule 跑。**tag（`base-/server-/web-/release-`）流水线只做构建+部署、不重跑 lint+frontend**（部署链在 `ci/deploy.gitlab-ci.yml`，设计见 `docs/superpowers/specs/2026-07-10-ci-release-dedup-design.md`）。**发版 tag 强制必须落在 main 上**：`deploy.gitlab-ci.yml` 的 `verify-tag-on-main` job（`.pre` stage，`git merge-base --is-ancestor $CI_COMMIT_SHA origin/main`）先校验 tag commit 是否 `origin/main` 祖先，不是就 fail、build/deploy 全不执行——堵住从 feature 分支/游离 commit 打 tag 直接部署（曾出过 `web-1.0.15` 游离 commit、`release-1.0.16` feat 分支绕过 main 直接上线的事故；发版一律用 geo-release skill）。GitHub Actions 已退役、团队只用 GitLab（`hlgit`）。
 
 ## Architecture
 
 ### Backend (`server/app/`)
 
 - 应用工厂：`server/app/main.py:create_app()`。
-- API 路由（全部挂在 `/api/` 下）：`auth`、`users`、`accounts`、`articles`、`article-groups`、`assets`、`chunked-assets`、`publish-records`、`system`、`tasks`、`prompt-templates`、`ai-models`、`generation`、`pipelines`、`image-library`、`stock-images`、`audit-logs`、`hot-lists`，外加 `mcp`（catalog / 接入指引 / loop-skill 包的统一前缀，见下文 MCP 章节）。（`skills` 已下线、不再挂载，见下文 `skills/` 与「AI 生文模块」。）
+- API 路由（全部挂在 `/api/` 下）：`auth`、`users`、`accounts`、`articles`、`article-groups`、`assets`、`chunked-assets`、`publish-records`、`system`、`tasks`、`prompt-templates`、`ai-models`、`generation`、`pipelines`、`image-library`、`stock-images`、`game-library`、`audit-logs`，外加 `mcp`（catalog / 接入指引 / loop-skill 包 / `/api/mcp/game-library/*` 游戏库检索的统一前缀，见下文 MCP 章节）。（`skills` 已下线、不再挂载，见下文 `skills/` 与「AI 生文模块」。）
 - 鉴权：除 `auth`、`users`、`/api/bootstrap`、`/api/stock-images/*` 外，全部走 `Depends(get_current_user)` 的 JWT cookie。
   - `/api/stock-images/*` 是**有意公开**的图片文件服务，前端 image-library 依赖；改动前先确认。
   - `/api/audit-logs` 用 `require_admin`，只允许 admin。
@@ -103,15 +101,15 @@ CI（`.github/workflows/ci.yml`，push 到 main 和所有 PR 触发）：**后�
 - `tasks/` — 任务 CRUD（`service.py`）、执行引擎（`executor.py`）、发布运行器（`runner.py`）、驱动注册表与具体驱动（`drivers/`）；从 `router.py` 导出 `tasks_router` 和 `publish_records_router`。`VALID_TASK_TYPES = single / group_round_robin / article_round_robin`（`article_round_robin` 由 `TaskCreate.article_ids` 触发，pipeline 的 `distribute` 节点用它发指定文章列表；都复用 `_validate_articles_approved` 审核门禁 + `_build_assignments` round-robin 派号）。`publish_tasks.task_type` 有 DB CHECK 约束，新增类型要写迁移改约束（见 `0042`）。
 - `ai_generation/` — **当前主流程是「问题池 → 方案池 → 方案运行」**：问题池镜像飞书多维表（`question_bank.py`，`/api/generation/question-pools/*`；**问题池全员共享**——所有登录用户同看 / 同建 / 改名（`PATCH`）/ 同步同一批池，`QuestionPool.user_id` 仅作"创建者"溯源不再过滤可见性，唯独 **`DELETE` 收归 admin**（`require_admin`，软删 `is_deleted`）。配套 `question_source` 节点也已去掉属主校验。**方案 / 方案运行仍按用户私有**（`_get_owned_scheme`））、方案 CRUD + 校验 + 问题快照（`scheme_service.py`，`/api/generation/schemes/*`）、方案运行 executor（`scheme_executor.py`，`/api/generation/scheme-runs/*`，`ThreadPoolExecutor(max_workers=4)` 并发生文，每篇成功后 best-effort 调 `ai_format` 自动排版 + 全 bucket 智能配图）、写作模型调用（`article_writer.py`）、问题池定时同步后台线程（`sync_scheduler.py`，开关 `GEO_QUESTION_POOL_AUTO_SYNC_ENABLED`、周期 `GEO_QUESTION_POOL_SYNC_INTERVAL_SECONDS`）、Markdown→Tiptap 转换（`converter.py`）；路由在 `router.py` + `scheme_router.py`。**旧的 `/api/generation/sessions` 问题池直连 + LangGraph 流水线（`pipeline.py` / `service.py` / `generation_sessions` 表）已硬切 410，保留休眠不删。**
 - `pipelines/` — **可视化工作流编排**（前端 UI 叫「智能体管理」，后端 / DB 一律叫 pipeline / 工作流，注意命名错位）。`/api/pipelines/*`。一条 pipeline 是一串线性节点（`PipelineNode`，按 `node_index` 顺序执行），节点类型走和 driver 一样的**注册表模式**：`nodes/base.py` 的 `register(node_type, handler)` + `nodes/__init__.py` 触发导入，`main.py` 顶部 `import server.app.modules.pipelines.nodes` 激活注册。内置 8 个节点：源节点 `input` / `question_source`（`question_types` 多选问题类型，含未分类哨兵 `__uncategorized__`；可选 `question_record_ids` 按飞书 record_id 精选具体问题——非空即只发这些、忽略类型；兼容旧单选 `question_type`） / `article_group_source`（`group_id` 可选，留空按 FIFO 自动选「最早一个含 已审核+未分发 文章」的分组，输出该组已审未发子集） / `approved_content_source`（已审核且未分发过=去重、跨分组），处理 `ai_generate` / `ai_compose`，动作 `to_review`（送审，支持 `daily_group` 开关：开启后按 `GEO_SCHEDULER_TZ` 当天日期归入同一个「每日生成 · 日期」分组（去重追加），关闭=每次运行新建组（默认）；**`ai_generate` 与 `ai_compose`（AI创作，新建 pipeline 主用生文节点）同有 `daily_group` 开关**（默认关；共用 helper `nodes/daily_group_stream.py:make_group_streamer`）：开启则生成前先建好同名「每日生成 · 日期」分组、每篇生成成功即流式进组+标待审+commit（运行中可实时逐篇观察、中途失败不丢已生成的），输出 group_id 后 to_review 靠「上游已带 group_id 就透传」守卫让位、executor 不再兜底成组；并发安全＝append 绝不动组行 + sort_order 走进程内计数器（不用 DB FOR UPDATE），详见 `docs/superpowers/specs/2026-06-15-streaming-daily-group-design.md`）/ `distribute`（**优先消费上游 `article_ids`→`article_round_robin`**，否则 `group_id`→`group_round_robin`，空 `article_ids` 安静跳过不建任务；内部 `create_task` 带审核门禁。**必须先判 `article_ids` 再判 `group_id`**：`article_group_source` 默认透传会同时带二者，先走分组路径会重拉全组、丢弃「已审未发」子集，见 #46）。**「已分发/在途」判定＝文章存在「未软删 且 `status` 非 `failed`/`cancelled`」的 `PublishRecord`**（failed/cancelled/软删记录允许重新分发、不永久埋没；`approved_content_source` 与 `article_group_source` 共用此判定，见 #40）。运行日志 `GET /api/pipelines/{id}/logs` 从 `PipelineRun.node_results` 派生逐节点日志（服务端分页 + 起止日期筛选，纯函数 `run_logs.py:build_run_log_rows`），前端全页 `AgentLogsView`。节点间数据传递 / 跳过条件是纯逻辑在 `flow_meta.py`（`inputMapping` 默认透传整个上游输出，`condition` 控制跳过）。草稿 / 发布版本快照在 `service.py` + `snapshot.py`（`Pipeline.draft_snapshot` / `PipelineVersion`）；**运行创建时冻结节点快照（`PipelineRun.snapshot`），执行只读快照**，创建→执行之间的改动不影响本次运行。执行：`executor.py` 后台线程线性跑节点，全局并发闸 `GEO_PIPELINE_MAX_CONCURRENT_RUNS`（默认 3）+ 同一 pipeline 行锁串行化（活跃 run 抛 `ConflictError`）；和 generation 一样**没有独立 worker**，`create_app()` 注入 `bg_session_factory = SessionLocal`。定时调度 `scheduler.py`（开关 `GEO_PIPELINE_SCHEDULER_ENABLED`、周期 `GEO_PIPELINE_SCHEDULER_INTERVAL_SECONDS`、时区 `GEO_SCHEDULER_TZ`），`run_due_pipelines_once` 纯函数式可测、条件 UPDATE claim 防重叠。`recovery.py:recover_stuck_pipeline_runs()` 在启动时把残留 running/pending 全量置 failed（无租约，进程刚起时它们必是僵死）。测试在 `server/tests/test_pipeline*.py` 等；另有 `test_auto_distribute.py`（分发/`article_round_robin`/`approved_content_source`）、`test_group_source_auto.py`（分组源 FIFO 自动选组）、`test_question_source_multiselect.py`（问题源多选）、`test_pipeline_logs.py`（运行日志）——这几个不匹配 `test_pipeline*` glob。
-- `image_library/` — 图片库模型、MinIO 存储（`store.py`）、选图 / 插图、生文钩子（`hook.py`）；路由在 `router.py`。**需要 MinIO**：`GEO_MINIO_ENDPOINT` / `GEO_MINIO_ACCESS_KEY` / `GEO_MINIO_SECRET_KEY`（HTTPS 加 `GEO_MINIO_SECURE=true`）。图片按 `StockCategory` 分桶，文章通过 `article_stock_categories` 多对多关联类别。
+- `image_library/` — 图片库模型、MinIO 存储（`store.py`）、选图 / 插图、生文钩子（`hook.py`）；路由在 `router.py`。**需要 MinIO**：`GEO_MINIO_ENDPOINT` / `GEO_MINIO_ACCESS_KEY` / `GEO_MINIO_SECRET_KEY`（HTTPS 加 `GEO_MINIO_SECURE=true`）。图片按 `StockCategory` 分桶，文章通过 `article_stock_categories` 多对多关联类别。`StockImage` 也作为游戏库截图媒体底座使用，按 `source_url_hash` 去重，选图走 `last_used_at` / `use_count` 软 LRU，并在插图落文后回写图片级用量。
+- `game_library/` — 游戏库语料底座 + 托管入库 + 前台浏览。`games` / `game_tags` 存真实游戏与标签，复用 `stock_images`/`stock_categories` 存截图素材（游戏经 `stock_category_id` **FK 唯一关联**其素材桶，不靠名字相等）。`service.upsert_game()` 按 `name_normalized` 跨源并集合并（重构后**下载搬出事务**：`pre_downloaded` 传已下好的截图字节、`category_id` 直接用桶不按名 re-resolve）。**托管抓取**由 DB 单例 `game_ingest_config`（迁移 `0068`，`ingest_service.py` 读写+校验）驱动：`scheduler.py` 重写为每日时间窗 + 软 LRU 轮转 loop（镜像 `accounts/keepalive.py`、进程内锁防重入），`select_due_games()` **只取 `stock_categories.kind='companion'` 的游戏**（主推 main 手动维护、不自动抓），`refresh_one_game()` 按 `source_order` 走 `sources/baidu.search_by_name` 精确刷新（网络/下载在 session 外）；手动一批 `start_configured_ingest(trigger='manual')`（开关 `GEO_GAME_INGEST_SCHEDULER_ENABLED` 起线程 + DB `enabled`+窗口控行为）。旧的按体裁定时（`run_ingest_once`/`GEO_GAME_INGEST_TARGETS`/`server/scripts/ingest_games.py`）退役休眠、留作手动种子。**数据源当前仅 baidu**（`sources/baidu.py`）——taptap 爬虫因生产 ECS 出口 IP 被 TapTap 边缘 WAF 按 IP 封禁（所有请求回 405、改指纹无效），于 2026-07-23 整体移除（迁移 `0071` 把 `source_order` 默认从 `taptap,baidu` 收敛为 `baidu`）；注意 `tasks/drivers/taptap*` 的 TapTap **发布驱动**是另一套、与此无关、仍在用。**图库栏目→游戏 幂等导入**：`importer.import_image_categories_as_games()` + `server/scripts/import_image_library_games.py`（栏目名→游戏名归一化去重、挂 FK、其余留 null）。**前台接口** `router_web.py`（user JWT，`/api/game-library/*`）：`list_games`（tag/min_score/q/**kind** 过滤+分页）/`get_game` 详情 + `POST /import-image-categories` + `GET|PATCH /ingest/config` + `POST /ingest/run` + `PATCH|DELETE /games/{id}`（编辑/软删 `is_active=False`）；与 MCP-token 的 `router.py`（`list_game_tags`/`query_games_by_tags`，`/api/mcp/game-library/*`）隔离。前端「游戏库」tab = `GameLibraryWorkspace` 六子组件 + `GameIngestSettingsModal` + `GameEditModal`。`save_article(... selected_games=...)` 同事务回写游戏用量。
 - `skills/` — Skill 模型、CRUD、路由。**`/api/skills` 已下线**（`main.py` 不再 import / mount），模块文件、`skills` 表、`GenerationSession.skill_id` 全部保留休眠（不 drop、不写迁移）。新方案流不使用 Skill。
 - `prompt_templates/` — PromptTemplate 模型、CRUD、路由。
 - `ai_models/` — **AI 模型注册表**（前端「AI 模型管理」），DB 持久化可选模型行（`AiModel`，`scope ∈ generation | ai_format`，每 scope 至多一个默认靠 `is_default_key` 唯一约束）；CRUD 在 `/api/ai-models`。**密钥绝不入库**——行只存 `api_key_env`（环境变量名），运行时 `_resolve_key` 从 `os.environ` 取，取不到回落该 scope 全局 key。`service.py` 的解析器被 `article_writer` / `ai_format` 调用（须用短生命周期 session）：DB 行命中优先，无任何行才回落旧路径（写作走 `config.resolve_engine`、认 `GEO_AI_ENGINES` 内联 key；格式走 `settings.ai_format_*`）。
 - `audit/` — 审计日志：`AuditLog` 模型 + `service.list_audit_logs()` 游标分页；路由 `/api/audit-logs`，**仅 admin**，参数 `user_id` / `action_prefix` / `target_type` / `target_id` / `start_at` / `end_at` / `cursor` / `limit≤500`。
-- `hot_lists/` — **「热榜」tab 的后端代理**，故意**不遵守**「每模块 `models.py + schemas.py + service.py + router.py`」约定：无 model / 无 schema / 无 DB / 无缓存（缓存交给上游的 NodeCache），只有 `service.py`（`httpx.AsyncClient` 异步转发）+ `router.py`。把请求转给独立 Node 子服务 `services/dailyhot-api/`（DailyHotApi）。上游地址读 **`GEO_HOTLIST_API_URL`**（默认 `http://127.0.0.1:6688`），**直接 `os.environ` 读、故意不进 `Settings`/`get_settings()`**（避免与在途改 `config.py` 的 WIP 冲突）。路由 `/api/hot-lists`（`/all` 全量）和 `/api/hot-lists/{source}`（单源，`limit≤500` + `cache` 开关；`source` 必须匹配 `^[a-z0-9-]+$`，否则 400）。上游连不上 / 超时 → service 抛 `HotListUpstreamError`，router 转 **502**。鉴权在 `main.py` 注册时统一加 `Depends(get_current_user)`，router 自身不带。测试 `test_hot_lists_service.py`（用 `httpx.MockTransport` 打桩、**无需 DB**）和 `test_hot_lists_api.py`。
 - `auto_review/` — Loop 自动审核：`AutoReviewDecision` 表 + `POST /api/articles/score`（LLM 批量评分，用 ai_format_model）+ `POST /api/articles/{id}/auto-review`（写 decision）。**不直接动 `article.review_status`，最终人审兜底**。MCP token 鉴权（独立 service token、与 user JWT 隔离）。
 - `performance/` — 模板 / 账号产出 metrics 聚合：`GET /api/prompt-templates/{id}/performance` + `GET /api/accounts/{id}/performance` + `POST /api/publish-records/{id}/metrics`（回流写入，合并到 `Article.metrics` JSON 列）。POC 期 template 聚合是 stub（缺 article→template 反向引用），v2 改造。（迁移 `0052` 给 `articles` 加了去规范化的 `source_agent_name` / `source_template_name` 仅展示字段，不是聚合用的反向引用。）
-- `mcp_catalog/` — MCP **只读 catalog 端点**（`router.py`，挂 `/api/mcp/*`，被 catalog 类 tool 复用）+ **接入指引**（`connect_router.py`）：`/api/mcp/status`（user JWT，回 `configured` / `suggested_base_url` / `tools_count`）+ `/api/mcp/health`（MCP token）。前端「MCP 接入」tab 用。**MCP 工具总数的唯一真值在 `connect_router.py:MCP_TOOLS_COUNT`（当前 21）**，增减 tool 时改这里。
+- `mcp_catalog/` — MCP **只读 catalog 端点**（`router.py`，挂 `/api/mcp/*`，被 catalog 类 tool 复用）+ **接入指引**（`connect_router.py`）：`/api/mcp/status`（user JWT，回 `configured` / `suggested_base_url` / `tools_count`）+ `/api/mcp/health`（MCP token）。前端「MCP 接入」tab 用。**MCP 工具总数的唯一真值在 `connect_router.py:MCP_TOOLS_COUNT`（当前 38）**，增减 tool 时改这里。
 - `loop_skills/` — **`/goal` Loop skill 包**分发：`service.build_bundle` / `build_zip` 把 `templates/` 下的 SKILL.md 等打包 + sha256 校验（版本在 `version.py`）。两组路由都挂 `/api/mcp`：user JWT 的 `/loop-skill-bundle/info` + `/download.zip`（前端「MCP 接入」Section ⑤），MCP token 的 `/install-payload`（给 `install_loop_skills` 工具）。bundle sha 跨 OS 排序 / 行尾极易栽坑——改打包逻辑务必按 posix 串排序 + LF，并跑 CI 取真值。
 
 ### Shared (`server/app/shared/`)
@@ -123,11 +121,11 @@ CI（`.github/workflows/ci.yml`，push 到 main 和所有 PR 触发）：**后�
 
 ### Frontend (`web/`)
 
-React 19 + Vite + TypeScript（strict）+ Tiptap + Lucide。Feature 拆分在 `web/src/features/`：`content/`、`accounts/`、`tasks/`、`system/`、`ai-generation/`、`pipelines/`（UI 标题「智能体管理」，含 `PipelineEditor` 节点编辑器 + `VersionHistory` + `AgentLogsView`）、`image-library/`、`prompt-templates/`、`hot-lists/`（「热榜」tab，`HotListsWorkspace`）、`mcp/`（「MCP 接入」tab，`McpConnectWorkspace`）、`auth/`。API 客户端在 `web/src/api/`（按后端路由对应，pipelines 对应 `web/src/api/pipelines.ts`、热榜对应 `web/src/api/hot-lists.ts`）。`App.tsx` 顶部 tab 用 `visitedTabs` 懒挂载 + `display:none` 缓存，每个 tab 包 `ErrorBoundary`。开发时 Vite 把 `/api` 代理到 `127.0.0.1:8000`。
+React 19 + Vite + TypeScript（strict）+ Tiptap + Lucide。Feature 拆分在 `web/src/features/`：`content/`、`accounts/`、`tasks/`、`system/`、`ai-generation/`、`pipelines/`（UI 标题「智能体管理」，含 `PipelineEditor` 节点编辑器 + `VersionHistory` + `AgentLogsView`）、`image-library/`、`prompt-templates/`、`mcp/`（「MCP 接入」tab，`McpConnectWorkspace`）、`auth/`。API 客户端在 `web/src/api/`（按后端路由对应，pipelines 对应 `web/src/api/pipelines.ts`）。`App.tsx` 顶部 tab 用 `visitedTabs` 懒挂载 + `display:none` 缓存，每个 tab 包 `ErrorBoundary`。开发时 Vite 把 `/api` 代理到 `127.0.0.1:8000`。
 
 ## MCP Server（Claude Code Loop 调用入口）
 
-POC 期：`server/mcp/` 跑独立 Python 进程（FastMCP stdio），把 GEO 现有 + 新增 API 包装成 ~21 个 atomic tools 给 Claude Code 调用（真值见 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）。Loop 配方在 `claude-loops/*.md`。
+POC 期：`server/mcp/` 跑独立 Python 进程（FastMCP stdio），把 GEO 现有 + 新增 API 包装成 39 个 atomic tools 给 Claude Code 调用（真值见 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）。Loop 配方在 `claude-loops/*.md`。
 
 ### 启动方式
 
@@ -158,14 +156,14 @@ stdio 入口（`python -m server.mcp`）**保留**作为本机 dev / air-gap 路
 - MCP server 用独立 `GEO_MCP_TOKEN`（service token），跟 user JWT cookie 完全隔离
 - GEO 后端校验在 `server/app/core/mcp_auth.py:require_mcp_token` —— hmac compare_digest
 - 空 token 配置 = MCP 全禁用（所有带 token 请求 401）
-- POC 期所有 MCP-facing endpoint 走独立 sub-router（如 `articles_mcp_router`, `tasks_mcp_router`, `mcp_system_router`, `auto_review_router`, `performance_router`, `generation_mcp_router`，以及跨模块只读 catalog 端点的 `mcp_catalog_router` 挂在 `/api/mcp/*`）单独标 `dependencies=[Depends(require_mcp_token)]`，**不复用 user JWT 路径**
+- POC 期所有 MCP-facing endpoint 走独立 sub-router（如 `articles_mcp_router`, `tasks_mcp_router`, `mcp_system_router`, `auto_review_router`, `performance_router`, `generation_mcp_router`, `game_library_mcp_router`，以及跨模块只读 catalog 端点的 `mcp_catalog_router` 挂在 `/api/mcp/*`）单独标 `dependencies=[Depends(require_mcp_token)]`，**不复用 user JWT 路径**
 - **MCP 端点的未捕获异常用 `core/mcp_errors.mcp_exception_response(exc, context=...)` 包成 HTTPException**，绕过 main.py 全局 500 handler 的字符串抹平。规则：异常 `__module__` 顶级 ∈ {litellm / httpx / openai / anthropic} → 502（上游错误，Loop 可重试 / 切模型）；其它 → 500。detail 形如 `"<ExceptionClass>: <msg, ≤500 字符>"`，完整 traceback 仍由 helper 内 `logger.exception` 落日志。新增 MCP 端点写 `except Exception as exc:` 时一律走它，不要直接抛裸 Exception。
 - 同进程 mount 的 FastMCP HTTP sub-app（`/mcp`）不走 sub-router、用 `McpTokenMiddleware` 实现等价鉴权，语义与 `require_mcp_token` 一致（共享 `verify_mcp_token` helper）。
 
-### Tool 三组（共 21 个，真值在 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）
+### Tool 三组（共 39 个，真值在 `mcp_catalog/connect_router.py:MCP_TOOLS_COUNT`）
 
-- **catalog**（只读 9 个）：`list_articles` / `list_question_pools` / `list_question_items` / `list_prompt_templates` / `list_pipelines` / `list_accounts` / `get_article` / `list_today_loop_articles` / `list_stock_categories`
-- **action**（写 8 个）：`save_article` / `illustrate_article` / `ai_illustrate_article` / `submit_review_decision` / `set_review_status` / `create_distribute_task` / `notify_feishu` / `install_loop_skills`
+- **catalog**（只读 16 个）：`list_articles` / `list_question_pools` / `list_question_items` / `list_prompt_templates` / `list_pipelines` / `list_accounts` / `get_article` / `list_today_loop_articles` / `list_stock_categories` / `list_skills` / `list_stock_images` / `get_video_status` / `pick_quality_references` / `search_articles_by_title` / `list_game_tags` / `query_games_by_tags`
+- **action**（写 19 个）：`save_article` / `illustrate_article` / `ai_illustrate_article` / `submit_review_decision` / `set_review_status` / `create_distribute_task` / `notify_feishu` / `report_event` / `install_loop_skills` / `compose_video` / `notify_review_card` / `record_adversarial_score` / `adopt_quality_reference` / `import_external_reference` / `get_external_reference_status` / `compose_xhs_cards` / `get_xhs_status` / `save_xhs_note` / `search_web_image`
 - **meta**（评估 / 回流 4 个）：`score_recent_articles` / `get_template_performance` / `get_account_performance` / `record_publish_metrics`
 
 ### MCP Loop 的「生文」零配置约定
@@ -190,10 +188,11 @@ generation-loop 的写作环节由 **Claude Code 主对话**直接产出 markdow
 放 `claude-loops/<name>-loop.md`，结构：你是谁 / 可用工具 / 流程伪码 / 停止条件 / 注意事项。
 Claude Code 里 `/loop claude-loops/<name>-loop.md` 跑。
 
-POC 期已有的 3 个 Loop 配方：
+POC 期已有的 4 个 Loop 配方：
 - `generation-loop.md` — 生文 Loop（拉问题源 → 生成 → 配图 → 自动评分 → 决策 → 飞书）
 - `distribute-loop.md` — 发文 Loop（拉已审核 → 分发任务 → 飞书）
 - `weekly-report-loop.md` — 评估周报 Loop（拉模板/账号 metrics → 飞书周报）
+- `video-loop.md` — 配套视频 Loop（拉已审核文章 → 写 storyboard → compose_video → 轮询 → 飞书）
 
 ## Asset Upload
 
@@ -287,14 +286,14 @@ freepublish），封面自动压 JPG≤64KB、正文图压 ≤1MB 转传换微�
 
 ## AI 生文模块
 
-设计 rationale、路线图、LangGraph 图见 `AI_GENERATION.md`。改这块代码的运营规则：
+设计 rationale、路线图、LangGraph 图见 `docs/AI_GENERATION.md`。改这块代码的运营规则：
 
 - **所有模型调用走 LiteLLM**。不要 import `anthropic` / `openai` SDK。
 - 两套模型配置（都走 LiteLLM）。**模型候选现以 DB 注册表 `ai_models/`（前端「AI 模型管理」）为主**：解析器优先用本 scope 的 enabled 行（前端传的 `selected` 非空按 model 匹配、空则取 `is_default` 行），无任何 DB 行才回落下面的 env 配置；密钥永不入库（行只存 `api_key_env`）。
   - `GEO_AI_MODEL` / `GEO_AI_API_KEY` — 主写作模型（默认 `claude-3-5-sonnet-20241022`）。
     - 写作模型可在前端下拉切换：候选来自 `GEO_AI_ENGINES`（JSON 数组，每项 `label/model/api_key/base_url`，`api_key` 空则回落 `GEO_AI_API_KEY`）。下拉存 model 串，运行时 `config.resolve_engine()` 回查该引擎的 key/base_url 显式传给 LiteLLM。`AiEngineRead` 只暴露 `label/model`，绝不下发 key。
   - `GEO_AI_FORMAT_MODEL` / `GEO_AI_FORMAT_API_KEY` — 格式调整 / 标题识别 / 配图（默认 `deepseek/deepseek-v4-flash`）。超时由 `GEO_AI_FORMAT_TIMEOUT_SECONDS` 控制（默认 120）。
-- 生文跑在 API server 的后台线程，**没有独立 worker**。`create_app()` 把 `bg_session_factory = SessionLocal` 注入 `ai_generation.router` 和 `scheme_router`，并启动问题池定时同步线程（`start_auto_sync`）。方案运行路由 spawn `Thread`，线程里 `scheme_executor` 用 `ThreadPoolExecutor(max_workers=4)` 并发跑 task，每个 worker 自建 session（session 非线程安全）。生产 `server/worker/executor.py` 不参与生文。
+- 生文跑在 API server 的后台线程，**没有独立 worker**。`create_app()` 把 `bg_session_factory = SessionLocal` 注入 `ai_generation.router` 和 `scheme_router`，并启动问题池定时同步线程（`start_auto_sync`）；如 `GEO_GAME_INGEST_SCHEDULER_ENABLED=true`，还会启动游戏库托管抓取线程（`game_library.scheduler.start_game_ingest`，config-driven：DB `game_ingest_config.enabled` + 每日窗 + companion-only），与 pipeline 调度同属 web 进程内后台线程；`bg_session_factory` 亦注入 `game_library.router_web` 供手动 `/ingest/run`。方案运行路由 spawn `Thread`，线程里 `scheme_executor` 用 `ThreadPoolExecutor(max_workers=4)` 并发跑 task，每个 worker 自建 session（session 非线程安全）。生产 `server/worker/executor.py` 不参与生文。
 - Plan agent 顺序执行，是**唯一**允许读写 skill 共享文件（`article-plan.md`、`companion-pool.md`）的阶段。写作 agent 并发跑（`max_workers=4`），不要碰共享文件。
 - 生成的文章直接通过 `create_article()` 落到现有 `articles` 表。`client_request_id` 做并发重试幂等。批次元数据放在独立的 `generation_sessions` 表（`article_ids` 用 JSON 数组存）。
 - Markdown → Tiptap / HTML 转换在 `server/app/modules/ai_generation/converter.py`（`markdown_to_tiptap`、`markdown_to_html`）；LangGraph 的 `save_article` tool 在调 `create_article()` 前会调这两个函数。
@@ -305,7 +304,7 @@ freepublish），封面自动压 JPG≤64KB、正文图压 ≤1MB 转传换微�
 ## Gotchas
 
 - `ensure_data_dirs()` 在 `server/app/db/session.py` import 时就执行。
-- 启动时 `create_app()` 会跑 `recover_stuck_records()` 复位上次崩溃留下的 `status='running'` 记录。失败只记日志、不致命——遇到僵死的 `running` 记录先看启动日志。pipeline run 同理由 `recover_stuck_pipeline_runs()` 在启动时全量复位（无租约，进程刚起时 running/pending 必是僵死）。定时触发本身靠条件 UPDATE claim（`last_scheduled_run_at < slot`，`rowcount==1` 才算抢到）跨进程去重是安全的；但这个**无租约的全量复位**意味着**别跑多实例 web**——第二个实例启动会把第一个实例正在跑的 pipeline run 误判成僵死置 failed。
+- 启动时 `create_app()` 会跑 `recover_stuck_records()` 复位上次崩溃留下的 `status='running'` 记录。失败只记日志、不致命——遇到僵死的 `running` 记录先看启动日志。pipeline run 同理由 `recover_stuck_pipeline_runs()` 在启动时全量复位（无租约，进程刚起时 running/pending 必是僵死）。定时触发本身靠条件 UPDATE claim（`last_scheduled_run_at < slot`，`rowcount==1` 才算抢到）跨进程去重是安全的；但这个**无租约的全量复位**意味着**别跑多实例 web**——第二个实例启动会把第一个实例正在跑的 pipeline run 误判成僵死置 failed。游戏库定时入库也在每个 web 进程各起一个线程；`upsert_game` 幂等无害，但多实例会重复爬取、浪费请求。
 - FastAPI app 同时服务 SPA：任何非 `/api/` 路径返回 `web/dist/index.html`。所以从 FastAPI 端口（8000）访问 UI 必须先 `pnpm --filter @geo/web build`；开发时用 Vite dev server（5173）。
 - 路由顺序：`POST /api/accounts/{account_id:int}/login-session` 必须在 `POST /api/accounts/{platform_code}/login-session` 之前注册。
 - `TaskCreate.platform_code` 默认值是 `"toutiao"`。

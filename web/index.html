@@ -8,6 +8,13 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!--
+      飞书 H5 JSSDK：只在页面被飞书客户端内置浏览器打开时才生效
+      （注入 window.h5sdk / window.tt，用于免登 code 换取）。
+      普通浏览器加载此脚本无副作用——脚本本身在非飞书 UA 下不做任何全局挂载。
+      加载失败（如离线/被拦截）也不影响其余页面功能，仅 window.h5sdk 保持 undefined。
+    -->
+    <script defer src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.31.js"></script>
   </head>
   <body>
     <div id="root"></div>

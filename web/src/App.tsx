@@ -1,7 +1,7 @@
-import { Suspense, useState } from "react";
+import { Suspense, useState, type ComponentType } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { navItems } from "./types";
-import type { NavKey } from "./types";
+import { navItems, AUDIT_LOG_CHILDREN } from "./types";
+import type { NavKey, NavChild } from "./types";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
 import { GlobalErrorListener } from "./components/GlobalErrorListener";
@@ -16,15 +16,16 @@ import "./styles.css";
 
 // 所有合法的顶级导航 key（= URL 首段）。
 const KNOWN_NAV: NavKey[] = [
-  "agents", "ai", "content", "prompts", "image-library", "media", "tasks",
-  "system", "hot-lists", "mcp-connect", "admin", "audit-logs", "ai-models",
+  "agents", "ai", "content", "prompts", "quality-reference", "game-library", "videos", "media", "tasks",
+  "system", "mcp-connect", "admin", "audit-logs", "ai-models",
 ];
 
 // 每个 tab 的标题，用于 ErrorBoundary。
 const TAB_TITLES: Record<NavKey, string> = {
   agents: "智能体管理", ai: "AI 生文", content: "内容管理", prompts: "提示词管理",
-  "image-library": "图片库", media: "媒体矩阵", tasks: "分发引擎", system: "系统状态",
-  "hot-lists": "热榜", "mcp-connect": "MCP 接入", admin: "用户管理", "audit-logs": "审计日志",
+  "quality-reference": "高质量库",
+  "game-library": "游戏库", videos: "视频库", media: "媒体矩阵", tasks: "分发引擎", system: "系统状态",
+  "mcp-connect": "MCP 接入", admin: "用户管理", "audit-logs": "日志中心",
   "ai-models": "AI 模型管理",
 };
 
@@ -33,6 +34,7 @@ const BOTTOM_KEYS: NavKey[] = ["agents", "ai", "content", "tasks"];
 
 function pathToNavKey(pathname: string): NavKey {
   const seg = pathname.split("/").filter(Boolean)[0];
+  if (seg === "article") return "content"; // 永久链接 /article/:id 归入「内容管理」高亮
   return (KNOWN_NAV as string[]).includes(seg) ? (seg as NavKey) : "agents";
 }
 
@@ -48,6 +50,58 @@ function TabFallback() {
   );
 }
 
+function NavGroup({
+  navKey, label, icon: Icon, children, activeNav, isOpen, childValue,
+  onParentClick, onToggle, onSelectChild,
+}: {
+  navKey: NavKey;
+  label: string;
+  icon: ComponentType<{ size?: number }>;
+  children: NavChild[];
+  activeNav: NavKey;
+  isOpen: boolean;
+  childValue: string;
+  onParentClick: () => void;
+  onToggle: () => void;
+  onSelectChild: (value: string) => void;
+}) {
+  return (
+    <div className="navGroup">
+      <button
+        className={`navItem navParent ${activeNav === navKey ? "active" : ""}`}
+        type="button"
+        onClick={() => {
+          if (activeNav === navKey) onToggle();
+          else onParentClick();
+        }}
+      >
+        <Icon size={17} />
+        <span>{label}</span>
+        <ChevronDown size={15} className={`navChevron${isOpen ? " open" : ""}`} />
+      </button>
+      <div className={`navSub ${isOpen ? "open" : ""}`}>
+        <div className="navChildren">
+          <div className="navChildrenInner">
+            {children.map((child) => {
+              const childActive = activeNav === navKey && childValue === child.value;
+              return (
+                <button
+                  className={`navChild ${childActive ? "active" : ""}`}
+                  key={child.key}
+                  type="button"
+                  onClick={() => onSelectChild(child.value)}
+                >
+                  {child.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function RootLayout() {
   const { user, loading, logout } = useAuth();
   const isMobile = useIsMobile();
@@ -59,7 +113,9 @@ export function RootLayout() {
   // 侧栏分组展开态；初始把当前所在的有子项分组（内容/提示词）展开。
   const [openGroup, setOpenGroup] = useState<NavKey | null>(() => {
     const k = pathToNavKey(location.pathname);
-    return navItems.some((i) => i.key === k && (i.children?.length ?? 0) > 0) ? k : null;
+    const inNavItems = navItems.some((i) => i.key === k && (i.children?.length ?? 0) > 0);
+    if (inNavItems || k === "audit-logs") return k;
+    return null;
   });
 
   function go(key: NavKey) {
@@ -79,6 +135,7 @@ export function RootLayout() {
     const seg = subSegment(location.pathname);
     if (parentKey === "content") return seg || "pending";
     if (parentKey === "prompts") return seg || "generation";
+    if (parentKey === "audit-logs") return seg || "audit";
     return "";
   }
 
@@ -129,46 +186,20 @@ export function RootLayout() {
             {navItems.map((item) => {
               const Icon = item.icon;
               if (item.children && item.children.length > 0) {
-                const isOpen = openGroup === item.key;
                 return (
-                  <div className="navGroup" key={item.key}>
-                    <button
-                      className={`navItem navParent ${activeNav === item.key ? "active" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        if (activeNav === item.key) {
-                          toggleGroup(item.key);
-                        } else {
-                          go(item.key);
-                          setOpenGroup(item.key);
-                        }
-                      }}
-                    >
-                      <Icon size={17} />
-                      <span>{item.label}</span>
-                      <ChevronDown size={15} className={`navChevron${isOpen ? " open" : ""}`} />
-                    </button>
-                    <div className={`navSub ${isOpen ? "open" : ""}`}>
-                      <div className="navChildren">
-                        <div className="navChildrenInner">
-                          {item.children.map((child) => {
-                            const childActive =
-                              activeNav === item.key && childValueFor(item.key) === child.value;
-                            return (
-                              <button
-                                className={`navChild ${childActive ? "active" : ""}`}
-                                key={child.key}
-                                type="button"
-                                onClick={() => selectChild(item.key, child.value)}
-                              >
-                                {child.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <NavGroup
+                    key={item.key}
+                    navKey={item.key}
+                    label={item.label}
+                    icon={Icon}
+                    children={item.children}
+                    activeNav={activeNav}
+                    isOpen={openGroup === item.key}
+                    childValue={childValueFor(item.key)}
+                    onParentClick={() => { go(item.key); setOpenGroup(item.key); }}
+                    onToggle={() => toggleGroup(item.key)}
+                    onSelectChild={(value) => selectChild(item.key, value)}
+                  />
                 );
               }
               return (
@@ -196,15 +227,18 @@ export function RootLayout() {
               </button>
             )}
             {user.role === "admin" && (
-              <button
-                className={`navItem ${activeNav === "audit-logs" ? "active" : ""}`}
-                type="button"
-                onClick={() => go("audit-logs")}
-              >
-                <ScrollText size={17} />
-                <span>审计日志</span>
-                <span className="navDot" />
-              </button>
+              <NavGroup
+                navKey="audit-logs"
+                label="日志中心"
+                icon={ScrollText}
+                children={AUDIT_LOG_CHILDREN}
+                activeNav={activeNav}
+                isOpen={openGroup === "audit-logs"}
+                childValue={childValueFor("audit-logs")}
+                onParentClick={() => { go("audit-logs"); setOpenGroup("audit-logs"); }}
+                onToggle={() => toggleGroup("audit-logs")}
+                onSelectChild={(value) => selectChild("audit-logs", value)}
+              />
             )}
             {user.role === "admin" && (
               <button

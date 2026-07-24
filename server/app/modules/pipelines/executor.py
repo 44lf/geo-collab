@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from server.app.core.config import get_settings as _get_settings
-from server.app.core.logging import bind_node, bind_run, clear_run_context
+from server.app.core.logging import bind_node, bind_run, clear_run_context, pop_run_tokens
 from server.app.core.time import utcnow
 from server.app.modules.articles.service import mark_pending_and_group
 from server.app.modules.pipelines.flow_meta import apply_input_mapping, should_skip
@@ -300,6 +300,20 @@ def _run_pipeline_inner(run_id: int, session_factory: SessionFactory) -> None:
     finally:
         db.close()
 
+    # 本次运行 token 汇总（写作 + 配图）：pop 出累加器，打一行便于服务器上 grep [TOKEN汇总] | tail 看最新消耗
+    tok = pop_run_tokens(run_id)
+    if tok:
+        logger.info(
+            "[TOKEN汇总] run=%s 写作=%s 配图=%s 总计=%s (prompt=%s completion=%s 调用%s次)",
+            run_id,
+            tok["write"],
+            tok["illustrate"],
+            tok["write"] + tok["illustrate"],
+            tok["prompt"],
+            tok["completion"],
+            tok["calls"],
+        )
+
     logger.info(
         "运行结束：status=%s 产文=%d 节点=%d 总耗时=%dms",
         status,
@@ -326,6 +340,9 @@ def run_pipeline(run_id: int, session_factory: SessionFactory) -> None:
         logger.exception("pipeline run %s crashed at top level", run_id)
         _mark_run_failed(run_id, session_factory, "执行器内部异常，运行已中止")
     finally:
+        pop_run_tokens(
+            run_id
+        )  # 兜底清累加器：正常路径已在 inner pop 过（此处为 no-op），崩溃路径防泄漏
         clear_run_context()  # 清空，避免污染复用线程的后续日志
         _RUN_GATE.release()
 

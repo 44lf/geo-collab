@@ -27,7 +27,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=True)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    feishu_open_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    feishu_open_id: Mapped[str | None] = mapped_column(String(200), unique=True, nullable=True)
     solo_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_format_preset_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

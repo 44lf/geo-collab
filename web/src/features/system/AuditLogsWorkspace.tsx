@@ -3,6 +3,7 @@ import { RefreshCw, Search, RotateCcw } from "lucide-react";
 import { api } from "../../api/client";
 import { useToast } from "../../components/Toast";
 import { formatDateTime } from "../../utils/dateFormat";
+import { ReportEventPanel } from "./ReportEventsWorkspace";
 
 type AuditLogItem = {
   id: number;
@@ -109,7 +110,41 @@ function truncate(value: string | null | undefined, max: number): string {
   return `${value.slice(0, max)}…`;
 }
 
-export function AuditLogsWorkspace() {
+export function AuditLogsWorkspace({
+  tab,
+  onTabChange,
+  isMobile,
+}: {
+  tab: "audit" | "events";
+  onTabChange: (t: "audit" | "events") => void;
+  isMobile?: boolean;
+}) {
+  return (
+    <>
+      {isMobile && (
+        <div className="reviewTabs">
+          <button
+            type="button"
+            className={`reviewTabBtn ${tab === "audit" ? "active" : ""}`}
+            onClick={() => onTabChange("audit")}
+          >
+            审计日志
+          </button>
+          <button
+            type="button"
+            className={`reviewTabBtn ${tab === "events" ? "active" : ""}`}
+            onClick={() => onTabChange("events")}
+          >
+            打点日志
+          </button>
+        </div>
+      )}
+      {tab === "audit" ? <AuditLogPanel /> : <ReportEventPanel />}
+    </>
+  );
+}
+
+function AuditLogPanel() {
   const { toast } = useToast();
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   // 已应用的筛选条件（点击"筛选"后才会落到 appliedFilters，再用于请求）

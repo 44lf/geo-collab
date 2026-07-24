@@ -126,6 +126,15 @@ class Article(Base):
     source_agent_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     source_template_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     source_template_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # 生文溯源（仅 /goal MCP save 填；scheme/pipeline 留 NULL）
+    source_question_category: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, index=True
+    )
+    source_question_texts: Mapped[list | None] = mapped_column(
+        JSON, nullable=True
+    )  # phase-1 存 [单条]
+    # 对抗判分（N 次平均，verifier skill 后置写）；纯 advisory，不做闸
+    adversarial_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     stock_category_id: Mapped[int | None] = mapped_column(
         ForeignKey("stock_categories.id"), nullable=True
     )
@@ -136,6 +145,8 @@ class Article(Base):
     # MCP 回流写入：发布后的阅读 / 互动指标
     # JSON 结构示例: {"views": 1234, "likes": 56, "comments": 7, "shares": 3, "recorded_at": "2026-06-18T..."}
     metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 内容类型标记：默认 NULL；值 "xhs_image_text" 标识小红书图文
+    content_type: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
     cover_asset = relationship("Asset", foreign_keys=[cover_asset_id])
     stock_category = relationship("StockCategory", foreign_keys=[stock_category_id])

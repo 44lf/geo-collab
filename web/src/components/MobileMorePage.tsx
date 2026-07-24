@@ -1,5 +1,5 @@
 import {
-  ChevronRight, Flame, Images, LogOut, MessagesSquare, MonitorCog,
+  ChevronRight, Film, Gamepad2, Gem, LogOut, MessagesSquare, MonitorCog,
   Plug, RadioTower, ScrollText, User, Users,
 } from "lucide-react";
 import type { NavKey } from "../types";
@@ -21,12 +21,18 @@ export function MobileMorePage({
   onLogout: () => void;
 }) {
   const groups: Group[] = [
-    { title: "资讯", rows: [{ key: "hot-lists", label: "热榜", icon: Flame }] },
-    { title: "内容工具", rows: [{ key: "prompts", label: "提示词管理", icon: MessagesSquare }] },
+    {
+      title: "内容工具",
+      rows: [
+        { key: "prompts", label: "提示词管理", icon: MessagesSquare },
+        { key: "quality-reference", label: "高质量库", icon: Gem },
+      ],
+    },
     {
       title: "素材",
       rows: [
-        { key: "image-library", label: "图片库", icon: Images },
+        { key: "game-library", label: "游戏库", icon: Gamepad2 },
+        { key: "videos", label: "视频库", icon: Film },
         { key: "media", label: "媒体矩阵", icon: RadioTower },
       ],
     },
@@ -43,7 +49,7 @@ export function MobileMorePage({
             title: "管理",
             rows: [
               { key: "admin" as NavKey, label: "用户管理", icon: Users },
-              { key: "audit-logs" as NavKey, label: "审计日志", icon: ScrollText },
+              { key: "audit-logs" as NavKey, label: "日志中心", icon: ScrollText },
             ],
           },
         ]

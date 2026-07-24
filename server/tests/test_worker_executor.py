@@ -14,31 +14,36 @@ _PNG = (
 )
 
 
-def _create_publishable_task(test_app) -> int:
+def _create_publishable_task(test_app, suffix: str = "") -> int:
     client = test_app.client
+    tag = f"worker-claim{('-' + suffix) if suffix else ''}"
     cover = client.post(
         "/api/assets", files={"file": ("cover.png", BytesIO(_PNG), "image/png")}
     ).json()["id"]
     article = client.post(
         "/api/articles",
         json={
-            "title": "Worker Claim Article",
+            "title": f"Worker Claim Article {suffix}".strip(),
             "content_json": {"type": "doc", "content": []},
             "plain_text": "body",
             "cover_asset_id": cover,
         },
     ).json()
-    state_dir = test_app.data_dir / "browser_states" / "toutiao" / "worker-claim"
+    state_dir = test_app.data_dir / "browser_states" / "toutiao" / tag
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "storage_state.json").write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
     account = client.post(
         "/api/accounts/toutiao/login",
-        json={"display_name": "Worker Claim", "account_key": "worker-claim", "use_browser": False},
+        json={
+            "display_name": f"Worker Claim {suffix}".strip(),
+            "account_key": tag,
+            "use_browser": False,
+        },
     ).json()
     task = client.post(
         "/api/tasks",
         json={
-            "name": "worker claim",
+            "name": f"worker claim {suffix}".strip(),
             "task_type": "single",
             "article_id": article["id"],
             "accounts": [{"account_id": account["id"]}],

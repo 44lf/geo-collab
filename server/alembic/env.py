@@ -4,13 +4,16 @@ import server.app.modules.accounts.models  # noqa: F401
 import server.app.modules.ai_generation.models  # noqa: F401
 import server.app.modules.articles.models  # noqa: F401
 import server.app.modules.image_library.models  # noqa: F401
+import server.app.modules.loop_skills.models  # noqa: F401
 import server.app.modules.pipelines.models  # noqa: F401
 import server.app.modules.prompt_templates.models  # noqa: F401
+import server.app.modules.report.models  # noqa: F401
 import server.app.modules.skills.models  # noqa: F401
 import server.app.modules.system.models  # noqa: F401
 import server.app.modules.tasks.models  # noqa: F401
 from server.app.core.paths import ensure_data_dirs, get_database_url
 from server.app.db.base import Base
+from server.app.db.migrate_support import apply_migration_lock_timeout
 from sqlalchemy import engine_from_config
 
 from alembic import context
@@ -48,6 +51,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        apply_migration_lock_timeout(connection)
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():

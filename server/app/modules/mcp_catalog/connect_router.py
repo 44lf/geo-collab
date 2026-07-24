@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # 仅给 server/mcp/server.py 的启动断言当「下限」用（注册数必须 ≥ 此值）。
 # 页面展示的工具数走 status.tools_count = len(tools)（实时内省），不再读这个常量。
 # 增减 MCP tool 时同步这里，避免断言把正常启动误判成双实例 bug。
-MCP_TOOLS_COUNT = 21
+MCP_TOOLS_COUNT = 39
 
 # 手写中文「用处」覆盖表：命中则优先用（质量比机翻好），未命中的工具走机翻兜底。
 # 加了新工具不必动这里——机翻会自动补；想给某工具更准的中文再来加一行。
@@ -39,15 +39,24 @@ _CURATED_ZH: dict[str, str] = {
     "get_article": "按 id 取单篇文章全文（Tiptap / HTML / 纯文本）",
     "list_today_loop_articles": "统计窗口内 /goal Loop 已生成且已决策的文章（停止条件用）",
     "list_stock_categories": "列出图片库栏目（配图选 main_category_id 用）",
+    "list_skills": "列出 Skill 库里可安装的 skill 包（可按 category 过滤）",
+    "list_game_tags": "列出游戏库可用标签及游戏数量",
+    "query_games_by_tags": "按相关标签从真实游戏库检索取材候选",
     # action（写操作）
     "save_article": "把 Claude 写好的 markdown 文章入库（零配置生文）",
+    "save_xhs_note": "把渲染好的小红书图文笔记入库（未审核库，content_type 打标）",
     "illustrate_article": "给文章正文按位置插入图库选图",
     "submit_review_decision": "写入一条自动审核决策（不改最终人审状态）",
     "notify_feishu": "发送飞书 webhook 通知",
+    "report_event": "写入一条打点上报事件（回溯 Loop 运行过程用）",
     "set_review_status": "修改文章审核状态（pending / approved）",
     "create_distribute_task": "建 article_round_robin 分发任务（轮询派号发文）",
-    "install_loop_skills": "拉取 /goal Loop skill 包供本地安装",
+    "install_loop_skills": "按 slug 拉取 Skill 库整包供本地安装（默认 goal）",
     "ai_illustrate_article": "AI 智能配图 + 自动封面（对齐 Web UI「AI 配图」）",
+    "notify_review_card": "发送飞书待审交互卡（标题/自评分/选题 + 查看文章链接）",
+    "adopt_quality_reference": "采纳已审站内文章进高质量库当对抗判分参考（不接受外部注入）",
+    "import_external_reference": "异步导入真·站外文章进高质量库外部参考池（图片自动 rehost）",
+    "get_external_reference_status": "轮询 import_external_reference 的异步导入 job 状态",
     # meta（评估 / 回流）
     "score_recent_articles": "用 ai_format 模型给文章批量 LLM 评分",
     "get_template_performance": "聚合某提示词模板产出文章的表现指标",
@@ -122,6 +131,33 @@ def _attach_zh(infos: list[McpToolInfo]) -> None:
         i.summary_zh = _CURATED_ZH.get(i.name) or zh.get(i.name) or i.summary
 
 
+def _first_forwarded(value: str | None) -> str | None:
+    """取逗号分隔转发头的第一个（最外层客户端）非空值；空/空白视作缺失。"""
+    if not value:
+        return None
+    first = value.split(",")[0].strip()
+    return first or None
+
+
+def resolve_public_base_url(
+    *,
+    default_scheme: str,
+    default_netloc: str,
+    forwarded_proto: str | None,
+    forwarded_host: str | None,
+) -> str:
+    """还原用户实际访问的 base_url（协议 + 主机）。
+
+    边缘 nginx 终止 TLS、以 http 反代给后端，故 request.base_url 的 scheme 恒为 http、
+    host 也可能是内网名——直接拿来展示会把 https 访问显示成 http://（见 MCP 接入页 bug）。
+    优先采信代理设置的 X-Forwarded-Proto / X-Forwarded-Host 还原真实协议与主机；
+    dev 直连无这些头时回落 request 自身的 scheme/host。结果不带尾斜杠。
+    """
+    scheme = _first_forwarded(forwarded_proto) or default_scheme
+    host = _first_forwarded(forwarded_host) or default_netloc
+    return f"{scheme}://{host}".rstrip("/")
+
+
 # user JWT 鉴权（依赖在 main.py include_router 时注入）
 mcp_connect_user_router = APIRouter()
 
@@ -138,7 +174,12 @@ def get_mcp_status(request: Request) -> McpStatusResponse:
     _attach_zh(tools)
     return McpStatusResponse(
         configured=bool(settings.mcp_token),
-        suggested_base_url=str(request.base_url).rstrip("/"),
+        suggested_base_url=resolve_public_base_url(
+            default_scheme=request.base_url.scheme,
+            default_netloc=request.base_url.netloc,
+            forwarded_proto=request.headers.get("x-forwarded-proto"),
+            forwarded_host=request.headers.get("x-forwarded-host"),
+        ),
         tools_count=len(tools),
         tools=tools,
     )

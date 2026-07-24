@@ -1,0 +1,28 @@
+# geo-collab-base —— 慢变重层：Python + 浏览器自动化栈 + 依赖。
+# 仅在 requirements.txt / 浏览器栈变化时重建（base-<ver> tag 触发）。
+# FROM 参数化：本地默认 docker.io，CI 传 public.ecr.aws/docker/library（内网 runner 可达）。
+ARG BASE_REGISTRY=docker.io/library
+FROM ${BASE_REGISTRY}/python:3.12-slim
+
+# 阿里云 apt 镜像加速
+RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list 2>/dev/null || true
+
+# 浏览器自动化系统依赖（Chromium / Xvfb / VNC / noVNC / 中文字体 / 运行时库）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb x11vnc websockify novnc chromium \
+    fonts-noto-cjk fonts-noto-color-emoji ffmpeg libnss3 libnspr4 libatk-bridge2.0-0 \
+    libdrm2 libxkbcommon0 libgbm1 libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Python 依赖（清华镜像）
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -r requirements.txt
+
+# Playwright Chromium（npmmirror 加速）。版本只取决于 playwright 包 → 极少变。
+RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright \
+    playwright install chromium

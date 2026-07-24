@@ -74,6 +74,7 @@ async def save_article(
     model_label: str | None = None,
     prompt_template_name: str | None = None,
     question_text_preview: str | None = None,
+    selected_games: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Save a Claude Code-generated article (markdown) into GEO.
 
@@ -110,6 +111,9 @@ async def save_article(
             (SaveArticleFromMcpPayload uses Pydantic default extra='ignore').
         question_text_preview: Optional display-only preview of question_text (recommend
             first ~40 chars). Same intent as prompt_template_name. Backend ignores.
+        selected_games: 库检索取材时选中的游戏 [{"game_id": int | null, "name": str}]。
+            仅库内候选传 game_id，用于回写取材均衡用量；回退 websearch 的游戏可传
+            null 或省略，后端会忽略用量回写。
 
     Returns:
         {"ok": True, "data": {"article_id": N}, "error": None}
@@ -129,6 +133,8 @@ async def save_article(
         payload["prompt_template_name"] = prompt_template_name
     if question_text_preview:
         payload["question_text_preview"] = question_text_preview
+    if selected_games:
+        payload["selected_games"] = selected_games
     return await _apost("/api/articles/save-from-mcp", json=payload)
 
 
@@ -158,6 +164,7 @@ async def submit_review_decision(
     article_id: int,
     decision: str,
     score_total: int | None = None,
+    pass_line: int | None = None,
     score_breakdown: dict[str, int] | None = None,
     reasoning: str | None = None,
     decided_by: str = "claude-code-loop",
@@ -171,6 +178,10 @@ async def submit_review_decision(
         article_id: Target article.
         decision: One of "approved" / "needs_rewrite" / "rejected".
         score_total: 0-100 weighted score, optional.
+        pass_line: The approval score threshold used this run (the "合格线"). When
+            score_total < pass_line, the content list shows the score as "真实分 / 合格线"
+            (e.g. 65 / 80) so operators can see it fell short of a too-high bar. Optional;
+            omit for passing articles or when there is no meaningful threshold.
         score_breakdown: dict[dimension_key, score_0_100], optional.
         reasoning: 1-2 sentence explanation, optional.
         decided_by: Identifier for the deciding agent (default "claude-code-loop").
@@ -180,6 +191,8 @@ async def submit_review_decision(
     body: dict[str, Any] = {"decision": decision, "decided_by": decided_by}
     if score_total is not None:
         body["score_total"] = score_total
+    if pass_line is not None:
+        body["pass_line"] = pass_line
     if score_breakdown is not None:
         body["score_breakdown"] = score_breakdown
     if reasoning:
@@ -205,6 +218,44 @@ async def notify_feishu(
     return await _apost(
         "/api/system/feishu-notify",
         json={"title": title, "message": message, "level": level},
+    )
+
+
+@mcp.tool()
+async def report_event(
+    source_module: str,
+    event_type: str,
+    message: str,
+    level: str = "info",
+    source_type: str | None = None,
+    source_id: int | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report a tracking event for later debugging/tracing of Loop runs.
+
+    Args:
+        source_module: Which loop/module this event comes from, e.g. "generation_loop",
+            "distribute_loop", "weekly_report_loop".
+        event_type: Short event name, e.g. "ai_call_retry", "question_selected", "publish_failed".
+        message: Human-readable description.
+        level: "info" | "warning" | "error".
+        source_type: Optional entity type this event relates to.
+        source_id: Optional entity id this event relates to.
+        payload: Optional structured extra detail (free-form JSON-serializable dict).
+    """
+    if level not in ("info", "warning", "error"):
+        return _fail(f"invalid level: {level}")
+    return await _apost(
+        "/api/report-events/mcp",
+        json={
+            "source_module": source_module,
+            "event_type": event_type,
+            "message": message,
+            "level": level,
+            "source_type": source_type,
+            "source_id": source_id,
+            "payload": payload,
+        },
     )
 
 
@@ -255,39 +306,33 @@ async def create_distribute_task(
 
 
 @mcp.tool()
-async def install_loop_skills() -> dict[str, Any]:
-    """Fetch the /goal Loop skill bundle so Claude Code can install it locally.
+async def install_loop_skills(
+    slug: str | None = None, version: str | None = None
+) -> dict[str, Any]:
+    """Fetch a skill package's current version so Claude Code can install it locally.
 
-    Returns a dict containing all 5 template files (README, slash command, 3 SKILL.md).
-    The calling Claude Code session should then use its Write tool to write each
-    file to the user's `.claude/` directory.
+    Reads a skill from GEO's multi-skill library
+    (`/api/mcp/skills/{slug}/install-payload`) and returns its files.
 
-    Use this when the user asks something like "install geo loop skills" or
-    "set me up to use /goal". Before writing files, check whether the user has
-    a local `.claude/` directory (project-level or `~/.claude/`) and ask
-    which they prefer.
+    Args:
+        slug: Which skill package to install. None → the official "goal" pack
+            (backward compatible with existing loop recipes). Use list_skills()
+            to discover available slugs.
+        version: Deprecated / ignored. Kept for backward compatibility. Always
+            resolves to the target skill's current version; to switch versions,
+            change the current version in GEO's web "Skill 库", then re-call.
 
     Returns:
-        {"ok": True, "data": {
-            "version": str,                # e.g. "2026-06-24-v1"
-            "bundle_sha256": str,
-            "install_hint": str,           # plain-English placement guidance
-            "files": [
-                {"path": str, "content": str, "sha256": str, "size": int},
-                ...
-            ],
-        }, "error": None}
+        {"ok": True, "data": {"version": str, "bundle_sha256": str,
+         "install_hint": str, "files": [{path, content, sha256, size}]}, "error": None}
     """
-    # 后端 /install-payload 已经返回了完整 {ok, data, error} 结构，这里直接透传.
-    # _aget 默认会把 GeoApiClient.get 的返回值再 wrap 一层 _ok()，因此
-    # 实际拿到的是 {"ok": True, "data": {"ok": True, "data": {...}, "error": None}, "error": None}.
-    # 把内层剥出来，让 LLM 看到的契约干净.
-    raw = await _aget("/api/mcp/loop-skill-bundle/install-payload")
+    target = slug or "goal"
+    raw = await _aget(f"/api/mcp/skills/{target}/install-payload")
     if not raw.get("ok"):
-        return raw  # 透传 _fail 结构
+        return raw
     inner = raw.get("data") or {}
     if isinstance(inner, dict) and "ok" in inner and "data" in inner:
-        return inner  # 后端已经返了 {ok, data, error}
+        return inner
     return raw
 
 
@@ -367,3 +412,148 @@ async def ai_illustrate_article(
         "game_positions": game_positions,
     }
     return await _apost(f"/api/articles/{article_id}/ai-illustrate", json=body)
+
+
+@mcp.tool()
+async def notify_review_card(
+    article_id: int,
+    title: str,
+    question: str = "",
+    score: int | None = None,
+    decision: str | None = None,
+) -> dict[str, Any]:
+    """Send one interactive review card to the Feishu group for a freshly written article.
+
+    Shows title / ID / self-score / question + a 「查看文章」 link to /article/{id}.
+    No-op (sent=false) if GEO_FEISHU_REVIEW_CARD_ENABLED is off or no chat_id configured.
+
+    Args:
+        article_id: Target article (must exist).
+        title: Article title shown on the card.
+        question: 选题 / source question shown on the card.
+        score: self-review score 0-100 (optional).
+        decision: "approved" / "needs_rewrite" / "rejected" (optional).
+    """
+    body: dict[str, Any] = {"title": title, "question": question}
+    if score is not None:
+        body["score"] = score
+    if decision is not None:
+        body["decision"] = decision
+    return await _apost(f"/api/articles/{article_id}/review-card", json=body)
+
+
+@mcp.tool()
+async def record_adversarial_score(article_id: int, score: int) -> dict[str, Any]:
+    """把对抗判分（N 次求平均后的 0-100 整数）记到文章上。"""
+    return await _apost(f"/api/articles/{article_id}/adversarial-score", json={"score": score})
+
+
+@mcp.tool()
+async def adopt_quality_reference(
+    article_id: int,
+    category: str | None = None,
+    question_texts: list[str] | None = None,
+) -> dict[str, Any]:
+    """采纳一篇【已过人审(approved)】站内文章进高质量库，作对抗判分的参考真品。
+
+    - 只接受 review_status="approved" 的站内文章（复用平台审核门禁）；未审 / 软删 / 不存在
+      → 报错（400）。
+    - 幂等：同一篇重复采纳返回已有那条，不重复建。
+    - **本工具只采纳站内已审文章**（防 AI 把自产内容伪装成参考真品、毒化参考池）。要录入
+      真·站外文章（爬虫抓到的外部真品），用 `import_external_reference`（异步入外部参考池、
+      source_url 溯源）；或让人在 Web「高质量库 → 录入外部文章」加。
+
+    Args:
+        article_id: 目标文章（须已 approved）。
+        category: 可选。文章无溯源类目(source_question_category)时，用它作回落关联类目；
+            文章有溯源类目时后端忽略本参数。
+        question_texts: 可选。与回落 category 配对使用的问题词列表；同样仅在文章无溯源类目时
+            生效（有溯源走 source_question_texts）。只传 question_texts 不传 category 时无类目
+            可挂、被忽略。
+
+    Returns:
+        {"ok": True, "data": {"id": int, "origin": "own", "article_id": int, "title": str,
+         "is_active": bool, "categories": [str]}, "error": None}
+    """
+    body: dict[str, Any] = {"article_id": article_id, "user_id": _OPERATOR_USER_ID}
+    if category:
+        body["category"] = category
+    if question_texts:
+        body["question_texts"] = question_texts
+    return await _apost("/api/quality-reference/adopt-from-mcp", json=body)
+
+
+@mcp.tool()
+async def import_external_reference(
+    title: str,
+    markdown: str,
+    source_url: str,
+    category: str | None = None,
+    question_texts: list[str] | None = None,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    """把爬到的**真·站外文章**异步导入高质量库的「外部参考」池（origin=external）。
+
+    与 adopt_quality_reference（只收站内已审文章）互补：本工具**专收站外真品**——别人
+    在其它平台写的真实内容，经 Crawl4AI 等爬虫抓成 markdown（含外链图）。落库即
+    is_active=True 直接生效，作对抗判分的参考真品。
+
+    **务必只灌真实站外内容**：source_url 必填、服务端盖 origin=external。不要拿 AI
+    自产内容伪装成外部真品灌进来——那会毒化参考池、架空对抗判分。
+
+    异步：本工具建 job 秒回 job_id（图片下载慢，规避 30s 超时）。之后轮询
+    get_external_reference_status(job_id) 直到 status=done/failed。图片会被下载回传进
+    站内专桶、正文改写为站内内链（不留外链）、跨篇 sha256 去重共享；单图抓不到会
+    best-effort 跳过（计入 images_skipped，不判整体失败）。
+
+    Args:
+        title: 文章标题（1–300 字）。
+        markdown: 正文 markdown（含 ![](外链图) 语法即可，图片会被自动 rehost）。
+        source_url: 来源 URL（**必填**，保证可溯源）。
+        category: 可选。问题类型（对应 QuestionItem.category），用于对抗判分按类目挑参考。
+        question_texts: 可选。该类型下的问题词列表，与 category 配对。
+        platform: 可选。来源平台名（如 "知乎" / "小红书"）。
+
+    Returns:
+        {"ok": True, "data": {"job_id": str, "status": "pending", ...}, "error": None}
+        建 job 后轮询 get_external_reference_status(job_id)。
+    """
+    body: dict[str, Any] = {"title": title, "markdown": markdown, "source_url": source_url}
+    if category:
+        body["category"] = category
+    if question_texts:
+        body["question_texts"] = question_texts
+    if platform:
+        body["platform"] = platform
+    return await _apost("/api/quality-reference/import-external", json=body)
+
+
+@mcp.tool()
+async def search_web_image(keyword: str) -> dict[str, Any]:
+    """Web-search ONE landscape image for a keyword, rehost to MinIO, return its URL.
+
+    Third-tier fallback for xhs card illustration (games/topics not in the stock library).
+    Does NOT insert into any article. Returns {"url": "/api/stock-images/{id}/file"} or {"url": null}
+    when no image found / GEO_BAIDU_API_KEY missing.
+
+    Args:
+        keyword: search term, e.g. a game name.
+    Returns:
+        {"ok": True, "data": {"url": str|null, "stock_image_id": int|null}, "error": None}
+    """
+    return await _apost("/api/mcp/search-web-image", json={"keyword": keyword})
+
+
+@mcp.tool()
+async def get_external_reference_status(job_id: str) -> dict[str, Any]:
+    """轮询 import_external_reference 建的异步导入 job 状态。
+
+    Args:
+        job_id: import_external_reference 返回的 job_id。
+
+    Returns:
+        {"ok": True, "data": {"job_id": str, "status": "pending"|"running"|"done"|"failed",
+         "progress": float, "reference_id": int|null, "images_total": int,
+         "images_rehosted": int, "images_skipped": int, "error": str|null}, "error": None}
+    """
+    return await _aget(f"/api/quality-reference/import-jobs/{job_id}")

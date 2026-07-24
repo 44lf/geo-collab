@@ -1,7 +1,33 @@
-import { Bot, FileText, Flame, Images, MessagesSquare, MonitorCog, Plug, RadioTower, Send, Sparkles } from "lucide-react";
+import {
+  Bot,
+  FileText,
+  Film,
+  Gamepad2,
+  Gem,
+  MessagesSquare,
+  MonitorCog,
+  Plug,
+  RadioTower,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import type { ComponentType } from "react";
 
-export type NavKey = "agents" | "ai" | "content" | "prompts" | "image-library" | "media" | "tasks" | "system" | "hot-lists" | "mcp-connect" | "admin" | "audit-logs" | "ai-models";
+export type NavKey =
+  | "agents"
+  | "ai"
+  | "content"
+  | "prompts"
+  | "quality-reference"
+  | "game-library"
+  | "videos"
+  | "media"
+  | "tasks"
+  | "system"
+  | "mcp-connect"
+  | "admin"
+  | "audit-logs"
+  | "ai-models";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -14,6 +40,7 @@ export type PromptTemplate = {
   is_system: boolean;
   is_enabled: boolean;
   is_deleted: boolean;
+  platform: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -216,8 +243,15 @@ export type ArticleSummary = {
   /** 生成此文的提示词「模板」名；手动/历史文章为 null */
   source_template_name: string | null;
   source_template_id: number | null;
-  /** MCP loop/goal 生文的自评分（0-100）；手动/pipeline/方案文章为 null */
-  auto_review_score: number | null;
+  /** 内容形态，如 "xhs_image_text"（小红书图文）；历史文章为 null */
+  content_type: string | null;
+  /**
+   * MCP loop/goal 生文的自评分显示串；手动/pipeline/方案文章为 null。
+   * 过线/老数据 = 纯数字 "84"；没过线 = "65 _ 80"（真实分 _ 合格线，前端拆成 65 / 80 标红）。
+   */
+  auto_review_score: string | null;
+  /** 对抗判分（N 次平均，verifier skill 后置写；纯 advisory）。手动/scheme/pipeline 文章为 null。 */
+  adversarial_score: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -227,11 +261,17 @@ export type Article = ArticleSummary & {
   content_html: string;
   plain_text: string;
   body_assets: ArticleBodyAsset[];
+  /** 生文溯源类目（仅 /goal MCP save 填；采纳站内文章时读它决定是否需补选类目）。scheme/pipeline 为 null。 */
+  source_question_category: string | null;
+  /** 生文溯源问题原文列表（仅 /goal MCP save 填）。scheme/pipeline 为 null。 */
+  source_question_texts: string[] | null;
   /** @deprecated 使用 stock_category_ids */
   stock_category_id: number | null;
   stock_category_ids: number[];
   ai_checking: boolean;
   ai_format_error: string | null;
+  /** 当前登录用户是否可编辑该文章：属主/admin 为 true；他人只读分享时 false。缺省（列表铺入等）视作 true */
+  can_edit?: boolean;
 };
 
 export type ArticleReviewSummary = {
@@ -247,6 +287,24 @@ export type ArticleGroup = {
   review_summary?: ArticleReviewSummary;
   created_at: string;
   updated_at: string;
+};
+
+/** feed 端点返回的分组：内嵌组员摘要，使展开/分发不依赖全量文章列表 */
+export type ArticleGroupWithMembers = ArticleGroup & {
+  members: ArticleSummary[];
+};
+
+/** 内容 feed 的一个混排项：article 或 group 二选一（另一个为 null） */
+export type ArticleFeedItem = {
+  kind: "article" | "group";
+  article: ArticleSummary | null;
+  group: ArticleGroupWithMembers | null;
+};
+
+/** GET /api/articles/feed 响应：已合并/排序/切页的一页 + 两 tab 计数 */
+export type ArticleFeedResponse = {
+  items: ArticleFeedItem[];
+  counts: { pending: number; approved: number };
 };
 
 export type Account = {
@@ -481,6 +539,164 @@ export type StockImage = {
   created_at: string;
 };
 
+// ── 游戏库（game library，前台只读浏览取材语料）───────────────────────────────
+export type GameTagCount = { tag: string; game_count: number };
+
+export type GameListItem = {
+  game_id: number;
+  name: string;
+  score: number | null;
+  tags: string[];
+  icon_url: string | null;
+  screenshot_count: number;
+  use_count: number;
+  last_used_at: string | null;
+  stock_category_id: number | null;
+  sources: string[];
+  kind: "main" | "companion" | null;
+};
+
+export type GameListResponse = { items: GameListItem[]; total: number };
+
+export type GameSource = { source?: string; source_game_id?: string; url?: string };
+
+export type GameDetail = {
+  game_id: number;
+  name: string;
+  name_normalized: string;
+  score: number | null;
+  comment_count: number | null;
+  tags: string[];
+  platforms: string[];
+  sources: GameSource[];
+  icon_url: string | null;
+  screenshot_urls: string[];
+  description: string | null;
+  stock_category_id: number | null;
+  kind: "main" | "companion" | null;
+  use_count: number;
+  last_used_at: string | null;
+  last_used_article_id: number | null;
+  first_seen_at: string | null;
+  last_verified_at: string | null;
+  highlight_comments: unknown[] | null;
+  related_hotspots: unknown[] | null;
+  is_active: boolean;
+};
+
+// ── 游戏库自动采集配置：补全(按名巡检，顶层字段) + 扩库(榜单发现，discovery 子对象)──────
+export type GameDiscoveryConfig = {
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  seed_paths: string[] | null;
+  detail_limit: number;
+  max_shots: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+  running: boolean;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  last_run_summary: Record<string, unknown> | null;
+  last_run_trigger: string | null;
+};
+
+export type GameIngestConfig = {
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  batch_size: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+  source_order: string;
+  max_shots: number;
+  cull_after_misses: number;
+  cull_enabled: boolean;
+  patrol_include_main: boolean;
+  running: boolean;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  last_run_summary: Record<string, unknown> | null;
+  last_run_trigger: string | null;
+  discovery: GameDiscoveryConfig;
+};
+
+export type GameDiscoveryConfigPatch = Partial<{
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  seed_paths: string[] | null;
+  detail_limit: number;
+  max_shots: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+}>;
+
+export type GameIngestConfigPatch = Partial<{
+  enabled: boolean;
+  window_start: string;
+  window_end: string;
+  batch_size: number;
+  min_gap_seconds: number;
+  max_gap_seconds: number;
+  source_order: string;
+  max_shots: number;
+  cull_after_misses: number;
+  cull_enabled: boolean;
+  patrol_include_main: boolean;
+  discovery: GameDiscoveryConfigPatch;
+}>;
+
+export type GameIngestRunStartResponse = { started: boolean; status: GameIngestConfig };
+
+export type ImageCategoryImportRequest = Partial<{
+  kind: "main" | "companion" | null;
+  only_with_images: boolean;
+  limit: number | null;
+}>;
+
+export type ImageCategoryImportResponse = {
+  scanned: number;
+  created: number;
+  attached: number;
+  skipped: number;
+};
+
+export type GameIngestLogGame = { id: number | null; name: string | null };
+
+export type GameIngestLogEvent = {
+  id: number;
+  created_at: string;
+  event_type: string;
+  level: string;
+  message: string;
+  payload_json: {
+    trigger?: string;
+    counts?: Record<string, number | boolean>;
+    games?: Record<string, GameIngestLogGame[]>;
+  } | null;
+};
+
+export type GameIngestLogList = {
+  items: GameIngestLogEvent[];
+  next_cursor: number | null;
+};
+
+export type GameUpdateRequest = Partial<{
+  name: string;
+  score: number | null;
+  description: string | null;
+  tags: string[];
+}>;
+
+export type GameCreateRequest = {
+  name: string;
+  score?: number | null;
+  description?: string | null;
+  tags?: string[];
+  kind?: "main" | "companion";
+};
+
 export type TaskCreatePayload = {
   name: string;
   client_request_id: string;
@@ -585,14 +801,23 @@ export const navItems: {
       { key: "prompts:ai_format", label: "AI格式提示词", value: "ai_format" },
       { key: "prompts:image_search", label: "搜图关键词", value: "image_search" },
       { key: "prompts:image_companion", label: "陪衬配图提示词", value: "image_companion" },
+      { key: "prompts:xhs_styles", label: "小红书样式库", value: "xhs_styles" },
     ],
   },
-  { key: "image-library", label: "图片库", icon: Images },
+  { key: "quality-reference", label: "高质量库", icon: Gem },
+  { key: "game-library", label: "游戏库", icon: Gamepad2 },
+  { key: "videos", label: "视频库", icon: Film },
   { key: "media", label: "媒体矩阵", icon: RadioTower },
   { key: "tasks", label: "分发引擎", icon: Send },
   { key: "system", label: "系统状态", icon: MonitorCog },
-  { key: "hot-lists", label: "热榜", icon: Flame },
   { key: "mcp-connect", label: "MCP 接入", icon: Plug },
+];
+
+// 「日志中心」（audit-logs）的子项。audit-logs 是 admin-only 且在 App.tsx 中
+// 独立于 navItems 硬编码渲染，故其子项单列于此，供侧栏 NavGroup 复用。
+export const AUDIT_LOG_CHILDREN: NavChild[] = [
+  { key: "audit-logs:audit", label: "审计日志", value: "audit" },
+  { key: "audit-logs:events", label: "打点日志", value: "events" },
 ];
 
 export const TERMINAL_STATUSES = new Set(["succeeded", "partial_failed", "failed", "cancelled"]);
@@ -654,17 +879,34 @@ export interface Pipeline {
   nodes: PipelineNodeDef[];
 }
 export interface PipelineVersionSummary {
-  id: number; pipeline_id: number; version_no: number;
-  remark: string | null; created_by: number; created_at: string;
+  id: number;
+  pipeline_id: number;
+  version_no: number;
+  remark: string | null;
+  created_by: number;
+  created_at: string;
 }
 export interface PipelineRun {
-  id: number; pipeline_id: number; status: string;
-  article_ids: number[]; node_results: Record<string, unknown>;
-  error_message: string | null; created_at: string; completed_at: string | null;
+  id: number;
+  pipeline_id: number;
+  status: string;
+  article_ids: number[];
+  node_results: Record<string, unknown>;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
 }
 export interface NodeTypeDef {
-  type: string; label: string;
-  config_schema: { key: string; type: string; label: string; default?: boolean | string | number; hint?: string; note?: string }[];
+  type: string;
+  label: string;
+  config_schema: {
+    key: string;
+    type: string;
+    label: string;
+    default?: boolean | string | number;
+    hint?: string;
+    note?: string;
+  }[];
 }
 
 export type RunLogRow = {
@@ -683,4 +925,23 @@ export type RunLogPage = {
   total: number;
   page: number;
   page_size: number;
+};
+
+export type VideoJobSummary = {
+  job_id: string;
+  article_id: number;
+  article_title: string | null;
+  title: string | null;
+  status: "done" | "failed";
+  video_url: string | null;
+  srt_url: string | null;
+  tags: string[];
+  engine: string | null;
+  error: string | null;
+  created_at: string;
+};
+
+export type VideoListResponse = {
+  items: VideoJobSummary[];
+  total: number;
 };

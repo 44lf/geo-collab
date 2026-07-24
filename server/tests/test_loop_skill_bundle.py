@@ -4,10 +4,12 @@
 1. build_bundle 返回 5 个预期文件
 2. bundle_sha256 稳定（同一份模板调两次结果一致）
 3. bundle_sha256 在内容变更时必变
-4. KNOWN_BUNDLE_SHAS 必须包含当前 sha（Task 4 加）
-5. build_zip 完整 round-trip（Task 3 加）
-6. /info 端点要 user JWT（Task 5 加）
-7. /install-payload 端点要 MCP token（Task 6 加）
+4. build_zip 完整 round-trip（Task 3 加）
+5. /info 端点要 user JWT（Task 5 加）
+6. /install-payload 端点要 MCP token（Task 6 加）
+
+（原 4. KNOWN_BUNDLE_SHAS 已知 sha 白名单校验——Task 7 随「skill 包改存 DB」
+退场，`test_bundle_sha_is_known` 整个删除，见 `server/app/modules/loop_skills/version.py`。）
 """
 
 from __future__ import annotations
@@ -98,22 +100,6 @@ def test_build_zip_round_trip():
             assert content == f.content, f"{f.path} content mismatch after round-trip"
 
 
-def test_bundle_sha_is_known():
-    """当前 build_bundle 的 sha 必须在 KNOWN_BUNDLE_SHAS 集合里。
-
-    失败提示：改 templates/ 后必须同步把新 sha 加进 KNOWN_BUNDLE_SHAS
-    并 bump LOOP_SKILL_BUNDLE_VERSION。这是「改模板必同步 bump 版本」纪律。
-    """
-    from server.app.modules.loop_skills.service import build_bundle
-    from server.app.modules.loop_skills.version import KNOWN_BUNDLE_SHAS
-
-    current = build_bundle().bundle_sha256
-    assert current in KNOWN_BUNDLE_SHAS, (
-        f"Bundle sha256 = {current!r} not in KNOWN_BUNDLE_SHAS. "
-        f"If you changed templates/, bump LOOP_SKILL_BUNDLE_VERSION + add this sha to KNOWN_BUNDLE_SHAS."
-    )
-
-
 @pytest.mark.mysql
 def test_user_info_endpoint_requires_jwt(monkeypatch):
     """/api/mcp/loop-skill-bundle/info 不带 cookie → 401."""
@@ -131,17 +117,46 @@ def test_user_info_endpoint_requires_jwt(monkeypatch):
 
 @pytest.mark.mysql
 def test_user_info_endpoint_returns_bundle_when_authed(monkeypatch):
-    """带 JWT 请求 → 200，返回 {version, bundle_sha256, files, install_hint}."""
+    """带 JWT 请求 → 200，返回 {version, bundle_sha256, files, install_hint}.
+
+    Task 7 起 /info 改读官方 skill(slug=goal)当前版本，不再是 build_bundle() 的
+    5 个模板文件种子——这里先用 skill_service 建一个官方 skill(模拟 Task 8 seed
+    完成后的状态)，再断言端点把它的内容透传回来。
+    """
     from server.tests.utils import build_test_app
 
     test_app = build_test_app(monkeypatch)
     try:
+        from server.app.db.session import SessionLocal
+        from server.app.modules.loop_skills import skill_service as svc
+
+        with SessionLocal() as db:
+            sk, _version_row = svc.create_version(
+                db,
+                entries=[
+                    ("commands/goal.md", b"# goal\n"),
+                    (
+                        "skills/geo-goal-orchestrator/SKILL.md",
+                        b"---\nname: x\n---\norchestrator\n",
+                    ),
+                ],
+                name="/goal loop skills",
+                uploaded_by=None,
+            )
+            sk.slug = "goal"
+            sk.is_official = True
+            db.commit()
+
         r = test_app.client.get("/api/mcp/loop-skill-bundle/info")
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["version"]
         assert len(body["bundle_sha256"]) == 64
-        assert len(body["files"]) == 5
+        assert len(body["files"]) == 2
+        assert {f["path"] for f in body["files"]} == {
+            "commands/goal.md",
+            "skills/geo-goal-orchestrator/SKILL.md",
+        }
         assert body["install_hint"]
     finally:
         test_app.cleanup()
@@ -167,11 +182,36 @@ def test_mcp_install_payload_endpoint_requires_mcp_token(monkeypatch):
 
 @pytest.mark.mysql
 def test_mcp_install_payload_returns_full_files_when_authed(monkeypatch):
-    """带 MCP token → 200，返回 {ok, data:{files[{path,content,sha256,size}], ...}, error=None}."""
+    """带 MCP token → 200，返回 {ok, data:{files[{path,content,sha256,size}], ...}, error=None}.
+
+    Task 7 起 install-payload 改读官方 skill(slug=goal)当前版本——这里先用
+    skill_service 建一个官方 skill(模拟 Task 8 seed 完成后的状态),再断言端点
+    把它的内容透传回来(而不是旧的 build_bundle() 5 个模板文件种子)。
+    """
     from server.tests.utils import build_test_app
 
     test_app = build_test_app(monkeypatch)
     try:
+        from server.app.db.session import SessionLocal
+        from server.app.modules.loop_skills import skill_service as svc
+
+        with SessionLocal() as db:
+            sk, _version_row = svc.create_version(
+                db,
+                entries=[
+                    ("commands/goal.md", b"# goal\n"),
+                    (
+                        "skills/geo-goal-orchestrator/SKILL.md",
+                        b"---\nname: x\n---\norchestrator\n",
+                    ),
+                ],
+                name="/goal loop skills",
+                uploaded_by=None,
+            )
+            sk.slug = "goal"
+            sk.is_official = True
+            db.commit()
+
         monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
         from server.app.core import config
 
@@ -189,7 +229,7 @@ def test_mcp_install_payload_returns_full_files_when_authed(monkeypatch):
         assert data["version"]
         assert len(data["bundle_sha256"]) == 64
         assert data["install_hint"]
-        assert len(data["files"]) == 5
+        assert len(data["files"]) == 2
         # 每个文件 dict 必须含 4 个字段 + content 非空
         for f in data["files"]:
             assert {"path", "content", "sha256", "size"} <= set(f.keys())

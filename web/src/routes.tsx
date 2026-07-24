@@ -15,8 +15,8 @@ const AgentManagementWorkspace = lazy(() =>
 const AiGenerationWorkspace = lazy(() =>
   import("./features/ai-generation/AiGenerationWorkspace").then((m) => ({ default: m.AiGenerationWorkspace })),
 );
-const ImageLibraryWorkspace = lazy(() =>
-  import("./features/image-library/ImageLibraryWorkspace").then((m) => ({ default: m.ImageLibraryWorkspace })),
+const GameLibraryWorkspace = lazy(() =>
+  import("./features/game-library/GameLibraryWorkspace").then((m) => ({ default: m.GameLibraryWorkspace })),
 );
 const ContentWorkspace = lazy(() =>
   import("./features/content/ContentWorkspace").then((m) => ({ default: m.ContentWorkspace })),
@@ -33,9 +33,6 @@ const TasksWorkspace = lazy(() =>
 const SystemWorkspace = lazy(() =>
   import("./features/system/SystemWorkspace").then((m) => ({ default: m.SystemWorkspace })),
 );
-const HotListsWorkspace = lazy(() =>
-  import("./features/hot-lists/HotListsWorkspace").then((m) => ({ default: m.HotListsWorkspace })),
-);
 const McpConnectWorkspace = lazy(() =>
   import("./features/mcp/McpConnectWorkspace").then((m) => ({ default: m.McpConnectWorkspace })),
 );
@@ -48,6 +45,17 @@ const AuditLogsWorkspace = lazy(() =>
 const AiModelsWorkspace = lazy(() =>
   import("./features/system/AiModelsWorkspace").then((m) => ({ default: m.AiModelsWorkspace })),
 );
+const VideosWorkspace = lazy(() =>
+  import("./features/videos/VideosWorkspace").then((m) => ({ default: m.VideosWorkspace })),
+);
+const QualityReferenceWorkspace = lazy(() =>
+  import("./features/quality-reference/QualityReferenceWorkspace").then((m) => ({
+    default: m.QualityReferenceWorkspace,
+  })),
+);
+const XhsStyleGallery = lazy(() =>
+  import("./features/prompt-templates/XhsStyleGallery").then((m) => ({ default: m.XhsStyleGallery })),
+);
 
 // admin 专属页守卫：非 admin 直接重定向回默认页（RootLayout 已保证此处必有登录用户）。
 function RequireAdmin({ children }: { children: ReactElement }) {
@@ -57,16 +65,25 @@ function RequireAdmin({ children }: { children: ReactElement }) {
 }
 
 // 「内容管理」子页（未审核 / 已审核）由 URL 段驱动：/content/:status。
+// 同一组件也承接永久链接 /article/:articleId —— 复用同一元素让 React reconcile 而非重挂，
+// 保住编辑器草稿 / savedStateRef（详见设计 §3.2）。
 function ContentRoute() {
-  const { status } = useParams();
+  const { status, articleId } = useParams();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const reviewTab: ReviewStatus = status === "approved" ? "approved" : "pending";
+  // 永久链接非法（非数字 / 0 / 负 / 非整数）→ 回落内容管理，避免静默空白。
+  // 合法但不存在的 id 交给 ContentWorkspace 内 getArticle 走 404 toast。
+  const parsedId = articleId !== undefined ? Number(articleId) : undefined;
+  if (articleId !== undefined && (parsedId === undefined || !Number.isInteger(parsedId) || parsedId <= 0)) {
+    return <Navigate to="/content" replace />;
+  }
   return (
     <ContentWorkspace
       isActive
       reviewTab={reviewTab}
       isMobile={isMobile}
+      deepLinkArticleId={parsedId}
       onReviewTabChange={(t) => navigate(`/content/${t}`)}
     />
   );
@@ -79,6 +96,7 @@ function PromptsRoute() {
   const { scope } = useParams();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  if (scope === "xhs_styles") return <XhsStyleGallery />;
   const active: PromptScope = PROMPT_SCOPES.includes(scope as PromptScope)
     ? (scope as PromptScope)
     : "generation";
@@ -87,6 +105,21 @@ function PromptsRoute() {
       scope={active}
       isMobile={isMobile}
       onScopeChange={(s) => navigate(`/prompts/${s}`)}
+    />
+  );
+}
+
+// 「日志中心」子页（审计日志 / 打点日志）由 URL 段驱动：/audit-logs/:tab。
+function AuditLogsRoute() {
+  const { tab } = useParams();
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const active: "audit" | "events" = tab === "events" ? "events" : "audit";
+  return (
+    <AuditLogsWorkspace
+      tab={active}
+      isMobile={isMobile}
+      onTabChange={(t) => navigate(`/audit-logs/${t}`)}
     />
   );
 }
@@ -107,13 +140,15 @@ export const router = createBrowserRouter([
       { path: "ai", element: <AiRoute /> },
       { path: "content", element: <ContentRoute /> },
       { path: "content/:status", element: <ContentRoute /> },
+      { path: "article/:articleId", element: <ContentRoute /> },
       { path: "prompts", element: <PromptsRoute /> },
       { path: "prompts/:scope", element: <PromptsRoute /> },
-      { path: "image-library", element: <ImageLibraryWorkspace /> },
+      { path: "quality-reference", element: <QualityReferenceWorkspace /> },
+      { path: "game-library", element: <GameLibraryWorkspace /> },
+      { path: "videos", element: <VideosWorkspace /> },
       { path: "media", element: <AccountsWorkspace isActive /> },
       { path: "tasks", element: <TasksWorkspace isActive /> },
       { path: "system", element: <SystemWorkspace /> },
-      { path: "hot-lists", element: <HotListsWorkspace /> },
       { path: "mcp-connect", element: <McpConnectWorkspace /> },
       {
         path: "admin",
@@ -127,7 +162,15 @@ export const router = createBrowserRouter([
         path: "audit-logs",
         element: (
           <RequireAdmin>
-            <AuditLogsWorkspace />
+            <AuditLogsRoute />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: "audit-logs/:tab",
+        element: (
+          <RequireAdmin>
+            <AuditLogsRoute />
           </RequireAdmin>
         ),
       },

@@ -1,0 +1,157 @@
+# Tag 驱动构建 + 部署（被 .gitlab-ci.yml include）。参考 .gitlab-ci-hr.yml。
+# tag: base-<ver> / server-<ver> / web-<ver> / release-<ver>
+# 打 tag 触发的流水线只做 build+deploy：lint+frontend 已在 main gate（MR / 合并进 main
+# 时）跑过、tag 落在已绿的 main commit 上，故不再重跑（见
+# docs/superpowers/specs/2026-07-10-ci-release-dedup-design.md）。
+
+# ============================================================
+# 发版闸：强制 tag commit 必须是 origin/main 的祖先。
+# 背景：tag 触发规则(.gitlab-ci.yml)与下面 build/deploy 的 rules 都只匹配 tag 名、
+#   不校验 tag 落在哪个分支。历史上靠「运营约束(geo-release skill + main 受保护)」兜底，
+#   但人手动 `git tag && git push` 可绕过 —— 实际已发生 web-1.0.15(游离 commit) 与
+#   release-1.0.16(feat 分支) 未过 main gate 直接构建部署(见
+#   docs/superpowers/specs/2026-07-10-ci-release-dedup-design.md 的「残留风险」)。
+# 本 job 放在保留 stage .pre，先于所有 build/deploy 运行；失败则整条发版流水线中止，
+#   build/deploy 一律不执行。GIT_DEPTH=0 拉全量历史，保证 merge-base 判定准确。
+# ============================================================
+verify-tag-on-main:
+  image: public.ecr.aws/docker/library/alpine:3.20
+  tags: [docker]
+  stage: .pre
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^(base|server|web|release)-/'
+  variables:
+    GIT_DEPTH: "0"        # 完整历史；shallow clone 会让 merge-base 误判
+  script:
+    - apk add --no-cache git
+    - git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+    - |
+      if git merge-base --is-ancestor "$CI_COMMIT_SHA" origin/main; then
+        echo "✅ tag $CI_COMMIT_TAG (commit $CI_COMMIT_SHA) 在 origin/main 上，允许发布"
+      else
+        echo "❌ 拒绝发布：tag $CI_COMMIT_TAG (commit $CI_COMMIT_SHA) 不是 origin/main 的祖先。"
+        echo "   发版 tag 必须打在已合入 main 的 commit 上——请先把代码合并到 main 再打 tag。"
+        exit 1
+      fi
+
+.kaniko:
+  image:
+    name: ${HARBOR_REGISTRY}/${HARBOR_PROJECT}/kaniko-executor:v1.23.2-debug
+    entrypoint: [""]
+  tags: [docker]
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "$DOCKER_AUTH_CONFIG" > /kaniko/.docker/config.json
+
+build:base:
+  extends: .kaniko
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^base-/'
+  script:
+    - VER=${CI_COMMIT_TAG#base-}
+    - IMG="$HARBOR_REGISTRY/$HARBOR_PROJECT/geo-collab-base"
+    - echo "==> kaniko 构建 base $IMG:$VER"
+    - |
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile.base" \
+        --build-arg BASE_REGISTRY="$BASE_REGISTRY" \
+        --skip-tls-verify-registry "$HARBOR_REGISTRY" \
+        --destination "$IMG:$VER" --destination "$IMG:latest"
+
+build:server:
+  extends: .kaniko
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^(server|release)-/'
+  script:
+    - VER=${CI_COMMIT_TAG#server-}; VER=${VER#release-}
+    - BASE_VER=$(grep -E '^BASE=' deploy/VERSION | cut -d= -f2 | tr -d '[:space:]')
+    - IMG="$HARBOR_REGISTRY/$HARBOR_PROJECT/geo-collab-server"
+    - BASE_IMAGE="$HARBOR_REGISTRY/$HARBOR_PROJECT/geo-collab-base:$BASE_VER"
+    - echo "==> kaniko 构建 server $IMG:$VER (base=$BASE_IMAGE)"
+    - |
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --build-arg BASE_IMAGE="$BASE_IMAGE" \
+        --skip-tls-verify-registry "$HARBOR_REGISTRY" \
+        --destination "$IMG:$VER" --destination "$IMG:latest"
+
+build:web:
+  extends: .kaniko
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^(web|release)-/'
+  script:
+    - VER=${CI_COMMIT_TAG#web-}; VER=${VER#release-}
+    - IMG="$HARBOR_REGISTRY/$HARBOR_PROJECT/geo-collab-web"
+    - echo "==> kaniko 构建 web $IMG:$VER"
+    - |
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile.nginx" \
+        --build-arg BASE_REGISTRY="$BASE_REGISTRY" \
+        --skip-tls-verify-registry "$HARBOR_REGISTRY" \
+        --destination "$IMG:$VER" --destination "$IMG:latest"
+
+deploy:
+  image:
+    name: ${HARBOR_REGISTRY}/${HARBOR_PROJECT}/skopeo-stable:latest
+    entrypoint: [""]          # skopeo 镜像 ENTRYPOINT 是 skopeo，覆盖成空才能让 GitLab 用 shell 跑 job 脚本
+  stage: deploy
+  interruptible: false
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^(server|web|release)-/'
+  before_script:
+    - |
+      if ! command -v ssh >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        (microdnf install -y openssh-clients curl-minimal \
+          || dnf install -y openssh-clients curl \
+          || apk add --no-cache openssh-client curl \
+          || yum install -y openssh-clients curl) || true
+      fi
+    - command -v ssh   # 装不上就让 job 在此早失败（而非静默拖到隧道步骤才崩）
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - cp "$DEPLOY_SSH_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+    - |
+      printf 'Host deploy\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking accept-new\n' \
+        "$DEPLOY_SSH_HOST" "$DEPLOY_SSH_USER" > ~/.ssh/config
+  script:
+    - TAG="$CI_COMMIT_TAG"
+    - |
+      case "$TAG" in
+        release-*) TARGET=all;    VER=${TAG#release-} ;;
+        server-*)  TARGET=server; VER=${TAG#server-} ;;
+        web-*)     TARGET=web;    VER=${TAG#web-} ;;
+      esac
+    - echo "==> 部署 $TARGET 版本 $VER 到 $DEPLOY_SSH_HOST"
+    # 开 SSH 隧道：本地 5000 → 服务器本地 registry
+    - ssh -fN -L 5000:127.0.0.1:5000 deploy
+    - |
+      copy() { skopeo copy --src-authfile /tmp/auth/config.json --dest-tls-verify=false \
+        "docker://$HARBOR_REGISTRY/$HARBOR_PROJECT/$1:$VER" \
+        "docker://localhost:5000/$HARBOR_PROJECT/$1:$VER"; }
+    # DOCKER_AUTH_CONFIG 落文件供 skopeo --src-authfile
+    - mkdir -p /tmp/auth && echo "$DOCKER_AUTH_CONFIG" > /tmp/auth/config.json
+    - if [ "$TARGET" = all ] || [ "$TARGET" = server ]; then copy geo-collab-server; fi
+    - if [ "$TARGET" = all ] || [ "$TARGET" = web ]; then copy geo-collab-web; fi
+    # 先把仓库版 deploy.sh 投递到 prod（prod 非 git 管理、CI 原本只推镜像不推脚本，
+    # 仓库改动到不了线上 —— 见 docs/superpowers/specs/2026-07-15-deploy-migrate-lock-safety-design.md）。
+    # 必须在下面执行远端 deploy.sh 之前 scp，本次发版同一轮即用上新脚本。
+    - scp "$CI_PROJECT_DIR/deploy/deploy.sh" "deploy:$DEPLOY_PATH/deploy.sh"
+    # 远端拉取 + 迁移 + 起服务（deploy.sh registry 模式）
+    - |
+      ssh deploy bash -s <<EOF
+      set -euo pipefail
+      cd "$DEPLOY_PATH"
+      export IMAGE_SOURCE=registry LOCAL_REGISTRY=127.0.0.1:5000 HARBOR_PROJECT=$HARBOR_PROJECT
+      bash deploy.sh $TARGET $VER
+      EOF
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" != "success" ] && [ -n "$GEO_FEISHU_WEBHOOK_URL" ]; then
+        curl -s -X POST "$GEO_FEISHU_WEBHOOK_URL" -H 'Content-Type: application/json' \
+          -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ GEO 新栈部署失败 tag=$CI_COMMIT_TAG job=$CI_JOB_URL\"}}" || true
+      fi

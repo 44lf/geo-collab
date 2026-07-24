@@ -5,7 +5,7 @@
 | 部署形态 | Linux 服务器 + Docker Compose（**仅此一种**） |
 | 关联文档 | [03 技术架构](./03-technical-architecture.md) · [06 开发指南](./06-development-guide.md) · 仓库 [`DEPLOYMENT.md`](../DEPLOYMENT.md)（详尽脚本与备份恢复 runbook） |
 
-> 本文是上线与日常运维的总览。**完整的部署脚本、备份/恢复操作步骤以仓库根 `DEPLOYMENT.md` 为准**（含 `scripts/backup_db.sh`、`restore_db.sh`、`backup_files.sh`、`restore_files.sh` 的用法）；本文做拓扑、配置清单、监控与排障的体系化说明，避免重复抄录长脚本。
+> 本文是上线与日常运维的总览。**完整的部署脚本、备份/恢复操作步骤以 `docs/DEPLOYMENT.md` 为准**（含 `scripts/backup_db.sh`、`restore_db.sh`、`backup_files.sh`、`restore_files.sh` 的用法）；本文做拓扑、配置清单、监控与排障的体系化说明，避免重复抄录长脚本。
 
 ---
 
@@ -56,7 +56,7 @@ curl http://127.0.0.1/                 # SPA
 docker compose logs -f app             # 看启动日志
 ```
 
-打开浏览器访问 `http://<服务器 IP>/`。`DEPLOYMENT.md §1` 提供一键 `deploy-fresh.sh`。
+打开浏览器访问 `http://<服务器 IP>/`。`docs/DEPLOYMENT.md §1` 提供一键 `deploy-fresh.sh`。
 
 ---
 
@@ -147,7 +147,7 @@ docker compose logs -f app             # 看启动日志
 
 ---
 
-## 6. 备份与恢复（要点；详见 `DEPLOYMENT.md §7`）
+## 6. 备份与恢复（要点；详见 `docs/DEPLOYMENT.md §7`）
 
 需要备份**两类**数据，缺一不可：
 
@@ -156,7 +156,7 @@ docker compose logs -f app             # 看启动日志
 | 数据库 | MySQL `geo_collab` | `scripts/backup_db.sh` / `restore_db.sh` |
 | 文件 | `app_data`（assets + browser_states + exports）、`minio_data`（图库） | `scripts/backup_files.sh` / `restore_files.sh` |
 
-推荐 cron（与 `DEPLOYMENT.md` 一致）：
+推荐 cron（与 `docs/DEPLOYMENT.md` 一致）：
 
 ```cron
 # 每天 03:00 备份 MySQL（保留 3 天）

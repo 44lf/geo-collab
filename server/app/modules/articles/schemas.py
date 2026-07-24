@@ -109,10 +109,14 @@ class ArticleListRead(BaseModel):
     source_agent_name: str | None = None  # 生成此文的「智能体」(pipeline) 名，手动/历史为 None
     source_template_name: str | None = None  # 生成此文的提示词「模板」名，手动/历史为 None
     source_template_id: int | None = None
-    # MCP loop/goal 生文的自评分（auto_review_decisions 最新一条 score_total，0-100）。
+    content_type: str | None = None  # 内容形态，如 "xhs_image_text"（小红书图文），历史文章为 None
+    # MCP loop/goal 生文的自评分显示串（auto_review_decisions 最新一条派生）。
     # 只有 MCP 路径经 submit_review_decision 写这张表 → 手动/pipeline/方案文章恒为 None。
+    # 过线 / 老数据 = 纯数字 "84"；没过线（score_total < pass_line）= "65 _ 80"（前端拆成 65 / 80 标红）。
     # 仅内容列表卡片展示用，不做查询过滤。
-    auto_review_score: int | None = None
+    auto_review_score: str | None = None
+    # 对抗判分（N 次平均，verifier skill 后置写；纯 advisory，不做闸）。手动/scheme/pipeline 文章为 None。
+    adversarial_score: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -138,6 +142,12 @@ class ArticleRead(BaseModel):
     source_agent_name: str | None = None
     source_template_name: str | None = None
     source_template_id: int | None = None
+    # 生文溯源（仅 /goal MCP save 填；scheme/pipeline 留 None）：verifier 的 get_article 读
+    # source_question_category 去调 pick_quality_references。
+    source_question_category: str | None = None
+    source_question_texts: list | None = None
+    content_type: str | None = None  # 内容形态，如 "xhs_image_text"（小红书图文）
+    can_edit: bool = True  # 属主/admin 为 True；他人只读分享时 False（驱动前端只读降级）
     created_at: datetime
     updated_at: datetime
 
@@ -193,10 +203,37 @@ class ArticleGroupRead(BaseModel):
     updated_at: datetime
 
 
+# ── 内容 feed（服务端合并分页）──────────────────────────────────────────────
+
+
+class ArticleGroupReadWithMembers(ArticleGroupRead):
+    """feed 用：分组 + 内嵌组员摘要（按 sort_order 排），使展开/分发不依赖全量文章。"""
+
+    members: list[ArticleListRead] = Field(default_factory=list)
+
+
+class FeedCounts(BaseModel):
+    pending: int = 0
+    approved: int = 0
+
+
+class ArticleFeedItem(BaseModel):
+    kind: str  # "article" | "group"
+    article: ArticleListRead | None = None
+    group: ArticleGroupReadWithMembers | None = None
+
+
+class ArticleFeedResponse(BaseModel):
+    items: list[ArticleFeedItem]
+    counts: FeedCounts
+
+
 # ── 序列化函数（原 api/serializers.py）──────────────────────────────────────
 
 
-def to_article_read(article: "Article", published_count: int = 0) -> ArticleRead:
+def to_article_read(
+    article: "Article", published_count: int = 0, can_edit: bool = True
+) -> ArticleRead:
     from server.app.modules.articles.parser import loads_content_json  # 避免循环 import
 
     body_assets = sorted(article.body_assets, key=lambda item: item.position)
@@ -230,6 +267,10 @@ def to_article_read(article: "Article", published_count: int = 0) -> ArticleRead
         source_agent_name=article.source_agent_name,
         source_template_name=article.source_template_name,
         source_template_id=article.source_template_id,
+        source_question_category=article.source_question_category,
+        source_question_texts=article.source_question_texts,
+        content_type=article.content_type,
+        can_edit=can_edit,
     )
 
 

@@ -73,6 +73,9 @@ from server.app.shared.resource_metrics import emit_resource_alert
 
 MAX_CONCURRENT_RECORDS = 5
 WORKER_LEASE_EXTENSION_SECONDS = 600
+# 主循环连续 N 轮"无 running + 本轮零启动 + 仍有 pending"→ 判无前进可能（多为卡死线程占着
+# 进程内账号锁/闸槽），park 并 return，交 worker 冷却跳过。5 × 0.2s ≈ 1s 容忍窗。
+PARK_STALL_THRESHOLD = 5
 # 超时记录关 context 后，等发布线程确认终止的上限；超时仍存活＝卡死，保留账号/profile 锁（#2）
 _THREAD_TERMINATION_TIMEOUT = 10.0
 # 僵尸记录标记（回填到 failed 行的 queue_reason，不改 status、无需迁移）
@@ -120,6 +123,17 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
     进程内 per-task 锁串行化（同任务并发执行抛 ConflictError）。pending→running 用条件 UPDATE
     抢占（rowcount==0 说明被别的执行者/worker 抢走，按其状态收尾），非 pending 则只续 worker 心跳。
     """
+    result, _parked = _execute_task_impl(db, task)
+    return result
+
+
+def execute_task_with_parked(db: Session, task: PublishTask) -> tuple[PublishTask, bool]:
+    """worker 专用：额外返回本次是否 parked（无前进、记录留 pending、需冷却后重试）。
+    公开的 execute_task 保持只返回 PublishTask，现有 API/pipeline 调用方无需感知。"""
+    return _execute_task_impl(db, task)
+
+
+def _execute_task_impl(db: Session, task: PublishTask) -> tuple[PublishTask, bool]:
     lock = _task_locks.setdefault(task.id, threading.Lock())
     locked = lock.acquire(blocking=False)
     if not locked:
@@ -128,6 +142,7 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
     cancel_event = threading.Event()
     _task_cancel[task.id] = cancel_event
 
+    parked = False
     try:
         if task.is_deleted:
             raise ConflictError(f"Task {task.id} has been deleted")
@@ -155,7 +170,7 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
                 db.flush()
                 refreshed = get_task(db, task.id)
                 if refreshed is None or refreshed.status in TERMINAL_TASK_STATUSES:
-                    return refreshed or task
+                    return refreshed or task, False
                 task = refreshed
             else:
                 task.status = "running"
@@ -167,11 +182,11 @@ def execute_task(db: Session, task: PublishTask) -> PublishTask:
         else:
             _heartbeat_task_worker(db, task.id)
 
-        _run_pending_records(db, task)
+        parked = _run_pending_records(db, task)
         db.flush()
         result = get_task(db, task.id) or task
         _logger.info("Task %d finished with status %s", task.id, result.status)
-        return result
+        return result, parked
     finally:
         _task_locks.pop(task.id, None)
         _task_cancel.pop(task.id, None)
@@ -243,16 +258,20 @@ def _cancel_not_running_records(
         add_log(db, task.id, None, "warn", "Cancellation requested; pending records were stopped")
 
 
-def _run_pending_records(db: Session, task: PublishTask) -> None:
+def _run_pending_records(db: Session, task: PublishTask) -> bool:
     """核心执行循环：每轮续心跳→检查取消/暂停→拉起可跑记录→等 future 完成并写回结果。
 
     退出条件：取消且无在跑、暂停（waiting_user_input / stop_before_publish 停在 manual）且无在跑、
     或无 pending 且无在跑（此时聚合 task 终态）。超过 _record_execution_budget() 的 future
     判超时：标失败 + 停会话（关 Chromium → Playwright 线程收到 TargetClosedError 自行结束）。
     finally 兜底释放所有账号锁并 shutdown 线程池。
+
+    返回值：本次是否 parked（连续 PARK_STALL_THRESHOLD 轮无前进——多为卡死线程占着进程内账号锁/
+    闸槽——留 pending 未聚合终态，交调用方冷却跳过）；正常收尾（取消/暂停/无 pending）返回 False。
     """
     cancel_evt = _task_cancel.get(task.id)
     running: dict[Future, RunningRecord] = {}
+    stalled_passes = 0  # 连续"无 running + 零启动 + 有 pending"轮数
     executor = ThreadPoolExecutor(
         max_workers=_max_concurrent_records(), thread_name_prefix="publish"
     )
@@ -283,7 +302,7 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
                 if not running and not any(record.status == "running" for record in records):
                     aggregate_task_status(db, task, records)
                     db.commit()
-                    return
+                    return False
             else:
                 _paused_for_user = any(record.status == "waiting_user_input" for record in records)
                 _paused_for_manual = task.stop_before_publish and any(
@@ -294,7 +313,7 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
                     if not running:
                         # 所有进行中的 future 都已完成，可以安全退出。
                         db.commit()
-                        return
+                        return False
                     # 仍有运行中的 future，继续落到 wait 循环，等它们完成并把结果写回 DB。
                 else:
                     _start_runnable_records(db, task, executor, running, records)
@@ -303,11 +322,19 @@ def _run_pending_records(db: Session, task: PublishTask) -> None:
                 if not any(record.status == "pending" for record in records):
                     aggregate_task_status(db, task, records)
                     db.commit()
-                    return
+                    return False
+                # 有 pending 却无 running、且本轮零启动（否则 running 非空）→ 无前进可能
+                # （多为卡死线程占着进程内账号锁/闸槽）。累计到阈值即 park：留 pending、不聚合
+                # 终态、不改 worker_id，返回 True 让 worker 冷却跳过、先跑别的任务。
+                stalled_passes += 1
+                if stalled_passes >= PARK_STALL_THRESHOLD:
+                    db.commit()
+                    return True
                 db.commit()
                 time.sleep(0.2)
                 continue
 
+            stalled_passes = 0  # 有 running＝有前进，清零
             done, _ = wait(running.keys(), timeout=1, return_when=FIRST_COMPLETED)
             timed_out = [
                 future
@@ -553,6 +580,54 @@ def _mark_record_zombie(db: Session, task_id: int, record_id: int) -> None:
     add_log(db, task_id, record_id, "warning", _ZOMBIE_QUEUE_REASON)
 
 
+def _harvest_wedged_record(db: Session, running_record: RunningRecord, future: Future) -> bool:
+    """根因收割：OS 级 SIGKILL 卡死记录的 chromium(profile 维度) → 二次 join 确认线程解绕。
+
+    仅由 _handle_timed_out_record 的 terminated=False 分支调用。返回线程是否确认终止——
+    True 才可由调用方安全归还 profile 锁 + 闸槽 + 账号锁；False 退回今天的保锁行为。
+    纯 OS 收割，不碰 Playwright 句柄，可从 watchdog 线程安全跑。
+    """
+    # lazy import：accounts.service 反向 import 了 tasks.models，避免模块级循环 import
+    from server.app.modules.accounts.browser import harvest_chromium_by_profile
+    from server.app.modules.accounts.service import profile_dir_from_state_path
+
+    account = db.get(Account, running_record.account_id)
+    if account is None or account.state_path is None:
+        return False
+    profile_dir = profile_dir_from_state_path(account.state_path)
+    result = harvest_chromium_by_profile(profile_dir)
+    if result.survived:
+        emit_resource_alert(
+            f"record {running_record.record_id}: {len(result.survived)} chromium proc(s) survived "
+            f"SIGKILL; account/profile locks held, leaving for recovery",
+            {"record_id": running_record.record_id, "account_id": running_record.account_id},
+        )
+        return False
+    rejoin_seconds = get_settings().publish_harvest_rejoin_seconds
+    try:
+        future.result(timeout=rejoin_seconds)
+    except FutureTimeoutError:
+        _logger.warning(
+            "record %d: root-cause harvest killed %d chromium proc(s) on profile %s but publish "
+            "thread still wedged after %.1fs rejoin; locks held for recovery "
+            "(killed=0 ⇒ no chromium matched — already exited or --user-data-dir cmdline mismatch)",
+            running_record.record_id,
+            result.killed,
+            profile_dir,
+            rejoin_seconds,
+        )
+        return False
+    except Exception:
+        pass  # 线程抛业务异常/被 cancel —— 已终止，视为解绕
+    _logger.warning(
+        "record %d: root-cause harvest killed %d chromium proc(s); publish thread unwound, "
+        "reclaiming gate + account + profile lock",
+        running_record.record_id,
+        result.killed,
+    )
+    return True
+
+
 def _handle_timed_out_record(
     db: Session,
     task_id: int,
@@ -567,6 +642,9 @@ def _handle_timed_out_record(
     - 线程仍存活（卡 IO 未响应 context 关闭，`result` 抛 FutureTimeoutError）：账号锁 + profile 锁 +
       闸槽**一律不释放**——避免下一条同账号记录对同一 persistent profile 并发开 Chromium 损坏目录
       （#2）；记录标「僵尸待清」+ 告警，交下轮恢复回收。
+    - 首个 result_timeout 到点仍卡（FutureTimeoutError）且 `publish_harvest_enabled` 开：OS 级收割
+      该 profile 的 chromium + 二次 join；线程随之解绕则同「已终止」路径归还 profile 锁 + 闸槽 + 账号锁，
+      否则（survivor / 二次 join 仍超时）退回上一条的保锁行为。
 
     返回线程是否已确认终止。
     """
@@ -600,6 +678,9 @@ def _handle_timed_out_record(
     except Exception:
         # 线程已终止（抛业务异常 / 被 cancel）——视为已退场
         terminated = True
+
+    if not terminated and get_settings().publish_harvest_enabled:
+        terminated = _harvest_wedged_record(db, running_record, future)
 
     if terminated:
         _release_record_profile_lock(running_record.record_id)
@@ -1127,8 +1208,13 @@ def _store_failure_screenshot(
 
 
 def _make_commit_guard(record_id: int) -> CommitGuard:
-    """构造该记录的提交守卫：mark_pending 自开 session 落 commit_attempted_at（发布线程内，
-    入参均 detached，不复用外部 session；与 runner_api._resolve_access_token 同模式）。"""
+    """构造该记录的提交守卫（发布线程内自开 session，入参均 detached、不复用外部 session；
+    与 runner_api._resolve_access_token 同模式）：
+
+    - mark_pending：进入提交边界时落 commit_attempted_at。
+    - mark_clean：拿到「平台明确未受理」正面证据（业务拒绝码 / 上传前失败）时回滚 commit_attempted_at，
+      让记录退出「结果未知」桶、可正常重试（不再被 retry_record 的 Layer-2 兜底困住）。
+    """
     from server.app.modules.tasks.drivers.base import CommitGuard
 
     def _mark_pending() -> None:
@@ -1148,7 +1234,24 @@ def _make_commit_guard(record_id: int) -> CommitGuard:
         finally:
             db.close()
 
-    return CommitGuard(mark_pending=_mark_pending)
+    def _mark_clean() -> None:
+        from server.app.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            db.execute(
+                sa_update(PublishRecord)
+                .where(
+                    PublishRecord.id == record_id,
+                    PublishRecord.is_deleted == False,  # noqa: E712
+                )
+                .values(commit_attempted_at=None)
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    return CommitGuard(mark_pending=_mark_pending, mark_clean=_mark_clean)
 
 
 def build_publish_runner_for_record(record: PublishRecord):

@@ -15,6 +15,7 @@ AI 自动排版：让格式模型识别正文里哪些段落该升级成小标�
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -26,6 +27,22 @@ from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
 from server.app.core.config import get_settings
+from server.app.core.logging import add_run_tokens
+
+# 文档纯函数已迁至 formatting/document.py。此处重新绑定回 ai_format 命名空间：
+# 前 6 个仍被本模块内部调用点使用；末 3 个（noqa）仅为兼容旧导入路径 ai_format.<name>
+# （scheme_executor / ai_illustrate_svc / routers.articles / 若干测试直接 import），本模块内部已不引用。
+from server.app.modules.articles.formatting.document import (
+    _apply_headings,
+    _derive_html_and_text,
+    _node_text,
+    _non_empty_text_nodes,
+    _normalize_game_name,  # noqa: F401
+    _normalize_heading_indices,
+    _top_level_text_nodes,  # noqa: F401
+    build_image_positions_from_game_list,
+    has_ai_format_targets,  # noqa: F401
+)
 from server.app.modules.articles.parser import dumps_content_json, loads_content_json
 from server.app.modules.image_library.inserter import (
     has_images_in_content,
@@ -124,107 +141,6 @@ def _extract_json(raw: str) -> str:
         return m.group(1)
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     return m.group(0) if m else raw
-
-
-def _top_level_text_nodes(content_json: dict) -> list[tuple[int, dict]]:
-    """返回顶层 paragraph/heading 节点及其原始 content 下标。"""
-    content = content_json.get("content") or []
-    return [
-        (i, node)
-        for i, node in enumerate(content)
-        if isinstance(node, dict) and node.get("type") in ("paragraph", "heading")
-    ]
-
-
-def _non_empty_text_nodes(content_json: dict) -> list[tuple[int, dict]]:
-    return [
-        (i, node) for i, node in _top_level_text_nodes(content_json) if _node_text(node).strip()
-    ]
-
-
-def has_ai_format_targets(raw_content_json: Any) -> bool:
-    """正文里是否有可排版对象（非空的顶层 paragraph/heading 节点）。空正文时 router 拒绝触发排版。"""
-    if isinstance(raw_content_json, str):
-        content_json = loads_content_json(raw_content_json)
-    elif isinstance(raw_content_json, dict):
-        content_json = raw_content_json
-    else:
-        content_json = {}
-    return bool(_non_empty_text_nodes(content_json))
-
-
-def _node_text(node: dict) -> str:
-    parts = []
-    for child in node.get("content") or []:
-        if not isinstance(child, dict):
-            continue
-        if child.get("type") == "text":
-            parts.append(child.get("text", ""))
-        elif child.get("type") == "hardBreak":
-            parts.append("\n")
-    return "".join(parts)
-
-
-_GAME_PREFIX_RE = re.compile(r"^游戏[0-9一二三四五六七八九十百]+、\s*")
-_BRACKET_CHARS = "《》〈〉「」『』\"'“”‘’ 	　"
-
-
-def _normalize_game_name(s: str) -> str:
-    """归一化游戏名/heading 文本：去『游戏N、』前缀、去书名号/引号/空白。用于 contains 匹配。"""
-    t = (s or "").strip()
-    t = _GAME_PREFIX_RE.sub("", t)
-    return t.strip(_BRACKET_CHARS)
-
-
-def _find_heading_index(content_json: dict, game: str) -> int | None:
-    """在顶层 heading 节点里找文本含 game 的，返回其绝对下标；多命中取首个；无则 None。"""
-    target = _normalize_game_name(game)
-    if not target:
-        return None
-    for i, node in enumerate(content_json.get("content") or []):
-        if not isinstance(node, dict) or node.get("type") != "heading":
-            continue
-        if target in _normalize_game_name(_node_text(node)):
-            return i
-    return None
-
-
-def build_image_positions_from_game_list(
-    content_json: dict, game_list: list[dict]
-) -> tuple[list[dict], list[dict]]:
-    """游戏清单 → (合成 image_positions, unmatched)。game 名为权威锚点，index 仅未命中时兜底。
-
-    - 同一 game 命中多个 heading：取首个。
-    - 多个 game 解析到同一 index：按 index 去重，保留先到的，其余记 index_conflict。
-    - 命中不到 heading 且无 index 提示：记 heading_not_found。
-    """
-    positions: list[dict] = []
-    unmatched: list[dict] = []
-    used_index: set[int] = set()
-    for item in game_list or []:
-        if not isinstance(item, dict):
-            continue
-        game = (item.get("game") or "").strip()
-        if not game:
-            continue
-        idx = _find_heading_index(content_json, game)
-        if idx is None:
-            hint = item.get("index")
-            if isinstance(hint, int):
-                idx = hint
-            else:
-                unmatched.append({"game": game, "reason": "heading_not_found"})
-                continue
-        if idx in used_index:
-            unmatched.append({"game": game, "reason": "index_conflict"})
-            continue
-        used_index.add(idx)
-        pos: dict = {"index": idx, "game": game}
-        cat = item.get("category_id")
-        if isinstance(cat, int):
-            pos["category_id"] = cat
-        positions.append(pos)
-    return positions, unmatched
 
 
 def _node_label(node: dict) -> str:
@@ -476,128 +392,6 @@ def _load_ai_format_prompt(
     return base
 
 
-def _to_heading(node: dict, level: int = 1) -> dict:
-    return {"type": "heading", "attrs": {"level": level}, "content": node.get("content", [])}
-
-
-def _to_paragraph(node: dict) -> dict:
-    return {"type": "paragraph", "content": node.get("content", [])}
-
-
-_INLINE_MARK_TAGS = {
-    "bold": ("<strong>", "</strong>"),
-    "italic": ("<em>", "</em>"),
-    "code": ("<code>", "</code>"),
-    "underline": ("<u>", "</u>"),
-    "strike": ("<s>", "</s>"),
-}
-
-
-def _inline_html(children: list | None) -> str:
-    """渲染一组 inline 子节点（text/hardBreak）为 HTML，保留 marks。与既有风格一致：text 不转义。"""
-    parts: list[str] = []
-    for child in children or []:
-        if not isinstance(child, dict):
-            continue
-        ctype = child.get("type")
-        if ctype == "hardBreak":
-            parts.append("<br>")
-            continue
-        if ctype != "text":
-            continue
-        text = child.get("text", "")
-        for mark in child.get("marks") or []:
-            if not isinstance(mark, dict):
-                continue
-            mtype = mark.get("type")
-            if mtype == "link":
-                href = (mark.get("attrs") or {}).get("href", "")
-                text = f'<a href="{href}">{text}</a>'
-            elif mtype in _INLINE_MARK_TAGS:
-                open_tag, close_tag = _INLINE_MARK_TAGS[mtype]
-                text = f"{open_tag}{text}{close_tag}"
-        parts.append(text)
-    return "".join(parts)
-
-
-def _node_html(node: dict) -> str:
-    """单个块节点 → HTML。递归处理列表/引用/列表项内的块子节点。"""
-    ntype = node.get("type")
-    if ntype == "heading":
-        level = (node.get("attrs") or {}).get("level", 1)
-        return f"<h{level}>{_inline_html(node.get('content'))}</h{level}>"
-    if ntype == "paragraph":
-        return f"<p>{_inline_html(node.get('content'))}</p>"
-    if ntype == "image":
-        attrs = node.get("attrs") or {}
-        src = attrs.get("src", "")
-        alt = attrs.get("alt", "") or ""
-        return f'<img src="{src}" alt="{alt}">'
-    if ntype in ("bulletList", "orderedList"):
-        tag = "ul" if ntype == "bulletList" else "ol"
-        items = "".join(_node_html(c) for c in node.get("content") or [] if isinstance(c, dict))
-        return f"<{tag}>{items}</{tag}>"
-    if ntype == "listItem":
-        return f"<li>{''.join(_node_html(c) for c in node.get('content') or [] if isinstance(c, dict))}</li>"
-    if ntype == "blockquote":
-        return f"<blockquote>{''.join(_node_html(c) for c in node.get('content') or [] if isinstance(c, dict))}</blockquote>"
-    if ntype == "codeBlock":
-        return f"<pre><code>{_inline_html(node.get('content'))}</code></pre>"
-    # 未知块节点：尽量取 inline 文本，不静默吞整块
-    return f"<p>{_inline_html(node.get('content'))}</p>"
-
-
-def _node_plain_text(node: dict) -> str:
-    """单个块节点 → 纯文本（递归）。列表项各成一行。"""
-    ntype = node.get("type")
-    if ntype in ("heading", "paragraph", "codeBlock"):
-        return _node_text(node)
-    if ntype in ("bulletList", "orderedList", "blockquote", "listItem"):
-        lines = [_node_plain_text(c) for c in node.get("content") or [] if isinstance(c, dict)]
-        return "\n".join(t for t in lines if t.strip())
-    if ntype == "image":
-        return ""
-    return _node_text(node)
-
-
-def _derive_html_and_text(content_json: dict) -> tuple[str, str]:
-    html_parts: list[str] = []
-    text_parts: list[str] = []
-    for node in content_json.get("content") or []:
-        if not isinstance(node, dict):
-            continue
-        html_parts.append(_node_html(node))
-        t = _node_plain_text(node)
-        if t.strip():
-            text_parts.append(t)
-    return "".join(html_parts), "\n".join(text_parts)
-
-
-def _normalize_heading_indices(value: Any, valid_indices: set[int]) -> set[int]:
-    if not isinstance(value, list):
-        return set()
-    result: set[int] = set()
-    for item in value:
-        if isinstance(item, int) and item in valid_indices:
-            result.add(item)
-    return result
-
-
-def _apply_headings(content_json: dict, heading_indices: set[int]) -> dict:
-    """只把段落升级为标题，绝不降级已有标题。
-
-    LLM 只识别哪些段落应成为标题。未被 LLM 选中的已有标题原样保留：提示词说
-    “保留”，所以不在 heading_indices 中并不表示要降级。
-    """
-    content = list(content_json.get("content") or [])
-    for i, node in enumerate(content):
-        if not isinstance(node, dict):
-            continue
-        if i in heading_indices and node.get("type") == "paragraph":
-            content[i] = _to_heading(node, level=2)
-    return {**content_json, "content": content}
-
-
 def _article_lock_matches(article: Any, lock_started_at: datetime | None) -> bool:
     # 锁指纹比对：本次排版仍持有锁吗？lock_started_at=None 表示不校验（无锁场景，如测试直调）
     if lock_started_at is None:
@@ -653,7 +447,7 @@ def _call_litellm_completion(
 ) -> Any:
     from litellm import completion
 
-    return completion(
+    resp = completion(
         model=model,
         api_key=api_key,
         messages=messages,
@@ -661,6 +455,14 @@ def _call_litellm_completion(
         timeout=timeout_seconds,
         api_base=api_base or None,
     )
+    # [TOKEN统计] 配图/排版模型 usage 取自 litellm 返回：逐次明细 + 累加到运行汇总（见 executor 的 [TOKEN汇总]）。
+    _u = getattr(resp, "usage", None)
+    _pt = getattr(_u, "prompt_tokens", None)
+    _ct = getattr(_u, "completion_tokens", None)
+    _tt = getattr(_u, "total_tokens", None)
+    logger.info("[TOKEN统计] 配图 model=%s prompt=%s completion=%s total=%s", model, _pt, _ct, _tt)
+    add_run_tokens("illustrate", prompt=_pt, completion=_ct, total=_tt)
+    return resp
 
 
 # 联网兜底提示：仅 web_fallback 开时由 _load_ai_format_prompt 拼到系统提示词末尾。
@@ -783,6 +585,7 @@ def _maybe_insert_images(
     max_images: int | None = None,
     prefetched_downloads: dict[int, list[tuple[bytes, str, Any]]] | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> tuple[dict, int]:
     """按模型给的 image_positions 插图，返回 (新文档, 实插图数)。
 
@@ -832,6 +635,7 @@ def _maybe_insert_images(
     matched_refs: list[Any] = []
     matched_positions: list[int] = []
     used_ids: list[int] = []
+    random_filled = 0  # 随机替补落图数（random_fill_missed 时用）
     requested_labels: list[str] = []  # 每个"AI 点名且能定位到栏目"的位置（应该配上图的）
     missed_labels: list[str] = []  # requested 里最终没配上的（选不到图 + 联网也没补到）
     for idx, req_cat_id, game in positions:
@@ -866,12 +670,23 @@ def _maybe_insert_images(
                 else:
                     # 同步路径：就地联网搜图 + 下载 + 落库（旧行为，仅非多段式调用方走到）
                     image_id = _web_fallback_fill_category(db, category, image_search_query)
+        # 联网补图（web_fallback）尝试已在上方做完；仍无图时，若开了随机替补，
+        # 从候选栏目池随机取一张替补（best-effort），插在同一锚点。
+        used_random = False
+        if image_id is None and random_fill_missed:
+            image_id = pick_image_id(
+                ImageQuery(category_ids=list(valid_category_ids), excluded_ids=used_ids), db
+            )
+            used_random = image_id is not None
         if image_id is None:
-            missed_labels.append(label)  # 该配图但选不到/联网也没补到 → 记一笔 miss
+            missed_labels.append(label)  # 精准/联网/随机都没补到 → 记一笔 miss
             continue
 
         ref = fetch_image_by_id(image_id, db)
         if ref is not None:
+            if used_random:
+                random_filled += 1
+                ref = dataclasses.replace(ref, official_url=None)  # 替补不附来源 url
             used_ids.append(image_id)
             matched_refs.append(ref)
             matched_positions.append(idx)
@@ -889,6 +704,7 @@ def _maybe_insert_images(
         out_diagnostics["anchored"] = len(requested_labels)
         out_diagnostics["inserted"] = len(matched_refs)
         out_diagnostics["missed"] = len(requested_labels) - len(matched_refs)
+        out_diagnostics["random_filled"] = random_filled
         if missed_labels:
             out_diagnostics["missed_games"] = missed_labels
 
@@ -937,6 +753,7 @@ def run_ai_format(
     builtin_variant: str = "conservative",
     format_model_selected: str | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """识别正文小标题，并把更新后的 Tiptap 文档写回文章。返回实际插入并落库的图片数。
 
@@ -968,6 +785,7 @@ def run_ai_format(
             builtin_variant=builtin_variant,
             format_model_selected=format_model_selected,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
 
     # 段1（短借连接）：读 + 第一道锁检查 + 拼提示词，随即归还连接
@@ -1024,6 +842,7 @@ def run_ai_format(
             heading_indices=heading_indices,
             max_images=max_images,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -1042,6 +861,7 @@ def run_ai_format_from_game_list(
     min_spacing: int | None,
     builtin_variant: str,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """确定性配图：拿显式游戏清单落图，不调 ai_format LLM、不提升标题。
 
@@ -1085,6 +905,7 @@ def run_ai_format_from_game_list(
             image_search_query=prep.image_search_query,
             max_images=max_images,
             out_diagnostics=fmt_diag,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -1101,6 +922,7 @@ def run_ai_format_from_game_list(
         out_diagnostics["anchored"] = len(positions)
         out_diagnostics["inserted"] = inserted
         out_diagnostics["missed"] = max(0, expected - inserted)
+        out_diagnostics["random_filled"] = int(fmt_diag.get("random_filled", 0) or 0)
         missed_games = list(fmt_diag.get("missed_games", []) or [])
         missed_games += [u["game"] for u in unmatched]
         out_diagnostics["missed_games"] = missed_games
@@ -1269,6 +1091,7 @@ def _ai_format_write_back(
     heading_indices: set[int],
     max_images: int | None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """段3（短借连接）：第二道锁检查 + 配图（仅快 DB）+ 写回三份正文 + 清锁，单 session。
 
@@ -1298,6 +1121,7 @@ def _ai_format_write_back(
                 image_search_query=None,
                 max_images=max_images,
                 out_diagnostics=image_diag,
+                random_fill_missed=random_fill_missed,
             )
 
         new_html, new_text = _derive_html_and_text(new_content_json)
@@ -1365,6 +1189,7 @@ def _run_ai_format_web_fallback(
     builtin_variant: str,
     format_model_selected: str | None = None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """web_fallback=True（AI配图 节点）多段式：慢 IO（LLM + 联网搜图下载）期间都不持 DB 连接（Task 1b）。
 
@@ -1447,6 +1272,7 @@ def _run_ai_format_web_fallback(
             image_search_query=prep.image_search_query,
             max_images=max_images,
             out_diagnostics=out_diagnostics,
+            random_fill_missed=random_fill_missed,
         )
     except Exception as exc:
         _ai_format_finalize_error(article_id, lock_started_at, exc)
@@ -1566,6 +1392,7 @@ def _web_fallback_collect_and_write_back(
     image_search_query: str | None,
     max_images: int | None,
     out_diagnostics: dict[str, Any] | None = None,
+    random_fill_missed: bool = False,
 ) -> int:
     """串起段3（决策，短借）→ 段4（下载，无连接）→ 段5（落库写回，短借）。
 
@@ -1636,6 +1463,7 @@ def _web_fallback_collect_and_write_back(
             max_images=max_images,
             prefetched_downloads=prefetched,
             out_diagnostics=image_diag,
+            random_fill_missed=random_fill_missed,
         )
 
         new_html, new_text = _derive_html_and_text(new_content_json_final)

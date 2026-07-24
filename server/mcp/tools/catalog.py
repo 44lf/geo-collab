@@ -51,6 +51,18 @@ async def _aget(path: str, *, params: dict[str, Any] | None = None) -> dict[str,
     return await anyio.to_thread.run_sync(_impl)
 
 
+async def _apost(path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
+    """同步 POST 丢线程池跑，避免阻塞事件循环（见模块 docstring 的自调用死锁说明）。"""
+
+    def _impl() -> dict[str, Any]:
+        try:
+            return _ok(_client().post(path, json=json))
+        except ApiError as exc:
+            return _fail(str(exc))
+
+    return await anyio.to_thread.run_sync(_impl)
+
+
 @mcp.tool()
 async def list_articles(
     status: str | None = None,
@@ -102,14 +114,23 @@ async def list_question_items(
 
 
 @mcp.tool()
-async def list_prompt_templates(scope: str = "generation") -> dict[str, Any]:
-    """List prompt templates filtered by scope.
+async def list_prompt_templates(
+    scope: str = "generation", platform: str | None = None
+) -> dict[str, Any]:
+    """List prompt templates filtered by scope, optionally by platform.
 
     Args:
         scope: One of "generation", "ai_format", "image_search", "image_companion".
                "generation" = article writing prompts (most common for Loops).
+        platform: Optional platform filter. Known values: xiaohongshu / toutiao /
+            wechat_mp. When given, returns that platform's templates plus generic
+            (platform=null) ones; when omitted, returns all. Each returned item
+            includes its `platform` field.
     """
-    return await _aget("/api/mcp/prompt-templates", params={"scope": scope})
+    params: dict[str, Any] = {"scope": scope}
+    if platform:
+        params["platform"] = platform
+    return await _aget("/api/mcp/prompt-templates", params=params)
 
 
 @mcp.tool()
@@ -221,3 +242,104 @@ async def list_stock_categories(
     if kind:
         params["kind"] = kind
     return await _aget("/api/mcp/stock-categories", params=params or None)
+
+
+@mcp.tool()
+async def list_skills(category: str | None = None) -> dict[str, Any]:
+    """List installable skill packages in GEO's Skill library.
+
+    Each entry is one installable package (a Skill record). Use its `slug`
+    with install_loop_skills(slug=...) to install it. `units` lists the
+    SKILL.md sub-skills the package expands into under .claude/skills/.
+
+    Args:
+        category: Optional business-category filter — one of
+            "generation" / "distribute" / "video" / "general".
+
+    Returns:
+        {"ok": True, "data": {"skills": [{id, slug, name, category,
+         is_official, current_version_label, file_count, total_bytes,
+         units:[str]}]}, "error": None}
+    """
+    params: dict[str, Any] = {}
+    if category:
+        params["category"] = category
+    return await _aget("/api/mcp/skills/catalog", params=params or None)
+
+
+@mcp.tool()
+async def pick_quality_references(
+    category: str | None = None, k: int | None = None
+) -> dict[str, Any]:
+    """取 1~k 篇同类高质量参考（服务端优先 external、随机、正文截断），供对抗判分对比。"""
+    params: dict[str, Any] = {"category": category}
+    if k is not None:
+        params["k"] = k
+    return await _aget("/api/quality-reference/pick", params=params)
+
+
+@mcp.tool()
+async def search_articles_by_title(
+    title: str,
+    review_status: str = "approved",
+    limit: int = 20,
+) -> dict[str, Any]:
+    """按标题关键词搜自有（站内）文章，主要用于挑一篇已审文章去 adopt_quality_reference 入高质量库。
+
+    Args:
+        title: 标题关键词（子串匹配，只搜标题）。
+        review_status: 默认 "approved"（只回能直接采纳的候选）；"pending" / "draft" 搜对应状态，
+            "all" 搜全部状态。
+        limit: 1–100，默认 20。
+
+    Returns:
+        {"ok": True, "data": {"items": [
+            {"id", "title", "review_status", "word_count",
+             "already_adopted": bool, "snippet": str, "created_at": str}
+        ]}, "error": None}
+
+    典型用法：先本工具拿到 id → 再 adopt_quality_reference(article_id=id) 入高质量库。
+    already_adopted=True 表示该文已在库、无需重复采纳。
+    """
+    params: dict[str, Any] = {
+        "title": title,
+        "review_status": review_status,
+        "limit": max(1, min(100, limit)),
+    }
+    return await _aget("/api/mcp/articles/search", params=params)
+
+
+@mcp.tool()
+async def list_game_tags(limit: int = 200) -> dict[str, Any]:
+    """List available game tags (with game_count) to pick topical取材 tags from.
+
+    Use before query_games_by_tags so you choose real tags, not invented ones.
+    """
+    return await _aget("/api/mcp/game-library/tags", params={"limit": max(1, min(1000, limit))})
+
+
+@mcp.tool()
+async def query_games_by_tags(
+    relevant_tags: list[str],
+    diversity_tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+    min_score: float | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Query real games from the library by tags, for on-topic取材.
+
+    relevant_tags gate admission (a game must match at least one). diversity_tags
+    only diversify ordering — they never admit off-topic games. Threshold checks
+    (>=N to skip WebSearch) count only the relevant-matched pool.
+    """
+    body: dict[str, Any] = {
+        "relevant_tags": relevant_tags,
+        "limit": max(1, min(100, limit)),
+    }
+    if diversity_tags:
+        body["diversity_tags"] = diversity_tags
+    if exclude_tags:
+        body["exclude_tags"] = exclude_tags
+    if min_score is not None:
+        body["min_score"] = min_score
+    return await _apost("/api/mcp/game-library/query", json=body)

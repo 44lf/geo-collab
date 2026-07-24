@@ -5,6 +5,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
+
 # 清华 pip 镜像加速；requirements 先装以利用层缓存
 COPY requirements.txt .
 RUN pip install --no-cache-dir \

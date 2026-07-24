@@ -2362,10 +2362,12 @@ option, optgroup {
 .imageLibraryCatName { font-size: 13px; font-weight: 500; color: var(--fg); }
 .imageLibraryCatBucket { font-size: 11px; color: var(--fg-3); margin-top: 2px; }
 
+.imageLibraryContent { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
 .imageLibraryGrid {
   flex: 1; overflow-y: auto; padding: 16px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 560px));
   gap: 12px; align-content: start;
   min-height: 0;
   scrollbar-width: thin;
@@ -2376,6 +2378,25 @@ option, optgroup {
 .imageLibraryGrid::-webkit-scrollbar-thumb { background: var(--hair-2); border-radius: 3px; }
 .imageLibraryGrid::-webkit-scrollbar-thumb:hover { background: var(--fg-3); }
 .imageLibraryEmpty { color: var(--fg-3); font-size: 13px; padding: 8px 14px; }
+
+.imageLibraryPagination {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--hair);
+}
+.imageLibraryPageBtn {
+  min-width: 30px; height: 30px; padding: 0 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--hair); border-radius: var(--r-sm);
+  background: var(--paper); color: var(--fg-2); cursor: pointer;
+  font-size: 13px; transition: background .1s, color .1s;
+}
+.imageLibraryPageBtn:hover:not(:disabled) { background: var(--hair); color: var(--fg); }
+.imageLibraryPageBtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.imageLibraryPageBtn:disabled { opacity: .4; cursor: default; }
+.imageLibraryPageGap { padding: 0 4px; color: var(--fg-3); }
+.imageLibraryPageInfo { margin-left: 10px; font-size: 12px; color: var(--fg-3); }
 
 .imageLibraryCardImg { position: relative; cursor: pointer; width: 100%; aspect-ratio: 1; overflow: hidden; background: var(--bg-2); }
 .imageLibraryCardImg img { width: 100%; height: 100%; object-fit: contain; object-position: center; display: block; }
@@ -3733,135 +3754,6 @@ option, optgroup {
   .lightboxInfo { width: 100%; }
   .formRow.split { grid-template-columns: 1fr; }
 }
-/* ═══════════════════════════════ HOT LISTS ═══════════════════════════════ */
-.hotDash { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-
-.hotHeader { flex-shrink: 0; padding-bottom: 18px; border-bottom: 1px solid var(--hair); }
-.hotHeaderTop { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
-.hotEyebrow {
-  font-size: 11px; letter-spacing: 2.8px; text-transform: uppercase;
-  color: var(--fg-3); font-weight: 500; margin-bottom: 14px;
-  display: flex; align-items: center; gap: 12px;
-}
-.hotEyebrow::before { content: ""; width: 22px; height: 1px; background: var(--fg-3); flex-shrink: 0; }
-.hotTitle {
-  font-family: var(--display); font-size: 42px; font-weight: 680;
-  letter-spacing: -1.4px; line-height: 1.06; color: var(--fg);
-}
-.hotSub { font-size: 13px; color: var(--fg-3); margin-top: 8px; }
-.hotControls { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-.hotSearch {
-  display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px;
-  background: var(--paper); border: 1px solid var(--hair-2); border-radius: var(--r);
-  width: 236px; color: var(--fg-3); transition: border-color .14s;
-}
-.hotSearch:focus-within { border-color: var(--fg-3); }
-.hotSearch input { flex: 1; min-width: 0; font-size: 13px; color: var(--fg); }
-.hotSearch input::placeholder { color: var(--fg-3); }
-
-.hotChips { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 20px; }
-.hotChip {
-  padding: 6px 15px; border-radius: 999px; font-size: 13px; color: var(--fg-2);
-  background: var(--paper); border: 1px solid var(--hair); transition: all .14s;
-}
-.hotChip:hover { border-color: var(--hair-2); background: var(--cream); }
-.hotChip.active { background: var(--fg); color: var(--paper); border-color: var(--fg); font-weight: 500; }
-
-.hotScroll { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 2px 8px; }
-.hotGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
-
-.hotCard {
-  display: flex; flex-direction: column; height: 432px; overflow: hidden;
-  background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-lg);
-}
-.hotCardHead {
-  display: flex; align-items: center; gap: 11px; padding: 13px 15px;
-  border-bottom: 1px solid var(--cream); flex-shrink: 0;
-}
-.hotLogo {
-  width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
-  display: grid; place-items: center; color: #fff; font-size: 15px; font-weight: 700;
-}
-.hotCardTitle { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.hotName {
-  font-size: 15px; font-weight: 600; color: var(--fg);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hotType {
-  font-size: 11.5px; color: var(--fg-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hotCardMeta { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
-.hotTime { font-size: 10.5px; color: var(--fg-3); white-space: nowrap; }
-.hotRefresh {
-  display: grid; place-items: center; width: 26px; height: 26px;
-  border-radius: var(--r-sm); color: var(--fg-3); transition: all .14s;
-}
-.hotRefresh:hover { color: var(--fg); background: var(--cream); }
-.hotRefresh.spinning svg, .hotSpin { animation: hotSpin .8s linear infinite; }
-@keyframes hotSpin { to { transform: rotate(360deg); } }
-
-.hotList { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; scrollbar-width: thin; }
-.hotList::-webkit-scrollbar { width: 5px; }
-.hotList::-webkit-scrollbar-track { background: transparent; }
-.hotList::-webkit-scrollbar-thumb { background: var(--hair-2); border-radius: 3px; }
-.hotList::-webkit-scrollbar-thumb:hover { background: var(--fg-3); }
-
-.hotItem {
-  display: flex; align-items: center; gap: 10px; padding: 8px;
-  border-radius: 8px; transition: background .12s;
-}
-.hotItem:hover { background: var(--cream); }
-.hotItem.top { background: #FBF7EF; }
-.hotRank {
-  width: 22px; height: 22px; flex-shrink: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 600; color: var(--hair-2);
-}
-.hotRank.r1, .hotRank.r2, .hotRank.r3 { border-radius: 6px; color: #fff; font-size: 12px; }
-.hotRank.r1 { background: var(--red); }
-.hotRank.r2 { background: #D07B3C; }
-.hotRank.r3 { background: var(--yellow); }
-.hotItemTitle {
-  flex: 1; min-width: 0; font-size: 13px; color: var(--fg-2);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hotItem.top .hotItemTitle { color: var(--fg); font-weight: 500; }
-.hotItemHot {
-  display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;
-  font-size: 11.5px; color: var(--fg-3);
-}
-.hotItemHot svg { color: #D07B3C; }
-
-.hotFoot {
-  flex-shrink: 0; display: flex; align-items: center;
-  padding: 10px 15px; border-top: 1px solid var(--cream);
-}
-.hotFootTime { font-size: 11px; color: var(--fg-3); }
-
-.hotState {
-  flex: 1; min-height: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 10px; padding: 20px;
-  text-align: center; color: var(--fg-3); font-size: 13px;
-}
-.hotRetry {
-  padding: 5px 14px; border-radius: var(--r-sm); border: 1px solid var(--hair-2);
-  background: var(--paper); color: var(--fg-2); font-size: 12px; transition: all .14s;
-}
-.hotRetry:hover { border-color: var(--fg-3); background: var(--cream); }
-
-.hotSkelRow {
-  height: 20px; margin: 9px 2px; border-radius: 5px;
-  background: linear-gradient(90deg, var(--cream) 25%, var(--cream-2) 37%, var(--cream) 63%);
-  background-size: 400% 100%; animation: hotShimmer 1.4s ease infinite;
-}
-@keyframes hotShimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
-
-.hotGlobalState {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 12px; padding: 80px 20px; color: var(--fg-3); font-size: 14px;
-}
-
 /* ═══════════════════════════════ MEDIA MATRIX V2 ═══════════════════════════════ */
 
 /* Pending Section */
@@ -5135,4 +5027,480 @@ option, optgroup {
   color: var(--red);
   background: var(--red-soft);
   border-color: rgba(248,113,113,0.25);
+}
+
+/* ── 视频库（只读画廊）：对齐图片库的暗色设计系统 ── */
+.videoLibrary { display: flex; flex-direction: column; height: 100%; }
+
+.videoLibraryCount {
+  margin-left: auto;
+  align-self: center;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+
+.videoLibraryGrid {
+  flex: 1; overflow-y: auto; padding: 16px 0 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 14px; align-content: start;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hair-2) transparent;
+}
+.videoLibraryGrid::-webkit-scrollbar { width: 5px; }
+.videoLibraryGrid::-webkit-scrollbar-track { background: transparent; }
+.videoLibraryGrid::-webkit-scrollbar-thumb { background: var(--hair-2); border-radius: 3px; }
+.videoLibraryGrid::-webkit-scrollbar-thumb:hover { background: var(--fg-3); }
+
+.videoLibraryCard {
+  position: relative;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--glass);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.videoLibraryCard:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 12px rgba(91,95,233,0.15);
+}
+
+.videoLibraryCardMedia {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  background: #000;
+}
+.videoLibraryCardMedia video {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+}
+.videoLibraryCardPlaceholder {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 6px; padding: 16px;
+  text-align: center;
+  background: var(--bg-2);
+  color: var(--fg-3);
+  font-size: 12px; line-height: 1.5;
+}
+.videoLibraryCardPlaceholder.isFailed { color: var(--red); }
+
+.videoLibraryBadge {
+  position: absolute; top: 8px; left: 8px; z-index: 2;
+  font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 6px;
+  backdrop-filter: blur(4px);
+}
+.videoLibraryBadge--done { background: var(--green-soft); color: var(--green); }
+.videoLibraryBadge--failed { background: var(--red-soft); color: var(--red); }
+
+.videoLibraryCardInfo {
+  padding: 10px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.videoLibraryCardTitle {
+  margin: 0;
+  font-size: 13px; font-weight: 600;
+  color: var(--fg); line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.videoLibraryCardArticle {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0; border: none; background: none;
+  font-size: 11px; color: var(--accent-deep);
+  cursor: pointer; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.videoLibraryCardArticle:hover { text-decoration: underline; }
+.videoLibraryCardTags { display: flex; flex-wrap: wrap; gap: 3px; }
+.videoLibraryTag {
+  font-size: 10px; padding: 1px 5px; border-radius: 3px;
+  background: var(--accent-soft); color: var(--accent-deep);
+}
+.videoLibraryCardMeta { font-size: 11px; color: var(--fg-3); }
+.videoLibraryCardDownloads { display: flex; gap: 14px; margin-top: 1px; }
+.videoLibraryCardDownloads a { font-size: 12px; color: var(--accent-deep); }
+.videoLibraryCardDownloads a:hover { text-decoration: underline; }
+
+.videoLibraryEmptyState {
+  grid-column: 1 / -1;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 60px 20px;
+  color: var(--fg-3);
+}
+.videoLibraryEmptyTitle { font-size: 14px; font-weight: 500; color: var(--fg-2); }
+.videoLibraryEmptyState > p:not(.videoLibraryEmptyTitle) { font-size: 12px; }
+
+.videoLibraryFooter {
+  grid-column: 1 / -1;
+  display: flex; justify-content: center;
+  padding: 12px 0 4px;
+}
+.videoLibraryLoadingText { font-size: 13px; color: var(--fg-3); }
+
+.videoLibraryCardSkeleton {
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  aspect-ratio: 9 / 16;
+  background: linear-gradient(90deg, var(--cream-2) 25%, var(--cream) 50%, var(--cream-2) 75%);
+  background-size: 200% 100%;
+  animation: imgSkeletonShimmer 1.4s ease-in-out infinite;
+}
+
+/* ── 游戏库 v2（gl* 命名，对齐 demo.pen）───────────────────────────── */
+.glPage {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-height: 100%;
+  padding: 0;
+  background: #0D1020;
+  color: #F5F7FF;
+}
+.glHeader { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+.glTitleZone { display: flex; flex-direction: column; }
+.glTitleRow { display: flex; align-items: center; gap: 14px; }
+.glCount {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border-radius: 6px;
+  background: #24283B; border: 1px solid #2A2E45;
+  font-size: 12px; color: #8D94AE;
+}
+.glCount b { font-size: 13px; font-weight: 700; color: #A99BFF; }
+.glActions { display: flex; align-items: center; gap: 10px; }
+.glSearch {
+  display: flex; align-items: center; gap: 9px;
+  width: 380px; height: 46px; padding: 0 16px;
+  background: #141827; border: 1px solid #2A2E45; border-radius: 8px;
+  color: #8D94AE;
+}
+.glSearch input {
+  flex: 1; min-width: 0; border: none; background: transparent;
+  color: #F5F7FF; font-size: 14px; outline: none;
+}
+.glSearch input::placeholder { color: #596179; }
+.glSortSelect {
+  height: 46px; padding: 0 16px; border-radius: 8px;
+  background: #161A29; border: 1px solid #2A2E45; color: #F5F7FF;
+  font-size: 13px; cursor: pointer;
+}
+
+.glHeaderBtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 46px; padding: 0 16px; border-radius: 8px;
+  font-size: 14px; font-weight: 700; white-space: nowrap;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.glHeaderBtn:hover:not(:disabled) { background: #232A40; }
+.glHeaderBtn:disabled { cursor: not-allowed; opacity: .6; }
+/* 新建 / 编辑 / 陪衬抓取 共用同一中性底；删除是唯一的破坏性强调色 */
+.glHeaderBtnDelete { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glHeaderBtnDelete:hover:not(:disabled) { background: #351B2B; }
+
+.glIngestFlyoutWrap { position: relative; }
+.glIngestFlyout {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 588px; height: 54px; padding: 0 14px;
+  background: #151827; border: 1px solid #2A2E45; border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .33);
+}
+.glIngestFlyoutLeft { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.glIngestFlyoutTextGroup { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.glIngestFlyoutTitle { font-size: 13px; font-weight: 800; color: #F5F7FF; }
+.glIngestFlyoutSub { font-size: 11px; color: #8D94AE; white-space: nowrap; }
+.glIngestFlyoutRight { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.glIngestToggle {
+  position: relative; display: flex; align-items: center;
+  width: 36px; height: 20px; padding: 2px; justify-content: flex-start;
+  background: #2A2E45; border: none; border-radius: 10px; cursor: pointer;
+  transition: background .15s;
+}
+.glIngestToggle:disabled { cursor: not-allowed; opacity: .7; }
+.glIngestToggleOn { background: #4F46E5; justify-content: flex-end; }
+.glIngestToggleKnob { width: 16px; height: 16px; border-radius: 50%; background: #fff; display: block; }
+.glIngestFlyoutTime { font-size: 11px; color: #C8CFFF; white-space: nowrap; }
+.glIngestFlyoutSummary {
+  font-size: 11px; color: #8D94AE; white-space: nowrap;
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis;
+}
+.glIngestConfigBtn {
+  height: 28px; padding: 0 10px; border-radius: 6px;
+  background: #262145; border: 1px solid #5B45BC; color: #E6E0FF;
+  font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
+}
+.glIngestConfigBtn:hover { background: #2E2856; }
+
+.glIngestModalBody { display: flex; flex-direction: column; gap: 16px; padding: 18px 20px; }
+.glIngestModalToggleRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.glIngestModalGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.glIngestModalRunRow { display: flex; gap: 10px; }
+.glIngestModalRunRow button { flex: 1; }
+.glIngestModalSummary {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-top: 12px; border-top: 1px solid var(--hair);
+}
+.glIngestModalSummaryText { margin: 0; font-size: 12px; color: var(--fg-3); word-break: break-all; }
+
+.glBody { display: flex; gap: 18px; flex: 1; min-height: 0; }
+.glLeft { display: flex; flex-direction: column; gap: 14px; width: 245px; flex-shrink: 0; }
+.glRight { display: flex; flex-direction: column; gap: 18px; flex: 1; min-width: 0; }
+.glDetailLoading {
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45; color: #8D94AE; font-size: 14px;
+}
+
+.glGroupSwitch {
+  display: flex; gap: 6px; height: 44px; padding: 4px; flex-shrink: 0;
+  background: #151827; border: 1px solid #2A2E45; border-radius: 10px;
+}
+.glSegBtn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid #242A40; border-radius: 7px; background: #111523;
+  color: #9FA8C7; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.glSegBtn.active { background: #2B2650; border-color: #6B5CE7; color: #F5F7FF; }
+.glSegCount { font-size: 11px; opacity: 0.8; }
+.glList {
+  display: flex; flex-direction: column; gap: 2px;
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 12px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45;
+}
+.glRow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer; text-align: left;
+  background: transparent; border: 1px solid #22283C;
+}
+.glRow.active { background: #2B2650; border-color: #6B5CE7; }
+.glRowIcon {
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: 8px;
+  object-fit: cover; border: 1px solid #39405B; background: #252A3E;
+}
+.glRowIconFallback {
+  display: flex; align-items: center; justify-content: center;
+  color: #F5F7FF; font-size: 16px; font-weight: 700;
+}
+.glRowMain { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.glRowTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.glRowName {
+  font-size: 13px; font-weight: 800; color: #F5F7FF;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glRowScore { font-size: 10px; color: #A99BFF; flex-shrink: 0; }
+.glRowBottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.glRowTags {
+  font-size: 11px; color: #8D94AE;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glRowUse { font-size: 10px; color: #596179; flex-shrink: 0; }
+.glListEmpty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 40px 12px; color: #8D94AE; text-align: center;
+}
+.glListEmpty p { margin: 0; font-size: 14px; }
+.glListEmpty span { font-size: 12px; color: #596179; }
+.glPager {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 8px 6px 2px;
+}
+.glPagerBtn {
+  height: 30px; padding: 0 12px; border-radius: 7px;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glPagerBtn:hover:not(:disabled) { background: #232A40; }
+.glPagerBtn:disabled { cursor: not-allowed; opacity: .45; }
+.glPagerInfo { font-size: 12px; color: #8D94AE; min-width: 56px; text-align: center; }
+
+/* 抓取运行日志弹窗 */
+.glLogBody { display: flex; flex-direction: column; gap: 10px; }
+.glLogEmpty {
+  padding: 32px 16px; text-align: center; font-size: 13px; color: #8D94AE;
+  border: 1px dashed #2A2E45; border-radius: 10px;
+}
+.glLogCard {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px; border-radius: 10px;
+  background: #171B2A; border: 1px solid #262B40;
+}
+.glLogCardHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.glLogBadge {
+  padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: #23263C; border: 1px solid #3A3E5C; color: #C9CFEA;
+}
+.glLogTime { font-size: 12px; color: #8D94AE; }
+.glLogMsg { font-size: 13px; color: #DDE2F5; line-height: 1.5; }
+.glLogChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.glLogChip {
+  padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 700;
+  background: #1B2032; border: 1px solid #2A2E45; color: #B7BEDA;
+}
+.glLogChip-refreshed { background: #14261C; border-color: #2E6B45; color: #9AE6B4; }
+.glLogChip-created { background: #14261C; border-color: #2E6B45; color: #9AE6B4; }
+.glLogChip-not_found { background: #2A2413; border-color: #6B5A2E; color: #E6D79A; }
+.glLogChip-culled { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogChip-error { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogChip-cap { background: #2A1622; border-color: #7F2D46; color: #FFBAC4; }
+.glLogToggle {
+  align-self: flex-start; padding: 0; background: none; border: none;
+  color: #A99BFF; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glLogDetailRow {
+  display: flex; gap: 8px; align-items: baseline;
+  padding-top: 6px; border-top: 1px dashed #262B40;
+}
+.glLogDetailLabel { flex: 0 0 auto; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+.glLogDetailNames { font-size: 12px; color: #B7BEDA; line-height: 1.6; word-break: break-all; }
+.glLogMore {
+  align-self: center; height: 30px; padding: 0 16px; border-radius: 7px;
+  background: #1B2032; border: 1px solid #2A2E45; color: #DDE2F5;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.glLogMore:hover:not(:disabled) { background: #232A40; }
+.glLogMore:disabled { cursor: not-allowed; opacity: .5; }
+
+.glCard {
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 22px; border-radius: 10px;
+  background: #151827; border: 1px solid #2A2E45;
+}
+.glCardTop { display: flex; justify-content: space-between; gap: 16px; }
+.glCardId { display: flex; gap: 16px; min-width: 0; }
+.glCardIcon {
+  width: 64px; height: 64px; flex-shrink: 0; border-radius: 12px;
+  object-fit: cover; border: 1px solid #424864; background: #252A3E; font-size: 24px;
+}
+.glCardIdText { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.glCardNameRow { display: flex; align-items: center; gap: 8px; }
+.glCardNameRow h2 { margin: 0; font-size: 22px; font-weight: 800; color: #F5F7FF; }
+.glBadgeInactive {
+  padding: 2px 8px; border-radius: 6px; font-size: 11px;
+  background: #3A1C2A; border: 1px solid #7F2D46; color: #F87171;
+}
+.glCardTags { display: flex; flex-wrap: wrap; gap: 6px; }
+.glChip {
+  padding: 3px 10px; border-radius: 6px; font-size: 11px;
+  background: #222638; color: #B9C0D8;
+}
+.glCardScore { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+.glBigScore { font-size: 64px; font-weight: 700; line-height: 1; color: #A99BFF; }
+.glScoreCap { font-size: 12px; color: #8D94AE; }
+.glScoreMetrics { display: flex; gap: 14px; font-size: 11px; color: #8D94AE; }
+.glStatusBar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  height: 38px; padding: 0 12px; border-radius: 8px;
+  background: #11172A; border: 1px solid #303854;
+}
+.glStatusLeft { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #D9D4FF; }
+.glStatusLeft svg { color: #A99BFF; flex-shrink: 0; }
+.glStatusRight { font-size: 11px; color: #596179; }
+.glMetricRow { display: flex; gap: 10px; }
+.glMetricTile {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border-radius: 8px;
+  background: #191D2D; border: 1px solid #2A2E45;
+}
+.glMetricLabel { font-size: 12px; font-weight: 700; color: #AEB7D4; }
+.glMetricValue {
+  font-size: 16px; font-weight: 800; color: #F5F7FF;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glMetricSub { font-size: 11px; color: #596179; }
+.glDesc { margin: 0; font-size: 14px; line-height: 1.5; color: #C3CAE1; }
+.glCardBottom {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-top: 14px; border-top: 1px solid #252B40;
+}
+.glCardBottomLeft { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.glPill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700;
+  background: #201D3B; border: 1px solid #6556D9; color: #DED9FF;
+}
+.glMeta { font-size: 11px; color: #596179; }
+
+.glMaterialRow { display: flex; gap: 18px; align-items: stretch; }
+.glShots {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px;
+  padding: 18px; border-radius: 10px; background: #151827; border: 1px solid #2A2E45;
+}
+.glShotsHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.glShotsTitle { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; color: #F5F7FF; }
+.glShotsBadge { padding: 1px 8px; border-radius: 6px; font-size: 11px; background: #222638; color: #B9C0D8; }
+.glUploadBtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 14px; border-radius: 8px; border: none;
+  background: #8B5CF6; color: #F5F7FF; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.glUploadBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.glShotsGrid { display: flex; flex-wrap: wrap; gap: 12px; }
+.glShotCard {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 260px; padding: 8px; border-radius: 8px;
+  background: #191D2D; border: 1px solid #2A2E45;
+}
+.glShotThumb { position: relative; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; cursor: pointer; }
+.glShotThumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.glShotDel {
+  position: absolute; top: 4px; right: 4px;
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px; border: none;
+  background: rgba(10,12,20,0.7); color: #F87171; cursor: pointer;
+}
+.glShotName {
+  font-size: 10px; color: #8D94AE;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.glShotsEmpty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 30px; color: #8D94AE; text-align: center; font-size: 12px;
+}
+.glShotsPager {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding-top: 4px;
+}
+.glShotsPagerBtn {
+  min-width: 30px; height: 30px; padding: 0 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid #2A2E45; border-radius: 6px;
+  background: #191D2D; color: #B9C0D8; cursor: pointer;
+  font-size: 13px; transition: background .1s, color .1s;
+}
+.glShotsPagerBtn:hover:not(:disabled) { background: #222638; color: #F5F7FF; }
+.glShotsPagerBtn.active { background: #8B5CF6; color: #F5F7FF; border-color: #8B5CF6; }
+.glShotsPagerBtn:disabled { opacity: .4; cursor: default; }
+.glShotsPagerGap { padding: 0 4px; color: #8D94AE; }
+.glShotsPagerInfo { margin-left: 10px; font-size: 12px; color: #8D94AE; }
+.glSourceTable {
+  width: 420px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-radius: 10px; overflow: hidden; background: #151827; border: 1px solid #2A2E45;
+}
+.glSourceHead { height: 44px; display: flex; align-items: center; padding: 0 14px; background: #1A1E2E; font-size: 14px; font-weight: 800; color: #F5F7FF; }
+.glSourceRow { display: flex; align-items: center; min-height: 38px; padding: 8px 14px; gap: 10px; border-top: 1px solid #252B40; }
+.glSourceKey { width: 145px; flex-shrink: 0; font-size: 11px; color: #596179; }
+.glSourceVal { flex: 1; min-width: 0; font-size: 12px; color: #CDD4EE; word-break: break-all; }
+.glLightbox {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(6,8,16,0.86); padding: 40px;
+}
+.glLightboxImg { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+.glLightboxClose {
+  position: absolute; top: 24px; right: 24px;
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.08); color: #F5F7FF; cursor: pointer;
 }

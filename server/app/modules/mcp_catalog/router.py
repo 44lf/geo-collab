@@ -24,6 +24,7 @@ from server.app.modules.ai_generation.schemas import (
 )
 from server.app.modules.articles import get_article as svc_get_article
 from server.app.modules.articles import list_articles as svc_list_articles
+from server.app.modules.articles import search_by_title as svc_search_by_title
 from server.app.modules.articles.schemas import (
     ArticleListRead,
     ArticleRead,
@@ -33,6 +34,7 @@ from server.app.modules.image_library.models import StockCategory, StockImage
 from server.app.modules.pipelines.models import Pipeline
 from server.app.modules.prompt_templates.schemas import PromptScope, PromptTemplateRead
 from server.app.modules.prompt_templates.service import list_prompt_templates as svc_list_templates
+from server.app.modules.quality_reference.models import QualityReference
 from server.app.modules.tasks.models import PublishRecord
 
 router = APIRouter(dependencies=[Depends(require_mcp_token)])
@@ -90,7 +92,48 @@ def mcp_list_articles(
     ]
 
 
-@router.get("/articles/{article_id}", response_model=ArticleRead)
+_SEARCH_SNIPPET_CHARS = 100
+
+
+@router.get("/articles/search")
+def mcp_search_articles_by_title(
+    title: str = Query(...),
+    review_status: str = Query(default="approved"),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """[MCP] 按标题搜自有文章，主要给 adopt_quality_reference 挑候选。
+
+    默认只回 approved；review_status="all" 放开全部状态。返回带 already_adopted / snippet。
+    """
+    svc_rs = None if review_status == "all" else review_status
+    articles = svc_search_by_title(db, title=title, review_status=svc_rs, limit=limit)
+    if not articles:
+        return {"items": []}
+    ids = [a.id for a in articles]
+    adopted = {
+        aid
+        for (aid,) in db.execute(
+            select(QualityReference.article_id).where(QualityReference.article_id.in_(ids))
+        ).all()
+    }
+    return {
+        "items": [
+            {
+                "id": a.id,
+                "title": a.title,
+                "review_status": a.review_status,
+                "word_count": a.word_count,
+                "already_adopted": a.id in adopted,
+                "snippet": (a.plain_text or "")[:_SEARCH_SNIPPET_CHARS],
+                "created_at": a.created_at,
+            }
+            for a in articles
+        ]
+    }
+
+
+@router.get("/articles/{article_id:int}", response_model=ArticleRead)
 def mcp_get_article(article_id: int, db: Session = Depends(get_db)) -> ArticleRead:
     """[MCP] 取单篇文章详情。"""
     article = svc_get_article(db, article_id)
@@ -147,10 +190,14 @@ def mcp_list_question_items(
 @router.get("/prompt-templates", response_model=list[PromptTemplateRead])
 def mcp_list_prompt_templates(
     scope: PromptScope | None = Query(default=None),
+    platform: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[PromptTemplateRead]:
-    """[MCP] 列提示词模板：仅排除软删，且只返回"启用"的（关闭模板不递给 Loop）。"""
-    templates = svc_list_templates(db, scope=scope, enabled_only=True)
+    """[MCP] 列提示词模板：仅排除软删，且只返回"启用"的（关闭模板不递给 Loop）。
+
+    platform 传入时按「该 platform 专属 或 通用」过滤；不传返回全部平台。
+    """
+    templates = svc_list_templates(db, scope=scope, enabled_only=True, platform=platform)
     return [PromptTemplateRead.model_validate(t) for t in templates]
 
 
@@ -246,4 +293,46 @@ def mcp_list_stock_categories(
             image_count=int(image_count),
         )
         for cat, image_count in rows
+    ]
+
+
+# ── stock-images ──────────────────────────────────────────────────────────
+
+
+class StockImageBrief(BaseModel):
+    asset_id: int
+    filename: str
+    tags: list[str]
+    url: str
+    w: int | None
+    h: int | None
+
+
+@router.get("/stock-images", response_model=list[StockImageBrief])
+def mcp_list_stock_images(
+    category_id: int = Query(...),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[StockImageBrief]:
+    """[MCP] 列某栏目下的图，供 Claude 在 storyboard 里点名 asset_id。
+
+    只返回轻量字段（含 filename/tags 供无像素判断选图）。url 是公开代理地址。
+    """
+    rows = (
+        db.query(StockImage)
+        .filter(StockImage.category_id == category_id)
+        .order_by(StockImage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        StockImageBrief(
+            asset_id=img.id,
+            filename=img.filename,
+            tags=img.tags or [],
+            url=f"/api/stock-images/{img.id}/file",
+            w=img.width,
+            h=img.height,
+        )
+        for img in rows
     ]

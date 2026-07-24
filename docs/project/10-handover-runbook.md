@@ -19,9 +19,9 @@
 ## 2. 交接清单
 
 ### 2.1 代码与文档
-- [ ] 仓库访问权限（GitHub）已转移/授予
-- [ ] `CLAUDE.md`、`AI_GENERATION.md`、`DEPLOYMENT.md`、本 `doc/` 已通读
-- [ ] CI（`.github/workflows/ci.yml`）与分支保护设置已知悉
+- [ ] 仓库访问权限（GitLab `hlgit`；GitHub 仅历史备份）已转移/授予
+- [ ] `CLAUDE.md`、`docs/AI_GENERATION.md`、`docs/DEPLOYMENT.md`、本 `doc/` 已通读
+- [ ] CI（GitLab `.gitlab-ci.yml` + `ci/deploy.gitlab-ci.yml`）与分支保护设置已知悉
 
 ### 2.2 凭据与密钥（经安全渠道移交，勿写进文档/仓库）
 - [ ] `GEO_JWT_SECRET`（生产）
@@ -36,7 +36,7 @@
 - [ ] 生产服务器信息（IP、规格、机房）
 - [ ] 域名 / 证书 / HTTPS（确认 `GEO_SECURE_COOKIE=true`）
 - [ ] 各平台运营账号清单与归属（账号登录态在 `browser_states/`）
-- [ ] 备份 cron 正在运行且已验证可恢复（`DEPLOYMENT.md §7`）
+- [ ] 备份 cron 正在运行且已验证可恢复（`docs/DEPLOYMENT.md §7`）
 
 ### 2.4 知识
 - [ ] 头条自动化选择器现状（平台 DOM 会变，见 `CLAUDE.md → Toutiao`）
@@ -48,7 +48,7 @@
 
 | 场景 | 去哪 |
 |------|------|
-| 部署/重启/备份恢复 | [07 部署运维](./07-deployment-operations.md) + `DEPLOYMENT.md` |
+| 部署/重启/备份恢复 | [07 部署运维](./07-deployment-operations.md) + `docs/DEPLOYMENT.md` |
 | 某接口怎么调 | [05 API 接口](./05-api-reference.md) 或 `/docs` |
 | 发布卡住/状态含义 | [02 §5 状态机](./02-product-design.md) + [03 §5 执行引擎](./03-technical-architecture.md) |
 | 加平台/加模块 | [06 开发指南 §4/§5](./06-development-guide.md) |
@@ -63,7 +63,7 @@
 2. **Day 2**：在 staging 跑一次完整发布（建任务 → execute → 看 SSE/记录），体验人工接管闭环。
 3. **Day 3**：读 `tasks/executor.py` + `runner.py` + `drivers/toutiao.py`（系统最复杂处）。
 4. **Day 4**：跑测试（[08](./08-testing.md)），改一个小 bug 走通 PR + CI。
-5. **Day 5**：通读 AI 生文模块（[09](./09-ai-capability-research.md) + `AI_GENERATION.md`）。
+5. **Day 5**：通读 AI 生文模块（[09](./09-ai-capability-research.md) + `docs/AI_GENERATION.md`）。
 
 ---
 

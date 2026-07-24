@@ -19,6 +19,7 @@ import contextvars
 import logging
 import logging.handlers
 import sys
+import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
@@ -57,6 +58,45 @@ def clear_run_context() -> None:
     _run_id.set(None)
     _pipeline_id.set(None)
     _node_label.set(None)
+
+
+# ── 运行级 token 累加器 ───────────────────────────────────────────────────────
+# 各 LLM 调用点（写作 / 配图）按当前 run_id（contextvar，跨 submit_in_context 的子线程可见）
+# 累加 token；执行器在运行结束时 pop 出来打一行汇总。仅日志用途，不入库、不上前端。
+_run_tokens: dict[int, dict[str, int]] = {}
+_run_tokens_lock = threading.Lock()
+
+
+def add_run_tokens(
+    kind: str,
+    *,
+    prompt: int | None = None,
+    completion: int | None = None,
+    total: int | None = None,
+) -> None:
+    """把一次 LLM 调用的 token 累加到当前运行。kind ∈ {'write','illustrate'}。
+
+    无运行上下文（方案运行 / MCP 直调等，run_id 未绑定）时静默跳过——只服务 pipeline 运行汇总。
+    None 一律按 0 处理，绝不因缺 usage 抛错。线程安全（子线程经 submit_in_context 拿到同一 run_id）。
+    """
+    rid = _run_id.get()
+    if rid is None:
+        return
+    p, c, t = int(prompt or 0), int(completion or 0), int(total or 0)
+    with _run_tokens_lock:
+        e = _run_tokens.setdefault(
+            rid, {"write": 0, "illustrate": 0, "prompt": 0, "completion": 0, "calls": 0}
+        )
+        e[kind] = e.get(kind, 0) + t
+        e["prompt"] += p
+        e["completion"] += c
+        e["calls"] += 1
+
+
+def pop_run_tokens(run_id: int) -> dict[str, int] | None:
+    """取出并清除该运行累计的 token（运行结束时调；顺带防内存泄漏）。无累计返回 None。"""
+    with _run_tokens_lock:
+        return _run_tokens.pop(run_id, None)
 
 
 class RunContextFilter(logging.Filter):

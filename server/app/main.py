@@ -38,6 +38,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import server.app.modules.game_library.models  # noqa: F401  (register Game/GameTag tables)
+import server.app.modules.quality_reference.models  # noqa: F401  (register QualityReference table)
+import server.app.modules.video.models  # noqa: F401  (register VideoJob table)
+import server.app.modules.xhs_cards.models  # noqa: F401  (register XhsRenderJob table)
 from server.app.core.config import get_settings
 from server.app.core.limiter import limiter
 from server.app.core.logging import configure_logging
@@ -57,7 +61,8 @@ from server.app.modules.articles.router import (
 )
 from server.app.modules.audit.router import router as audit_router
 from server.app.modules.auto_review.router import router as auto_review_router
-from server.app.modules.hot_lists.router import router as hot_lists_router
+from server.app.modules.feishu.router import h5_auth_router, h5_public_router
+from server.app.modules.image_library.mcp_router import image_mcp_router
 from server.app.modules.image_library.router import files_router as stock_files_router
 from server.app.modules.image_library.router import router as stock_images_router
 from server.app.modules.loop_skills.router import (
@@ -65,6 +70,10 @@ from server.app.modules.loop_skills.router import (
 )
 from server.app.modules.loop_skills.router import (
     router as loop_skills_user_router,
+)
+from server.app.modules.loop_skills.skill_router import (
+    skills_mcp_router,
+    skills_user_router,
 )
 from server.app.modules.mcp_catalog.connect_router import (
     mcp_connect_health_router,
@@ -74,12 +83,24 @@ from server.app.modules.mcp_catalog.router import router as mcp_catalog_router
 from server.app.modules.performance.router import router as performance_router
 from server.app.modules.pipelines.router import router as pipelines_router
 from server.app.modules.prompt_templates.router import router as prompt_templates_router
+from server.app.modules.quality_reference.images_router import quality_reference_images_router
+from server.app.modules.quality_reference.import_router import quality_reference_import_router
+from server.app.modules.quality_reference.mcp_router import quality_reference_mcp_router
+from server.app.modules.quality_reference.router import quality_reference_router
+from server.app.modules.report.router import report_mcp_router
+from server.app.modules.report.router import router as report_router
 from server.app.modules.system.auth_router import router as auth_router
 from server.app.modules.system.models import User
 from server.app.modules.system.system_router import mcp_system_router
 from server.app.modules.system.system_router import router as system_router
 from server.app.modules.system.users_router import router as users_router
 from server.app.modules.tasks.router import publish_records_router, tasks_mcp_router, tasks_router
+from server.app.modules.video.router import video_files_router, video_list_router, video_mcp_router
+from server.app.modules.xhs_cards.router import (
+    xhs_files_router,
+    xhs_gallery_router,
+    xhs_mcp_router,
+)
 from server.app.shared.errors import AccountError, ClientError, ConflictError, ValidationError
 
 # PyInstaller 打包后 sys._MEIPASS 指向解压目录
@@ -217,6 +238,15 @@ def create_app() -> FastAPI:
         prefix="/api/mcp",
         tags=["mcp-catalog"],
     )
+    from server.app.modules.game_library.router import game_library_mcp_router
+
+    app.include_router(game_library_mcp_router)
+    # 游戏库前台只读浏览 + 导入/抓取配置（user JWT 鉴权）
+    from server.app.modules.game_library import router_web as _game_library_web
+    from server.app.modules.game_library.router_web import game_library_web_router
+
+    _game_library_web.bg_session_factory = SessionLocal
+    app.include_router(game_library_web_router)
     # MCP 接入指引（前端「MCP 接入」tab 用）
     # user JWT 鉴权（与 system_router 等 user-JWT 路由同一组依赖）
     app.include_router(
@@ -238,6 +268,15 @@ def create_app() -> FastAPI:
         prefix="/api/mcp",
         tags=["loop-skills-mcp"],
     )
+    # 多 skill 库（Task 6）—— user JWT 鉴权
+    app.include_router(
+        skills_user_router,
+        prefix="/api/mcp",
+        tags=["skills"],
+        dependencies=[Depends(get_current_user)],
+    )
+    # MCP token 鉴权 (router 自带 dependency)
+    app.include_router(skills_mcp_router, prefix="/api/mcp", tags=["skills-mcp"])
     # MCP token 鉴权（router 自带 dependency）
     app.include_router(
         mcp_connect_health_router,
@@ -255,6 +294,24 @@ def create_app() -> FastAPI:
         tags=["articles-mcp"],
         # 不挂 get_current_user — MCP token 在 endpoint 内单独校验
     )
+    app.include_router(
+        video_mcp_router,
+        prefix="/api/videos",
+        tags=["video-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验（router 自带 dependency）
+    )
+    app.include_router(
+        xhs_mcp_router,
+        prefix="/api/xhs-cards",
+        tags=["xhs-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验（router 自带 dependency）
+    )
+    app.include_router(
+        image_mcp_router,
+        prefix="/api/mcp",
+        tags=["image-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验（router 自带 dependency）
+    )
     # auto_review 走 /api/articles 前缀（与现有 article 路由同前缀，由 MCP token 单独鉴权）
     app.include_router(
         auto_review_router,
@@ -268,6 +325,25 @@ def create_app() -> FastAPI:
         performance_router,
         prefix="/api",
         tags=["performance"],
+    )
+    # quality_reference MCP 端点：GET /pick + POST /articles/{id}/adversarial-score
+    # （与用户 JWT 的 quality_reference_router 是两个独立 router 实例，同挂 /api，路径不重叠）
+    app.include_router(
+        quality_reference_mcp_router,
+        prefix="/api",
+        tags=["quality-reference-mcp"],
+    )
+    # qref 外部参考异步导入（MCP token）：POST /import-external + GET /import-jobs/{id}
+    app.include_router(
+        quality_reference_import_router,
+        prefix="/api",
+        tags=["quality-reference-mcp"],
+    )
+    # qref 图片公开只读代理：GET /images/{id}（内链渲染用，无鉴权，仿 stock-images）
+    app.include_router(
+        quality_reference_images_router,
+        prefix="/api",
+        tags=["quality-reference-images"],
     )
 
     # 注册 API 路由模块（全部需要 JWT cookie 鉴权）
@@ -359,6 +435,17 @@ def create_app() -> FastAPI:
         dependencies=[Depends(get_current_user)],
     )
     app.include_router(stock_files_router, prefix="/api/stock-images", tags=["stock-images"])
+    app.include_router(video_files_router, prefix="/api/videos", tags=["video-files"])
+    app.include_router(video_list_router, prefix="/api/videos", tags=["videos"])
+    app.include_router(xhs_files_router, prefix="/api/xhs-cards", tags=["xhs-files"])
+    app.include_router(xhs_gallery_router, prefix="/api/xhs-cards", tags=["xhs-gallery"])
+    app.include_router(h5_public_router, prefix="/api/feishu", tags=["feishu"])
+    app.include_router(
+        h5_auth_router,
+        prefix="/api/feishu",
+        tags=["feishu"],
+        dependencies=[Depends(get_current_user)],
+    )
     app.include_router(
         audit_router,
         prefix="/api/audit-logs",
@@ -366,15 +453,27 @@ def create_app() -> FastAPI:
         dependencies=[Depends(get_current_user)],
     )
     app.include_router(
-        hot_lists_router,
-        prefix="/api/hot-lists",
-        tags=["hot-lists"],
+        report_router,
+        prefix="/api/report-events",
+        tags=["report-events"],
         dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        report_mcp_router,
+        prefix="/api/report-events",
+        tags=["report-events-mcp"],
+        # 不挂 get_current_user — MCP token 在 endpoint 内单独校验
     )
     app.include_router(
         ai_models_router,
         prefix="/api/ai-models",
         tags=["ai-models"],
+        dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        quality_reference_router,
+        prefix="/api/quality-reference",
+        tags=["quality-reference"],
         dependencies=[Depends(get_current_user)],
     )
 
@@ -387,6 +486,36 @@ def create_app() -> FastAPI:
     import server.app.modules.pipelines.router as _pipelines_routes
 
     _pipelines_routes.bg_session_factory = SessionLocal
+
+    # 为 video 合成后台线程提供 SessionLocal（spawn_video_job 读的是 service 里这个变量）
+    import server.app.modules.video.service as _video_service
+
+    _video_service.bg_session_factory = SessionLocal
+
+    # 为小红书卡片渲染后台线程提供 SessionLocal（spawn_render_job 读的是 service 里这个变量）
+    import server.app.modules.xhs_cards.service as _xhs_service
+
+    _xhs_service.bg_session_factory = SessionLocal
+
+    # 小红书样式库预览预热：当前版本缓存不全时后台自动渲一轮，样式库常态秒开、不用手点。
+    # best-effort（不碰 DB、单飞锁幂等、失败静默），不阻塞启动。需 chromium（base 镜像已有）。
+    # 开关默认开；测试环境（build_test_app 设 false）关掉，避免每次建 app 都起真 chromium 渲染。
+    import os as _os
+
+    if _os.environ.get("GEO_XHS_PREVIEW_PREWARM_ENABLED", "true").lower() in ("1", "true", "yes"):
+        try:
+            import server.app.modules.xhs_cards.previews as _xhs_previews
+
+            _xhs_previews.ensure_prewarmed()
+        except Exception:  # noqa: BLE001 — 预热失败不致命
+            import logging as _logging
+
+            _logging.getLogger(__name__).exception("小红书样式库预览预热启动失败")
+
+    # qref 外部参考导入后台线程（spawn_import_job 读 import_job 里这个变量）
+    import server.app.modules.quality_reference.import_job as _qref_import_job
+
+    _qref_import_job.bg_session_factory = SessionLocal
 
     # 问题池定时镜像同步：仅在 GEO_QUESTION_POOL_AUTO_SYNC_ENABLED=true 时启动后台线程。
     # 默认关闭，测试 / 本地不会打真实飞书。启动失败只记日志，不致命。
@@ -408,6 +537,25 @@ def create_app() -> FastAPI:
         import logging as _logging
 
         _logging.getLogger(__name__).exception("start_pipeline_scheduler failed")
+
+    try:
+        from server.app.modules.game_library.scheduler import start_game_ingest
+
+        start_game_ingest(SessionLocal)
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).exception("start_game_ingest failed")
+
+    # Plan B 扩库（应用宝榜单发现）定时线程，与补全巡检同 env 总闸、独立进程内锁。
+    try:
+        from server.app.modules.game_library.planb.discovery_scheduler import start_game_discovery
+
+        start_game_discovery(SessionLocal)
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger(__name__).exception("start_game_discovery failed")
 
     # TapTap cookie 体检：GEO_TAPTAP_COOKIE_CHECK_ENABLED=true 时启动后台线程，纯 HTTP 探
     # account-profile/v1/me，失效则置 expired + 飞书喊人重登（不自动登录）。失败只记日志、不致命。

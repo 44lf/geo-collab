@@ -1,0 +1,134 @@
+# Geo Collab 新栈生产编排（并行栈，项目名 geo-ci）。镜像裸名由 deploy.sh 从
+# 本地 registry 拉取后 retag；版本由 SERVER_VERSION / WEB_VERSION 注入。
+# 数据 bind 挂载 ./data/，与老栈物理隔离。切勿 down -v、切勿删 ./data。
+# 发布 worker 单实例，不要 --scale worker=N。
+# registry 服务必须常驻——CI 部署依赖它接收 skopeo 推送、deploy.sh 从它拉取；若曾 `docker compose down`（会停 registry），下次部署前需先 `docker compose up -d registry`。
+services:
+  registry:
+    image: registry:2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"          # 仅回环，不对公网暴露
+    volumes:
+      - ./data/registry:/var/lib/registry
+
+  mysql:
+    image: mysql:8.0
+    command: ["--max-connections=200"]
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?required}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-geo_collab}
+      MYSQL_USER: ${MYSQL_USER:-geo_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?required}
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
+    volumes:
+      - ./data/minio:/data
+
+  dailyhot-api:
+    image: geo-dailyhot:latest
+    restart: unless-stopped
+
+  migrate:
+    image: geo-collab-server:${SERVER_VERSION:?required}
+    profiles: ["tools"]
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      GEO_DB_HOST: mysql
+      GEO_DB_PORT: 3306
+      GEO_DB_USER: ${MYSQL_USER:-geo_user}
+      GEO_DB_PASS: ${MYSQL_PASSWORD}
+      GEO_DB_NAME: ${MYSQL_DATABASE:-geo_collab}
+      GEO_DATA_DIR: /app/data
+
+  app:
+    image: geo-collab-server:${SERVER_VERSION:?required}
+    restart: unless-stopped
+    command: >
+      sh -c "python -m server.scripts.seed_users &&
+             uvicorn server.app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      dailyhot-api:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      GEO_DB_HOST: mysql
+      GEO_DB_PORT: 3306
+      GEO_DB_USER: ${MYSQL_USER:-geo_user}
+      GEO_DB_PASS: ${MYSQL_PASSWORD}
+      GEO_DB_NAME: ${MYSQL_DATABASE:-geo_collab}
+      GEO_DATA_DIR: /app/data
+      GEO_NGINX_ACCEL: "1"
+      GEO_HOTLIST_API_URL: http://dailyhot-api:6688
+      GEO_MINIO_ENDPOINT: minio:9000
+      GEO_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      GEO_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      # 钉死回环，避免阿里云 ECS 无 hairpin NAT 时 MCP 自调用超时
+      GEO_MCP_INTERNAL_API_URL: http://127.0.0.1:8000
+    volumes:
+      - ./data/app:/app/data
+
+  worker:
+    image: geo-collab-server:${SERVER_VERSION:?required}
+    restart: unless-stopped
+    init: true
+    command: ["python", "-m", "server.worker.executor"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      GEO_DB_HOST: mysql
+      GEO_DB_PORT: 3306
+      GEO_DB_USER: ${MYSQL_USER:-geo_user}
+      GEO_DB_PASS: ${MYSQL_PASSWORD}
+      GEO_DB_NAME: ${MYSQL_DATABASE:-geo_collab}
+      GEO_DATA_DIR: /app/data
+      GEO_MINIO_ENDPOINT: minio:9000
+      GEO_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      GEO_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      GEO_PUBLISH_NOVNC_WEB_DIR: /usr/share/novnc
+      GEO_PUBLISH_REMOTE_BROWSER_HOST: 0.0.0.0
+      GEO_PUBLISH_XVFB_PATH: Xvfb
+      GEO_PUBLISH_X11VNC_PATH: x11vnc
+      GEO_PUBLISH_WEBSOCKIFY_PATH: websockify
+    volumes:
+      - ./data/app:/app/data
+
+  nginx:
+    image: geo-collab-web:${WEB_VERSION:?required}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8081}:80"          # 高端口，避开老栈占用的 80
+    depends_on:
+      - app
+      - worker
+    volumes:
+      - ./data/app:/app_data:ro

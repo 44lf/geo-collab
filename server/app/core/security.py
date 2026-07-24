@@ -56,6 +56,21 @@ def create_access_token(user_id: int, role: str) -> str:
     return jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
+def set_access_cookie(response, token: str) -> None:
+    """把 access_token 写成 httpOnly cookie。login 与飞书免登共用，保证标志一致。"""
+    from server.app.core.config import get_settings
+
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        max_age=_get_jwt_expire_hours() * 3600,
+        secure=get_settings().secure_cookie,
+    )
+
+
 def verify_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM])

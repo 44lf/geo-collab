@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from server.app.core import config as core_config
+from server.app.modules.mcp_catalog.connect_router import MCP_TOOLS_COUNT
 from server.tests.utils import build_test_app
 
 pytestmark = pytest.mark.mysql
@@ -23,9 +24,26 @@ def test_status_returns_configured_true_when_token_set(monkeypatch):
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["configured"] is True
-        assert body["tools_count"] == 21
+        # 实时内省数（len(tools)）应与 MCP_TOOLS_COUNT 常量同步；绑定常量避免此前
+        # 硬编码 27 那样的 stale drift（工具增到 29/30 后该断言一直静默红、CI 又禁跑）。
+        assert body["tools_count"] == MCP_TOOLS_COUNT
         assert body["suggested_base_url"].startswith("http")
         assert not body["suggested_base_url"].endswith("/")
+    finally:
+        test_app.cleanup()
+        core_config.get_settings.cache_clear()
+
+
+def test_status_honors_x_forwarded_proto_https(monkeypatch):
+    """反代（边缘 nginx 终止 TLS）场景：带 X-Forwarded-Proto: https 时
+    suggested_base_url 应还原成 https://，而非后端连接的 http://。"""
+    monkeypatch.setenv("GEO_MCP_TOKEN", "test-token-abc")
+    core_config.get_settings.cache_clear()
+    test_app = build_test_app(monkeypatch)
+    try:
+        resp = test_app.client.get("/api/mcp/status", headers={"X-Forwarded-Proto": "https"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["suggested_base_url"].startswith("https://")
     finally:
         test_app.cleanup()
         core_config.get_settings.cache_clear()

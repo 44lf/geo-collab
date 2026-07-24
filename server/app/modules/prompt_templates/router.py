@@ -93,6 +93,7 @@ def create_prompt_template_route(
         scope=payload.scope,
         user_id=current_user.id,
         is_system=payload.is_system,
+        platform=payload.platform,
     )
     add_audit_entry(
         db,
@@ -126,6 +127,7 @@ def update_prompt_template_route(
         content=payload.content,
         scope=payload.scope,
         is_system=payload.is_system,
+        platform=payload.platform,
     )
     add_audit_entry(
         db,

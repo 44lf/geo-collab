@@ -441,6 +441,291 @@ def test_save_from_mcp_stamps_loop_agent_and_template_name(monkeypatch):
         test_app.cleanup()
 
 
+def test_save_snapshots_single_question_provenance(monkeypatch):
+    """save-from-mcp 落库要快照单题溯源：source_question_category/source_question_texts。
+
+    对抗评审质量门 Task 7（spec §13.1 决策）：本期只存单题，不加 question_item_ids 参数、
+    不改 orchestrator——快照直接取所查得 QuestionItem 的 category/question_text。
+    """
+    from server.app.modules.ai_generation.models import QuestionItem, QuestionPool
+    from server.app.modules.articles.models import Article
+    from server.app.modules.prompt_templates.models import PromptTemplate
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        with test_app.session_factory() as db:
+            pool = QuestionPool(name="test-pool", user_id=test_app.admin_id)
+            db.add(pool)
+            db.commit()
+            db.refresh(pool)
+            item = QuestionItem(
+                pool_id=pool.id,
+                record_id="rec-provenance-1",
+                fields={},
+                question_text="怎么开店",
+                category="餐厅",
+                source_active=True,
+                status="pending",
+            )
+            db.add(item)
+            tpl = PromptTemplate(
+                name="provenance-tpl",
+                content="写：{{问题}}",
+                scope="generation",
+                user_id=test_app.admin_id,
+                is_enabled=True,
+            )
+            db.add(tpl)
+            db.commit()
+            db.refresh(item)
+            db.refresh(tpl)
+            qid, tpl_id = item.id, tpl.id
+
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "question_item_id": qid,
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": "T",
+                "markdown_content": "正文",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        article_id = r.json()["article_id"]
+
+        with test_app.session_factory() as db:
+            article = db.query(Article).filter(Article.id == article_id).first()
+            assert article is not None
+            assert article.source_question_category == "餐厅"
+            assert article.source_question_texts == ["怎么开店"]
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_xhs_no_question(monkeypatch):
+    """无 question_item_id + content_type=xhs_image_text → 落库 pending，content_type/metrics 正确写入。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": "小红书图文A",
+                "markdown_content": "![封面](/api/xhs-cards/file/abc/cover)\n\n正文文案\n\n#标签",
+                "content_type": "xhs_image_text",
+                "source_article_id": 123,
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        aid = r.json()["article_id"]
+        with test_app.session_factory() as db:
+            art = db.get(Article, aid)
+            assert art is not None
+            assert art.review_status == "pending"
+            assert art.content_type == "xhs_image_text"
+            assert (art.metrics or {}).get("source_article_id") == 123
+            assert art.source_question_category is None
+            assert art.source_question_texts is None
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_xhs_without_source_article(monkeypatch):
+    """游戏来源单图图文：无 source_article_id、无 question_item_id → 落库 pending，
+    content_type 正确，metrics 不含 source_article_id。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": "梦想城镇同款宝藏游戏",
+                "markdown_content": "![](/api/stock-images/1/file)\n\n正文文案\n\n#梦想城镇 #适合女生玩的游戏",
+                "content_type": "xhs_image_text",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        aid = r.json()["article_id"]
+        with test_app.session_factory() as db:
+            art = db.get(Article, aid)
+            assert art is not None
+            assert art.review_status == "pending"
+            assert art.content_type == "xhs_image_text"
+            assert "source_article_id" not in (art.metrics or {})
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_xhs_rejects_title_over_20(monkeypatch):
+    """小红书图文标题 >20 字 → 400（小红书发布强制 ≤20，从机制上入库时挡住），不落库。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        # 超过 20 汉字上限
+        long_title = "梦幻家园三消装扮经营三线并行养成手游超长标题一"
+        assert len(long_title) > 20
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": long_title,
+                "markdown_content": "正文\n\n#标签",
+                "content_type": "xhs_image_text",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 400, r.text
+        assert "20" in r.json()["detail"]
+        with test_app.session_factory() as db:
+            assert db.query(Article).count() == 0
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_xhs_accepts_title_exactly_20(monkeypatch):
+    """恰好 20 字（含首尾空格 strip 后）→ 落库成功；上限是含 20、非 <20。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        title_20 = "梦幻家园三消装扮经营养成手游推荐榜前二十"
+        assert len(title_20) == 20
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": f"  {title_20}  ",  # 前后空格 strip 后仍 20
+                "markdown_content": "正文\n\n#标签",
+                "content_type": "xhs_image_text",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        with test_app.session_factory() as db:
+            assert db.query(Article).count() == 1
+
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_non_xhs_title_over_20_ok(monkeypatch):
+    """非小红书内容（普通 loop 文章）标题 >20 不受此限：头条/公众号允许长标题。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        qid, tpl_id = _seed_question_and_template(test_app)
+
+        long_title = "这是一个远超二十个汉字的普通头条文章标题应当被允许通过不受小红书限制"
+        assert len(long_title) > 20
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "question_item_id": qid,
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": long_title,
+                "markdown_content": "正文",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 200, r.text
+        with test_app.session_factory() as db:
+            assert db.query(Article).count() == 1
+    finally:
+        test_app.cleanup()
+
+
+def test_save_from_mcp_rejects_unknown_content_type(monkeypatch):
+    """content_type 不在白名单内 → 400，不落库。"""
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+
+        _item_id, tpl_id = _seed_question_and_template(test_app)
+
+        r = test_app.client.post(
+            "/api/articles/save-from-mcp",
+            json={
+                "prompt_template_id": tpl_id,
+                "user_id": test_app.admin_id,
+                "title": "未知类型",
+                "markdown_content": "正文",
+                "content_type": "bogus",
+            },
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert r.status_code == 400, r.text
+        assert "content_type" in r.json()["detail"]
+        with test_app.session_factory() as db:
+            assert db.query(Article).count() == 0
+    finally:
+        test_app.cleanup()
+
+
 def test_save_from_mcp_without_model_label_leaves_metrics_clean(monkeypatch):
     """model_label 不传时 article.metrics 不该被强写 None/空键，保持 None/{} 原状。"""
     from server.app.modules.articles.models import Article
@@ -474,3 +759,15 @@ def test_save_from_mcp_without_model_label_leaves_metrics_clean(monkeypatch):
             assert "writer_model" not in metrics
     finally:
         test_app.cleanup()
+
+
+def test_escape_hashtag_headings():
+    from server.app.modules.ai_generation.markdown_sanitizer import escape_hashtag_headings
+
+    # 无空格 hashtag → 转义首 #（保号、不再当标题）
+    assert escape_hashtag_headings("#打工人 #平价好物") == "\#打工人 #平价好物"
+    assert escape_hashtag_headings("正文\n#标签") == "正文\n\#标签"
+    # 合法标题（# 后有空格）不动
+    assert escape_hashtag_headings("## 正常标题") == "## 正常标题"
+    assert escape_hashtag_headings("# 标题") == "# 标题"
+    assert escape_hashtag_headings("no hash here") == "no hash here"

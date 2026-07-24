@@ -9,21 +9,31 @@ from pydantic import BaseModel, ConfigDict, Field
 # image_search（百度搜图关键词）/ image_companion（陪衬游戏插图提示词）见 ai_format 配图链路
 PromptScope = Literal["generation", "ai_format", "image_search", "image_companion"]
 
+# platform 是与 scope 正交的新维度：已知取值收敛在此处；service 层另有
+# VALID_PROMPT_PLATFORMS 做运行时校验，两处需保持一致。None=通用（跨平台适用）。
+PromptPlatform = Literal["xiaohongshu", "toutiao", "wechat_mp"]
+
 
 class PromptTemplateCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1)
     scope: PromptScope = "generation"
     is_system: bool = False
+    platform: PromptPlatform | None = None
 
 
 class PromptTemplateUpdate(BaseModel):
-    """全量更新（PUT）：name/content 必填覆盖；scope/is_system 为 None 时保持原值不动。"""
+    """全量更新（PUT）：name/content 必填覆盖；scope/is_system 为 None 时保持原值不动。
+
+    platform 例外：直接应用（非"None=保持原值"的惯例），空/None → 置为通用，
+    这样才能把已设置的平台专属模板改回通用。
+    """
 
     name: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1)
     scope: PromptScope | None = None
     is_system: bool | None = None
+    platform: PromptPlatform | None = None
 
 
 class PromptTemplateRead(BaseModel):
@@ -31,6 +41,7 @@ class PromptTemplateRead(BaseModel):
     name: str
     content: str
     scope: str
+    platform: str | None
     user_id: int | None
     is_system: bool
     is_enabled: bool
