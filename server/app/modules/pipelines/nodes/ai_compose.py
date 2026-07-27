@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from server.app.core.logging import submit_in_context
 from server.app.modules.ai_generation.article_writer import generate_article_from_prompt
-from server.app.modules.ai_generation.scheme_executor import _pick_valid_template
+from server.app.modules.ai_generation.runtime_templates import pick_valid_template
 from server.app.modules.pipelines.nodes.base import NodeResult, NodeRunContext, register
 from server.app.modules.pipelines.nodes.daily_group_stream import make_group_streamer
 from server.app.shared.errors import ValidationError
@@ -90,7 +90,7 @@ def _run_units(
         # 每篇运行时从该单元允许模板里随机挑一个有效的（每线程自建会话）
         db = ctx.session_factory()
         try:
-            tpl = _pick_valid_template(db, tpl_ids, ctx.user_id) if tpl_ids else None
+            tpl = pick_valid_template(db, tpl_ids, ctx.user_id) if tpl_ids else None
             if tpl is None:
                 raise ValidationError("该单元允许模板在运行时全部无效或未配置")
             template_content = tpl.content
@@ -174,7 +174,7 @@ def run_ai_compose(ctx: NodeRunContext) -> NodeResult:
         # 每篇运行时从允许模板里随机挑一个有效的（每个线程自建会话）
         db = ctx.session_factory()
         try:
-            tpl = _pick_valid_template(db, template_ids, ctx.user_id)
+            tpl = pick_valid_template(db, template_ids, ctx.user_id)
             if tpl is None:
                 raise ValidationError("允许的提示词模板在运行时全部无效")
             template_content = tpl.content

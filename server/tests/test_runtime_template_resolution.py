@@ -13,6 +13,8 @@ owner/定时（主体=非 admin）运行仍隔离失败——这是既定取舍�
 LiteLLM 不出网：节点级用例 stub 掉 generate_article_from_prompt。
 """
 
+import random
+
 import pytest
 
 from server.tests.utils import build_test_app, create_extra_user
@@ -114,7 +116,7 @@ def test_get_runtime_prompt_template_role_aware(monkeypatch):
 def test_pick_valid_template_role_aware(monkeypatch):
     app = build_test_app(monkeypatch)
     try:
-        from server.app.modules.ai_generation.scheme_executor import _pick_valid_template
+        from server.app.modules.ai_generation.runtime_templates import pick_valid_template
 
         admin_id = app.admin_id
         owner_id, _ = create_extra_user(app, "owner")
@@ -123,16 +125,36 @@ def test_pick_valid_template_role_aware(monkeypatch):
         tpl = _mk_template(app, user_id=owner_id)
 
         with app.session_factory() as db:
-            assert _pick_valid_template(db, [tpl], admin_id) is not None  # admin 跨属主
-            assert _pick_valid_template(db, [tpl], third_id) is None  # 非 admin 隔离
-            assert _pick_valid_template(db, [tpl], owner_id) is not None  # 属主本人
+            assert pick_valid_template(db, [tpl], admin_id) is not None  # admin 跨属主
+            assert pick_valid_template(db, [tpl], third_id) is None  # 非 admin 隔离
+            assert pick_valid_template(db, [tpl], owner_id) is not None  # 属主本人
 
         # is_enabled 复核仍在：停用 / 软删候选即便 admin 也跳过
         disabled = _mk_template(app, user_id=owner_id, is_enabled=False)
         deleted = _mk_template(app, user_id=owner_id, is_deleted=True)
         with app.session_factory() as db:
-            assert _pick_valid_template(db, [disabled], admin_id) is None
-            assert _pick_valid_template(db, [deleted], admin_id) is None
+            assert pick_valid_template(db, [disabled], admin_id) is None
+            assert pick_valid_template(db, [deleted], admin_id) is None
+    finally:
+        app.cleanup()
+
+
+@pytest.mark.mysql
+def test_pick_valid_template_deduplicates_and_preserves_candidate_order(monkeypatch):
+    """重复候选不会改变基于固定随机源的模板选择。"""
+    app = build_test_app(monkeypatch)
+    try:
+        from server.app.modules.ai_generation.runtime_templates import pick_valid_template
+
+        first = _mk_template(app, user_id=app.admin_id, name="first")
+        second = _mk_template(app, user_id=app.admin_id, name="second")
+        with app.session_factory() as db:
+            result = pick_valid_template(
+                db, [first, first, second], user_id=app.admin_id, rng=random.Random(7)
+            )
+
+        assert result is not None
+        assert result.id in {first, second}
     finally:
         app.cleanup()
 
