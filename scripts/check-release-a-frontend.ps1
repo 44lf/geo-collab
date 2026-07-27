@@ -22,6 +22,10 @@ if ($modal -notmatch '(?:function\s+handleClose|const\s+handleClose)' -or $modal
 if ($modal -notmatch 'createPendingRef\.current') {
   throw "question source create submission has no synchronous duplicate guard"
 }
+$notifyChangedPattern = '(?s)async\s+function\s+notifyChanged\s*\(\s*cycle\s*:\s*number\s*\)\s*\{.*?await\s+reload\s*\(\s*cycle\s*\)\s*;\s*if\s*\(\s*!isActiveCycle\s*\(\s*cycle\s*\)\s*\)\s*return\s*;\s*try\s*\{\s*await\s+onChanged\s*\(\s*\)\s*;'
+if ($modal -notmatch $notifyChangedPattern) {
+  throw "question source callback can run after its open cycle is stale"
+}
 $pendingDisabledCount = ([regex]::Matches($modal, 'disabled=\{createPending\}')).Count
 if ($pendingDisabledCount -lt 5) {
   throw "question source create controls are not disabled while pending"

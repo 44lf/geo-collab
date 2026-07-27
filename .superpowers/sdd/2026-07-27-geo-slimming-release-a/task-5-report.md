@@ -195,3 +195,25 @@ Modified:
 | `pnpm --filter @geo/web build` | PASS; Vite transformed 1860 modules. |
 | `pnpm --filter @geo/web format:check` | Expected remaining baseline failure: 84 files after the scoped Task 5 formatting pass. |
 | `git diff --check` | PASS. |
+
+## Review Fix Round 2 (2026-07-27)
+
+- `notifyChanged(cycle)` now checks `isActiveCycle(cycle)` immediately after its awaited local
+  reload and returns before it can call the parent `onChanged`. This prevents a closed/reopened
+  manager's old mutation from starting the parent `refreshQuestionPools` callback and overwriting
+  a newer editor state. The entry-refresh failure toast remains inside the `try` that begins only
+  after this guard, so it represents a callback that was actually invoked and rejected.
+- The static assertion now matches the full required ordering inside `notifyChanged`: awaited
+  `reload(cycle)`, stale-cycle return, then `try { await onChanged() }`. TDD red proof used an
+  in-memory version of the modal with that return removed; the enhanced assertion rejected it.
+  No temporary source files or mutations were retained.
+
+| Gate | Result |
+| --- | --- |
+| In-memory stale-guard removal | PASS red proof: the enhanced static assertion failed as expected. |
+| Scoped Prettier for all 10 Task 5 paths | PASS (`--ignore-unknown` for the PowerShell script). |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-release-a-frontend.ps1` | PASS. |
+| `pnpm --filter @geo/web lint` | PASS: 0 errors, 13 existing warnings. |
+| `pnpm --filter @geo/web typecheck` | PASS. |
+| `pnpm --filter @geo/web build` | PASS; Vite transformed 1860 modules. |
+| `git diff --check` | PASS. |

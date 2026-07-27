@@ -126,6 +126,7 @@ export function QuestionPoolManagerModal({
 
   async function notifyChanged(cycle: number) {
     await reload(cycle);
+    if (!isActiveCycle(cycle)) return;
     try {
       await onChanged();
     } catch (error) {
