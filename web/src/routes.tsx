@@ -10,16 +10,22 @@ import type { PromptScope, ReviewStatus } from "./types";
 // 各工作区仍走代码分割懒加载（动态 import → 独立 chunk）；
 // RootLayout 的 <Outlet/> 外层有统一 <Suspense> 兜住加载态。
 const AgentManagementWorkspace = lazy(() =>
-  import("./features/pipelines/AgentManagementWorkspace").then((m) => ({ default: m.AgentManagementWorkspace })),
+  import("./features/pipelines/AgentManagementWorkspace").then((m) => ({
+    default: m.AgentManagementWorkspace,
+  })),
 );
 const GameLibraryWorkspace = lazy(() =>
-  import("./features/game-library/GameLibraryWorkspace").then((m) => ({ default: m.GameLibraryWorkspace })),
+  import("./features/game-library/GameLibraryWorkspace").then((m) => ({
+    default: m.GameLibraryWorkspace,
+  })),
 );
 const ContentWorkspace = lazy(() =>
   import("./features/content/ContentWorkspace").then((m) => ({ default: m.ContentWorkspace })),
 );
 const PromptsWorkspace = lazy(() =>
-  import("./features/prompt-templates/PromptsWorkspace").then((m) => ({ default: m.PromptsWorkspace })),
+  import("./features/prompt-templates/PromptsWorkspace").then((m) => ({
+    default: m.PromptsWorkspace,
+  })),
 );
 const AccountsWorkspace = lazy(() =>
   import("./features/accounts/AccountsWorkspace").then((m) => ({ default: m.AccountsWorkspace })),
@@ -51,7 +57,9 @@ const QualityReferenceWorkspace = lazy(() =>
   })),
 );
 const XhsStyleGallery = lazy(() =>
-  import("./features/prompt-templates/XhsStyleGallery").then((m) => ({ default: m.XhsStyleGallery })),
+  import("./features/prompt-templates/XhsStyleGallery").then((m) => ({
+    default: m.XhsStyleGallery,
+  })),
 );
 
 // admin 专属页守卫：非 admin 直接重定向回默认页（RootLayout 已保证此处必有登录用户）。
@@ -72,7 +80,10 @@ function ContentRoute() {
   // 永久链接非法（非数字 / 0 / 负 / 非整数）→ 回落内容管理，避免静默空白。
   // 合法但不存在的 id 交给 ContentWorkspace 内 getArticle 走 404 toast。
   const parsedId = articleId !== undefined ? Number(articleId) : undefined;
-  if (articleId !== undefined && (parsedId === undefined || !Number.isInteger(parsedId) || parsedId <= 0)) {
+  if (
+    articleId !== undefined &&
+    (parsedId === undefined || !Number.isInteger(parsedId) || parsedId <= 0)
+  ) {
     return <Navigate to="/content" replace />;
   }
   return (

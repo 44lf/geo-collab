@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import {
   createQuestionPool,
@@ -63,69 +63,133 @@ export function QuestionPoolManagerModal({
   const [editForm, setEditForm] = useState<PoolForm>(EMPTY_FORM);
   const [syncingId, setSyncingId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [createPending, setCreatePending] = useState(false);
+  const openCycleRef = useRef(0);
+  const activeCycleRef = useRef<number | null>(null);
+  const createPendingRef = useRef<number | null>(null);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      setPools(await listQuestionPools());
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "加载问题源失败", "error");
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+  const isActiveCycle = useCallback(
+    (cycle: number) => openCycleRef.current === cycle && activeCycleRef.current === cycle,
+    [],
+  );
+
+  const resetTransientState = useCallback(() => {
+    setPools([]);
+    setLoading(false);
+    setCreating(false);
+    setCreateForm(EMPTY_BINDING_FORM);
+    setEditingId(null);
+    setEditForm(EMPTY_FORM);
+    setSyncingId(null);
+    setBusyId(null);
+    setCreatePending(false);
+    createPendingRef.current = null;
+  }, []);
+
+  const handleClose = useCallback(() => {
+    // Invalidate in-flight work before the parent applies `open={false}`. This also
+    // closes the tiny render/effect gap if the modal is immediately reopened.
+    activeCycleRef.current = null;
+    openCycleRef.current += 1;
+    resetTransientState();
+    onClose();
+  }, [onClose, resetTransientState]);
+
+  const reload = useCallback(
+    async (cycle: number) => {
+      if (openCycleRef.current !== cycle || !isActiveCycle(cycle)) return;
+      setLoading(true);
+      try {
+        const nextPools = await listQuestionPools();
+        if (!isActiveCycle(cycle)) return;
+        setPools(nextPools);
+      } catch (error) {
+        if (isActiveCycle(cycle)) {
+          toast(error instanceof Error ? error.message : "加载问题源失败", "error");
+        }
+      } finally {
+        if (isActiveCycle(cycle)) setLoading(false);
+      }
+    },
+    [isActiveCycle, toast],
+  );
 
   useEffect(() => {
-    if (open) void reload();
-  }, [open, reload]);
+    const cycle = ++openCycleRef.current;
+    activeCycleRef.current = open ? cycle : null;
+    resetTransientState();
+    if (open) void reload(cycle);
+    return () => {
+      if (activeCycleRef.current === cycle) activeCycleRef.current = null;
+    };
+  }, [open, reload, resetTransientState]);
 
-  async function notifyChanged() {
-    await reload();
+  async function notifyChanged(cycle: number) {
+    await reload(cycle);
     try {
       await onChanged();
     } catch (error) {
-      toast(
-        error instanceof Error
-          ? `问题源已更新，但入口刷新失败：${error.message}`
-          : "问题源已更新，但入口刷新失败",
-        "error",
-      );
+      if (isActiveCycle(cycle)) {
+        toast(
+          error instanceof Error
+            ? `问题源已更新，但入口刷新失败：${error.message}`
+            : "问题源已更新，但入口刷新失败",
+          "error",
+        );
+      }
     }
   }
 
   async function handleCreate() {
+    const cycle = activeCycleRef.current;
+    if (cycle === null || createPendingRef.current === cycle) return;
     if (!createForm.name.trim()) {
       toast("请填写问题源名称", "error");
       return;
     }
+    createPendingRef.current = cycle;
+    setCreatePending(true);
     try {
       await createQuestionPool({
         name: createForm.name.trim(),
         feishu_app_token: createForm.feishu_app_token.trim() || undefined,
         feishu_table_id: createForm.feishu_table_id.trim() || undefined,
       });
-      setCreateForm(EMPTY_BINDING_FORM);
-      setCreating(false);
-      toast("已创建问题源", "success");
-      await notifyChanged();
+      if (isActiveCycle(cycle)) {
+        setCreateForm(EMPTY_BINDING_FORM);
+        setCreating(false);
+        toast("已创建问题源", "success");
+      }
+      await notifyChanged(cycle);
     } catch (error) {
-      toast(error instanceof Error ? error.message : "创建失败", "error");
+      if (isActiveCycle(cycle)) {
+        toast(error instanceof Error ? error.message : "创建失败", "error");
+      }
+    } finally {
+      if (createPendingRef.current === cycle) createPendingRef.current = null;
+      if (isActiveCycle(cycle)) setCreatePending(false);
     }
   }
 
   async function handleSync(pool: QuestionPool) {
+    const cycle = activeCycleRef.current;
+    if (cycle === null) return;
     setSyncingId(pool.id);
     try {
       const result = await syncQuestionPool(pool.id);
-      toast(
-        `同步完成：新增 ${result.added}、更新 ${result.updated}、恢复 ${result.reactivated}、失效 ${result.deactivated}`,
-        "success",
-      );
-      await notifyChanged();
+      if (isActiveCycle(cycle)) {
+        toast(
+          `同步完成：新增 ${result.added}、更新 ${result.updated}、恢复 ${result.reactivated}、失效 ${result.deactivated}`,
+          "success",
+        );
+      }
+      await notifyChanged(cycle);
     } catch (error) {
-      toast(error instanceof Error ? error.message : "同步失败", "error");
+      if (isActiveCycle(cycle)) {
+        toast(error instanceof Error ? error.message : "同步失败", "error");
+      }
     } finally {
-      setSyncingId(null);
+      if (isActiveCycle(cycle)) setSyncingId(null);
     }
   }
 
@@ -140,6 +204,8 @@ export function QuestionPoolManagerModal({
   }
 
   async function handleSave(poolId: number) {
+    const cycle = activeCycleRef.current;
+    if (cycle === null) return;
     const name = editForm.name.trim();
     if (!name) {
       toast("问题源名称不能为空", "error");
@@ -153,17 +219,23 @@ export function QuestionPoolManagerModal({
         feishu_table_id: editForm.feishu_table_id.trim(),
         auto_sync_enabled: editForm.auto_sync_enabled,
       });
-      cancelEdit();
-      toast("问题源设置已保存", "success");
-      await notifyChanged();
+      if (isActiveCycle(cycle)) {
+        cancelEdit();
+        toast("问题源设置已保存", "success");
+      }
+      await notifyChanged(cycle);
     } catch (error) {
-      toast(error instanceof Error ? error.message : "保存失败", "error");
+      if (isActiveCycle(cycle)) {
+        toast(error instanceof Error ? error.message : "保存失败", "error");
+      }
     } finally {
-      setBusyId(null);
+      if (isActiveCycle(cycle)) setBusyId(null);
     }
   }
 
   async function handleAutoSync(pool: QuestionPool) {
+    const cycle = activeCycleRef.current;
+    if (cycle === null) return;
     setBusyId(pool.id);
     try {
       await updateQuestionPool(pool.id, {
@@ -172,33 +244,41 @@ export function QuestionPoolManagerModal({
         feishu_table_id: pool.feishu_table_id ?? "",
         auto_sync_enabled: !pool.auto_sync_enabled,
       });
-      toast(`自动同步已${pool.auto_sync_enabled ? "关闭" : "开启"}`, "success");
-      await notifyChanged();
+      if (isActiveCycle(cycle)) {
+        toast(`自动同步已${pool.auto_sync_enabled ? "关闭" : "开启"}`, "success");
+      }
+      await notifyChanged(cycle);
     } catch (error) {
-      toast(error instanceof Error ? error.message : "更新自动同步失败", "error");
+      if (isActiveCycle(cycle)) {
+        toast(error instanceof Error ? error.message : "更新自动同步失败", "error");
+      }
     } finally {
-      setBusyId(null);
+      if (isActiveCycle(cycle)) setBusyId(null);
     }
   }
 
   async function handleDelete(pool: QuestionPool) {
     if (!window.confirm(`确定删除问题源「${pool.name}」？删除后所有人都将看不到它。`)) return;
+    const cycle = activeCycleRef.current;
+    if (cycle === null) return;
     setBusyId(pool.id);
     try {
       await deleteQuestionPool(pool.id);
-      toast("已删除问题源", "success");
-      await notifyChanged();
+      if (isActiveCycle(cycle)) toast("已删除问题源", "success");
+      await notifyChanged(cycle);
     } catch (error) {
-      toast(error instanceof Error ? error.message : "删除失败", "error");
+      if (isActiveCycle(cycle)) {
+        toast(error instanceof Error ? error.message : "删除失败", "error");
+      }
     } finally {
-      setBusyId(null);
+      if (isActiveCycle(cycle)) setBusyId(null);
     }
   }
 
   if (!open) return null;
 
   return (
-    <div className="modalBackdrop" role="dialog" aria-modal="true" onClick={onClose}>
+    <div className="modalBackdrop" role="dialog" aria-modal="true" onClick={handleClose}>
       <div className="schemePanel questionPoolPanel" onClick={(event) => event.stopPropagation()}>
         <div className="schemePanelHead">
           <div>
@@ -207,7 +287,7 @@ export function QuestionPoolManagerModal({
               问题源是飞书多维表的本地镜像 · 全员可维护，删除仅管理员
             </p>
           </div>
-          <button className="iconButton" type="button" aria-label="关闭" onClick={onClose}>
+          <button className="iconButton" type="button" aria-label="关闭" onClick={handleClose}>
             ×
           </button>
         </div>
@@ -370,6 +450,7 @@ export function QuestionPoolManagerModal({
               <label className="agentField">
                 <span className="agentFieldLabel">名称（必填）</span>
                 <input
+                  disabled={createPending}
                   value={createForm.name}
                   onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })}
                 />
@@ -378,6 +459,7 @@ export function QuestionPoolManagerModal({
                 <label className="agentField">
                   <span className="agentFieldLabel">飞书 app_token（可选）</span>
                   <input
+                    disabled={createPending}
                     value={createForm.feishu_app_token}
                     onChange={(event) =>
                       setCreateForm({
@@ -390,6 +472,7 @@ export function QuestionPoolManagerModal({
                 <label className="agentField">
                   <span className="agentFieldLabel">飞书 table_id（可选）</span>
                   <input
+                    disabled={createPending}
                     value={createForm.feishu_table_id}
                     onChange={(event) =>
                       setCreateForm({
@@ -404,6 +487,7 @@ export function QuestionPoolManagerModal({
                 <button
                   className="secondaryButton"
                   type="button"
+                  disabled={createPending}
                   onClick={() => {
                     setCreateForm(EMPTY_BINDING_FORM);
                     setCreating(false);
@@ -411,8 +495,13 @@ export function QuestionPoolManagerModal({
                 >
                   取消
                 </button>
-                <button className="primaryButton" type="button" onClick={() => void handleCreate()}>
-                  创建
+                <button
+                  className="primaryButton"
+                  type="button"
+                  disabled={createPending}
+                  onClick={() => void handleCreate()}
+                >
+                  {createPending ? "创建中…" : "创建"}
                 </button>
               </div>
             </div>
@@ -430,7 +519,7 @@ export function QuestionPoolManagerModal({
         </div>
 
         <div className="schemePanelFoot">
-          <button className="secondaryButton" type="button" onClick={onClose}>
+          <button className="secondaryButton" type="button" onClick={handleClose}>
             关闭
           </button>
         </div>

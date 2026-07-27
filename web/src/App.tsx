@@ -16,16 +16,35 @@ import "./styles.css";
 
 // 所有合法的顶级导航 key（= URL 首段）。
 const KNOWN_NAV: NavKey[] = [
-  "agents", "content", "prompts", "quality-reference", "game-library", "videos", "media", "tasks",
-  "system", "mcp-connect", "admin", "audit-logs", "ai-models",
+  "agents",
+  "content",
+  "prompts",
+  "quality-reference",
+  "game-library",
+  "videos",
+  "media",
+  "tasks",
+  "system",
+  "mcp-connect",
+  "admin",
+  "audit-logs",
+  "ai-models",
 ];
 
 // 每个 tab 的标题，用于 ErrorBoundary。
 const TAB_TITLES: Record<NavKey, string> = {
-  agents: "智能体管理", content: "内容管理", prompts: "提示词管理",
+  agents: "智能体管理",
+  content: "内容管理",
+  prompts: "提示词管理",
   "quality-reference": "高质量库",
-  "game-library": "游戏库", videos: "视频库", media: "媒体矩阵", tasks: "分发引擎", system: "系统状态",
-  "mcp-connect": "MCP 接入", admin: "用户管理", "audit-logs": "日志中心",
+  "game-library": "游戏库",
+  videos: "视频库",
+  media: "媒体矩阵",
+  tasks: "分发引擎",
+  system: "系统状态",
+  "mcp-connect": "MCP 接入",
+  admin: "用户管理",
+  "audit-logs": "日志中心",
   "ai-models": "AI 模型管理",
 };
 
@@ -51,8 +70,16 @@ function TabFallback() {
 }
 
 function NavGroup({
-  navKey, label, icon: Icon, children, activeNav, isOpen, childValue,
-  onParentClick, onToggle, onSelectChild,
+  navKey,
+  label,
+  icon: Icon,
+  children,
+  activeNav,
+  isOpen,
+  childValue,
+  onParentClick,
+  onToggle,
+  onSelectChild,
 }: {
   navKey: NavKey;
   label: string;
@@ -196,7 +223,10 @@ export function RootLayout() {
                     activeNav={activeNav}
                     isOpen={openGroup === item.key}
                     childValue={childValueFor(item.key)}
-                    onParentClick={() => { go(item.key); setOpenGroup(item.key); }}
+                    onParentClick={() => {
+                      go(item.key);
+                      setOpenGroup(item.key);
+                    }}
                     onToggle={() => toggleGroup(item.key)}
                     onSelectChild={(value) => selectChild(item.key, value)}
                   />
@@ -235,7 +265,10 @@ export function RootLayout() {
                 activeNav={activeNav}
                 isOpen={openGroup === "audit-logs"}
                 childValue={childValueFor("audit-logs")}
-                onParentClick={() => { go("audit-logs"); setOpenGroup("audit-logs"); }}
+                onParentClick={() => {
+                  go("audit-logs");
+                  setOpenGroup("audit-logs");
+                }}
                 onToggle={() => toggleGroup("audit-logs")}
                 onSelectChild={(value) => selectChild("audit-logs", value)}
               />
@@ -278,7 +311,9 @@ export function RootLayout() {
             role={user.role}
             isAdmin={user.role === "admin"}
             onNavigate={(key) => go(key)}
-            onLogout={() => { if (window.confirm("确定退出登录？")) logout(); }}
+            onLogout={() => {
+              if (window.confirm("确定退出登录？")) logout();
+            }}
           />
         )}
         {isMobile && (
