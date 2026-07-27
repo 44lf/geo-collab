@@ -5,7 +5,7 @@ import {
   deleteQuestionPool,
   syncQuestionPool,
   updateQuestionPool,
-} from "../../api/ai-generation";
+} from "../../api/question-pools";
 import { useToast } from "../../components/Toast";
 import { useAuth } from "../auth/AuthContext";
 import type { QuestionPool } from "../../types";

@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brain, Globe, Trash2 } from "lucide-react";
 import { listAccounts } from "../../api/accounts";
-import { listAiEngines, listFormatEngines, listQuestionPools, listQuestionTypes } from "../../api/ai-generation";
+import { listAiEngines, listFormatEngines } from "../../api/generation-engines";
+import { listQuestionPools, listQuestionTypes } from "../../api/question-pools";
 import { listArticleGroups } from "../../api/articles";
 import { listCategories } from "../../api/image-library";
 import {

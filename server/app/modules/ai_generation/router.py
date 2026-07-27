@@ -69,6 +69,7 @@ def _pool_to_read(pool: Any, pending_count: int) -> QuestionPoolRead:
         last_synced_at=pool.last_synced_at,
         created_at=pool.created_at,
         pending_count=pending_count,
+        auto_sync_enabled=pool.auto_sync_enabled,
     )
 
 

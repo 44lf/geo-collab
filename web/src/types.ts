@@ -62,6 +62,7 @@ export type QuestionPool = {
   last_synced_at: string | null;
   created_at: string;
   pending_count: number;
+  auto_sync_enabled: boolean;
 };
 
 export type QuestionItem = {

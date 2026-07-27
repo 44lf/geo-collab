@@ -377,6 +377,18 @@ def test_pending_count_means_active_count(monkeypatch):
         app.cleanup()
 
 
+def test_question_pool_read_includes_auto_sync_enabled(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        _seed_question_read_compatibility(app)
+
+        row = app.client.get("/api/generation/question-pools").json()[0]
+
+        assert row["auto_sync_enabled"] is True
+    finally:
+        app.cleanup()
+
+
 def test_pool_create_sync_list_via_api(monkeypatch):
     app = build_test_app(monkeypatch)
     try:
