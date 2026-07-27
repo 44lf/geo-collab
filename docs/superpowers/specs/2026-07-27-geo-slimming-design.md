@@ -2,7 +2,7 @@
 
 日期：2026-07-27
 
-状态：已确认设计，待实施计划
+状态：审计定稿；Release A 待实施；Release B 在观察期完成前保持阻断
 
 ## 1. 背景
 
@@ -12,206 +12,363 @@ GEO 当前同时存在三类内容生成入口：
 - `/ai`：问题池驱动的方案生文；
 - MCP Loop：由外部 Agent 驱动的生成、配图、评审和发布闭环。
 
-生产使用证据显示 Pipeline 已成为站内主生产链路，MCP Loop 仍在活跃运行，而方案生文
-长期没有新运行。另一方面，方案生文页面仍承担问题池的创建、飞书绑定、同步和维护，
-Pipeline 的 `question_source` 节点又依赖这些问题池；Pipeline 代码还直接复用了
-`scheme_service` 和 `scheme_executor` 中的 helper。
+Pipeline 已成为站内主生产链路，MCP Loop 仍是正式的外部自动化入口。方案生文没有新的
+运行记录，但 `/ai` 页面仍会读取方案、历史运行、问题池和模型列表；问题池的创建、飞书
+绑定、同步和维护也仍只存在于该页面。
 
-因此，本次不能按目录直接删除 `/ai` 或整个 `ai_generation` 模块。本设计采用两阶段拆除：
-先把问题池提升为 Pipeline 的独立数据源、解除 Pipeline 对方案模块的代码依赖并停止新方案
-运行；观察稳定后，再归档数据并删除方案、旧直连生成和其他已确认的历史能力。
+代码审计进一步确认，Pipeline 和其他保留模块仍直接或间接依赖若干“方案模块”符号：
+
+- `ai_compose`、`ai_generate` import `scheme_executor._pick_valid_template`；
+- 问题类型 API 调用 `scheme_service.question_types()`；
+- Pipeline 模型下拉调用 `scheme_router.py` 中的 `/ai-engines`、`/format-engines`；
+- `main.py` import、挂载、恢复并注入 `scheme_router` / `scheme_executor`；
+- `Article.tags` ORM 关系仍动态引用拟删的 `article_tags` / `tags`；
+- weekly-report Loop 仍调用模板表现 MCP tool；
+- Alembic、运维脚本和测试建库入口仍 import 旧 `modules.skills.models`。
+
+因此，本次不是目录级删除。方案采用两个可独立验收的发布：
+
+1. Release A 迁移共享能力、搬迁问题源管理、停止方案写入并建立观察窗口；
+2. Release B 先归档和演练，再删除旧 UI、代码、ORM 对象、表和列。
 
 ## 2. 目标
 
 ### 2.1 产品目标
 
 - 站内只保留 Pipeline / 智能体作为正式生成入口。
-- MCP Loop 继续作为外部 Agent 自动化入口。
-- 下线 `/ai` 方案生文，不影响问题池、Pipeline 或 MCP。
+- MCP Loop 继续作为正式的外部 Agent 自动化入口。
+- `/ai` 退役，但不影响问题池、Pipeline、MCP、文章、技能安装或发布。
 - 问题池在“智能体管理”中成为正式的“问题源管理”能力。
 - 保留游戏库、小红书、视频、飞书、公众号、质量参考、自动评审、内容和发布链路。
+- 保留现有问题池、模型列表、模板表现、技能安装等公开契约的可用性。
 
 ### 2.2 工程目标
 
 - Pipeline 不再 import 任何 `scheme_*` 模块。
 - 删除方案生文、旧 `/generation/sessions`、旧 Skill 和旧消费队列代码及数据表。
-- 删除未接线的旧图片库页面，但保留仍在使用的图片库 API 和数据模型。
-- 删除模板表现统计 stub，但保留真实的账号表现统计和发布指标回写。
-- 删除每个目标前都有明确的运行证据、代码依赖检查和数据归档。
-- 最终让页面、路由、模块、表和文档与实际产品能力一一对应。
+- 删除未接线的旧图片库页面，但保留图片库 API、类型、模型和活跃消费者。
+- 将模板表现统计从 stub 改为真实实现，不删除现有 HTTP/MCP 能力。
+- 删除旧 loop bundle 存储，但保留已经转读新技能库的兼容只读路径。
+- 删除每个目标前都有代码依赖证明、生产调用证据、数据归档和迁移演练。
+- 当前代码、ORM metadata、数据库、路由、MCP catalog 和文档保持一致。
 
 ## 3. 非目标
 
-- 不重命名 `/api/generation/question-pools/*`。路径虽然带 `generation`，但改名会给 Pipeline、
-  MCP 和外部调用方制造无业务收益的兼容成本。
-- 不删除或重写历史 Alembic migration 文件，只新增向前迁移。
+- 不重命名 `/api/generation/question-pools/*`。
+- 不修改或重写历史 Alembic migration，只新增向前 migration。
 - 不删除 `QuestionPool`、`QuestionItem`、飞书同步或问题池自动同步 scheduler。
-- 不删除 `article_writer`、Markdown 转换、模型解析和提示词运行时等共享生成能力。
-- 不删除 `image-library` API、`StockCategory` 或 `StockImage`。
-- 不把 Pipeline 与 MCP 合并成一套运行时；两者的模型来源、交互方式和故障边界不同。
-- 不在本次顺带重构其他活跃业务模块。
+- 不删除 `article_writer`、converter、模型解析、提示词解析或 Markdown 清洗。
+- 不删除 `image-library` API、`StockCategory`、`StockImage` 或其前端客户端。
+- 不删除 `skill_library_skills`、`skill_library_versions` 或官方 `goal` skill。
+- 不删除 `/api/mcp/loop-skill-bundle/*` 兼容只读路由；它们已读取新技能库。
+- 不删除 `get_template_performance`、`get_account_performance` 或 metrics 回写工具。
+- 不把 Pipeline 与 MCP 合并为同一运行时。
+- 不在本次修复 dev 全库的历史 schema 漂移；只把它作为迁移演练前置事项隔离处理。
 
-## 4. 已确认的关键事实
+## 4. 审计事实
 
 ### 4.1 Pipeline 已覆盖方案生文的主要业务结果
 
-Pipeline 的 `question_source` 支持：
-
-- 选择问题池；
-- 按问题类型组织问题；
-- 指定具体问题；
-- 为每种问题类型配置允许的提示词模板；
-- 为每种问题类型配置生成文章数。
-
-下游 `ai_compose`、`ai_illustrate`、`to_review` 和 `distribute` 节点可以完成生文、配图、
+Pipeline 的 `question_source` 已支持选择问题池、问题类型、具体问题、每类模板和文章数。
+下游 `ai_compose`、`ai_illustrate`、`to_review`、`distribute` 可以显式完成生文、配图、
 送审和分发。
 
-### 4.2 两条链路的运行语义并非完全相同
+方案保存时冻结问题文本快照；Pipeline 运行时读取当前 `QuestionItem`。本次接受语义差异，
+不把历史方案自动转换为 Pipeline，只做离线归档。
 
-方案保存时会冻结问题文本快照；Pipeline 运行时会从 `QuestionItem` 读取当前有效文本。
-方案运行还会隐式执行自动排版、配图、成组和送审，Pipeline 则通过显式节点完成这些动作。
+### 4.2 共享依赖不能随方案删除
 
-本次接受这些差异，不迁移方案的“固定问题快照”语义。历史方案只离线归档，不自动转换成
-Pipeline。
+必须在 Release A 迁移的共享能力：
 
-### 4.3 问题池当前不是独立能力
+| 能力 | 当前位置 | 保留消费者 | 目标位置 |
+|---|---|---|---|
+| 模板候选选择 | `scheme_executor._pick_valid_template` | `ai_compose`、`ai_generate` | `ai_generation/runtime_templates.py` |
+| 问题类型聚合 | `scheme_service.question_types` | 问题类型 HTTP API、Pipeline 编辑器 | `question_bank.question_types` |
+| 写作模型列表 | `scheme_router:/ai-engines` | Pipeline 编辑器 | `ai_generation/router.py` |
+| 格式模型列表 | `scheme_router:/format-engines` | Pipeline 编辑器 | `ai_generation/router.py` |
+| `AiEngineRead` | 方案 DTO 区 | 两个保留模型端点 | 继续保留为共享 DTO |
 
-问题池唯一的创建、修改、删除和手工同步 UI 是方案页面中的 `PoolManagerModal`。
-Pipeline 编辑器只能读取问题池和问题类型。因此，下线 `/ai` 前必须先迁移问题池管理入口。
+模型列表 URL 保持不变，不制造无收益的前端和外部契约迁移。
 
-### 4.4 Pipeline 与方案代码存在反向依赖
+### 4.3 Article 标签表存在 ORM 运行时依赖
 
-- `ai_compose` 和存量 `ai_generate` 直接复用
-  `scheme_executor._pick_valid_template`。
-- 问题类型 API 通过 `scheme_service.question_types()` 聚合数据。
+`tags`、`article_tags` 当前数据为空，但不是“直接 drop 即安全”：
 
-删除方案模块前必须先把这两项能力移到共享模块。
+- `Tag`、`ArticleTag` 仍在 `articles/models.py` 注册；
+- `Article.tags` 使用 `secondary="article_tags"` 和 `lazy="selectin"`；
+- `articles/services/feed.py` 三处构造 `lazyload(Article.tags)`。
 
-## 5. 目标架构
+Release B 必须在同一代码发布中删除 ORM 类、关系、query option 和注释，再 drop 表。
+游戏标签、图片标签、视频标签和 Pipeline 标签是其他表或 JSON 字段，不属于本次目标。
 
-```text
-问题源管理
-  ├─ 问题池 CRUD
-  ├─ 飞书绑定
-  ├─ 手工同步
-  └─ 自动同步
-          |
-          v
-Pipeline / 智能体
-  ├─ question_source
-  ├─ ai_compose
-  ├─ ai_illustrate
-  ├─ to_review
-  └─ distribute
-          |
-          v
-文章、审核与发布
+### 4.4 模板表现不是可无影响删除的 tool
 
-MCP Loop
-  └─ 继续通过问题池只读接口和 MCP action tools 驱动外部自动化
-```
+`claude-loops/weekly-report-loop.md` 仍调用 `get_template_performance`。直接删除会破坏可执行
+Loop、改变 MCP 工具数并触发注册守卫。
 
-### 5.1 共享运行时边界
+`articles.source_template_id` 已由 Pipeline 和 MCP 写入，因此本次把 stub 改为真实聚合：
 
-保留 `ai_generation` 作为问题池和共享生成运行时，不做无收益的目录级重命名。
+- 时间窗口按 `Article.created_at >= utcnow() - window_days`；
+- 按 `Article.source_template_id == template_id` 过滤；
+- `article_count` 为文章数；
+- `avg_views`、`avg_likes` 从非空 `Article.metrics` 聚合；
+- `approval_rate` 为 `review_status == "approved"` 的文章占比；
+- 无文章时平均值和通过率返回 `null`。
 
-共享能力调整如下：
+HTTP 路径、MCP tool 名、catalog 项和 `MCP_TOOLS_COUNT=39` 保持不变。
 
-- 将模板候选校验和随机选择 helper 从 `scheme_executor.py` 移到中立的生成运行时模块。
-- 将问题类型聚合从 `scheme_service.py` 移到 `question_bank.py`。
-- Pipeline、问题池 API 和测试只依赖共享模块。
-- `scheme_router.py`、`scheme_service.py`、`scheme_executor.py` 删除后，不得存在反向兼容 import。
+### 4.5 旧 Skill 和 loop bundle 的真实边界
 
-## 6. 发布 A：解耦与停用
+旧 `modules/skills/*` 已无业务路由，但 Alembic、`seed_users`、`encrypt_secrets`、
+`repair_article_escaped_quotes` 和测试建库入口仍做 ORM 注册 import。删除模块时必须同步
+移除这些 import。
 
-发布 A 不删除数据库表，目标是先证明主链路可以脱离方案模块稳定运行。
+旧 `loop_skill_bundle_versions` 的线上路由已经转读 `skill_library_*`。因此：
 
-### 6.1 前端
+- 删除 `LoopSkillBundleVersion` ORM 类、`versions_service.py`、旧表和旧测试；
+- 改写 `seed_skill_library.py`，全新库直接从 `build_bundle()` 创建官方 `goal`；
+- 保留 `loop_skills/router.py` 的兼容只读路由；
+- 保留 `skill_service.py`、`skill_router.py`、`Skill`、`SkillVersion`。
 
-- 在“智能体管理”顶栏增加“问题源管理”入口。
-- 将 `PoolManagerModal` 移到 `features/pipelines/question-pools/`，改名为
+### 4.6 dev 与生产数据库对账
+
+用户指定 dev 的物理关系作为删除设计真值；生产只用于兼容校验。
+
+目标对象在 dev 与生产的外键图一致，唯一结构差异是：
+
+- dev 不存在 `loop_skill_bundle_versions`；
+- 生产存在该表，但精确行数为 0。
+
+关键存量：
+
+| 对象 | dev | 生产 |
+|---|---:|---:|
+| `generation_schemes` | 13 | 13 |
+| `generation_scheme_lines` | 143 | 143 |
+| `generation_scheme_line_questions` | 464 | 464 |
+| `generation_scheme_runs` | 17 | 17 |
+| `generation_scheme_run_tasks` | 154 | 154 |
+| `generation_sessions` | 7 | 7 |
+| `skills` | 6 | 6 |
+| `category_usages` | 0 | 0 |
+| `tags` | 0 | 0 |
+| `article_tags` | 0 | 0 |
+| `loop_skill_bundle_versions` | 不存在 | 0 |
+
+两库均无活跃方案 run：`done=15`、`failed=2`。两库都有 5 个 `pending` task，其父
+`run_id=14` 已失败；归档必须原样保留该历史不一致，不把它误判为正在执行。
+
+所有已声明 FK 和 JSON/Text ID 引用均闭合，没有保留表通过 FK 指向拟删表。两库都没有
+相关视图、触发器、存储过程或事件。
+
+### 4.7 问题状态的确定语义变化
+
+dev：100 条问题全部 active，其中 78 pending、22 consumed。
+
+生产：150 条问题全部 active，其中 128 pending、22 consumed。
+
+Pipeline 当前已按 `source_active=True` 读取全部 active 问题；HTTP/MCP 默认仍按旧
+`status="pending"` 过滤。切换后，dev 默认可见数从 78 变 100，生产从 128 变 150。
+这不是 Pipeline 行为变化，而是 HTTP/MCP 与 Pipeline 语义对齐。22 条历史 consumed 问题
+会重新成为外部 Loop 候选，本次明确接受该结果。
+
+### 4.8 生产只读校验证据
+
+生产 ECS：`47.115.134.13`，主机名与部署文档一致。校验时：
+
+- 应用镜像 `geo-collab-server:1.0.35`；
+- 数据库 `geo_collab`；
+- Alembic 为仓库当前 head `0072_planb_discovery_patrol`；
+- 官方 `goal` skill 为 `v2`，5 个文件，ZIP 条目与文件清单一致，逐文件 SHA-256 通过；
+- 方案最后一次 run 创建于 `2026-06-15 02:26:42`；
+- 最近 7 天无方案写审计；最近 30 天只有 7 次 `generation_scheme.patch`，最后一次
+  `2026-07-02 09:27:44`，没有新 run。
+
+当前 nginx 容器仅覆盖最近约 3 天日志。该窗口内有：
+
+- `GET /schemes` 94 次；
+- `GET /scheme-runs` 2 次；
+- `GET /ai-engines` 11 次；
+- `GET /format-engines` 2 次；
+- `GET /question-pools` 11 次；
+- Pipeline GET 34 次、POST 8 次；
+- 没有方案写请求。
+
+这证明读流量仍存在，Release A 必须先隐藏 `/ai` 并保留共享模型/问题池端点；当前证据不能
+替代 Release A 上线后的 7 天观察期。
+
+### 4.9 dev Alembic 漂移不能盲目 stamp
+
+dev 的 `alembic_version` 为仓库不存在的 `0067_game_cull_and_manual`，不能直接运行
+`alembic current`。与生产 head 的全表 schema 指纹相比，dev 还存在：
+
+- `loop_skill_bundle_versions`、`xhs_render_jobs` 缺表；
+- `articles`、`game_ingest_config`、`prompt_templates`、`report_events`、`video_jobs`
+  结构指纹不同。
+
+因此禁止把 dev 直接 stamp 到 head。本次 migration 在全新 MySQL 临时库和生产 schema
+克隆上演练；dev 的全库修复作为独立运维事项处理。删除目标的关系和数据对账仍以 dev
+物理结构为基线。
+
+## 5. 受保护契约
+
+以下能力在 Release A、Release B 前后必须保持：
+
+| 契约 | 保持要求 |
+|---|---|
+| `/api/generation/question-pools/*` | 路径、鉴权和 CRUD/同步能力不变 |
+| `/question-pools/{id}/question-types` | active 聚合、顺序和 DTO 不变 |
+| `/api/generation/ai-engines` | URL 和 `{label, model}` 不变 |
+| `/api/generation/format-engines` | URL 和 `{label, model}` 不变 |
+| MCP `list_question_pools` / `list_question_items` | tool 名和公开参数不变 |
+| MCP `save_article` | 仍可按 question id 读取文本和分类 |
+| MCP `get_template_performance` | tool 名和返回字段不变，数据改为真实聚合 |
+| MCP `get_account_performance` / `record_publish_metrics` | 行为不变 |
+| `/api/mcp/loop-skill-bundle/*` | 兼容只读路径继续从新技能库返回 |
+| `/api/mcp/skills/*` | 新技能库全部能力不变 |
+| Article CRUD、feed、MCP get/save | 不再访问旧标签表，响应不变 |
+| Pipeline 节点注册表 | `question_source`、`ai_compose`、`ai_generate` 等全部保留 |
+| image-library API | 路径、类型和活跃消费者不变 |
+
+## 6. Release A：解耦与停用
+
+Release A 不删除表或历史数据。
+
+### 6.1 后端共享能力
+
+- 新建 `ai_generation/runtime_templates.py`，承载 `pick_valid_template()`。
+- Pipeline 两条节点路径改为只 import 共享 runtime。
+- `question_types()` 移入 `question_bank.py`。
+- `/ai-engines`、`/format-engines` 移入保留的 `ai_generation/router.py`。
+- 增加 AST 静态测试，禁止 Pipeline import `scheme_router/service/executor`。
+- 保留两个模型 URL 和 `AiEngineRead`。
+
+### 6.2 问题池语义先行
+
+在数据库列仍存在时先切换到最终语义并观察：
+
+- `source_active` 成为唯一可用性真值；
+- `pending_count` 统计 active；
+- HTTP `status=pending` 或省略返回 active；
+- `status=all` 返回全部；
+- `status=consumed` 返回空；
+- 其他值返回 400；
+- `QuestionItemRead` 显式投影 `status="pending"`、`article_id=null`；
+- MCP tool 不增加 `status` 参数。
+
+Release B 只删除不再被读取的列，不再引入新的 API 行为变化。
+
+### 6.3 前端问题源管理
+
+- 新建 `api/question-pools.ts`，只承载问题池、items 和 question-types。
+- 新建 `api/generation-engines.ts`，承载两个共享模型列表。
+- `PipelineEditor` 不再 import `api/ai-generation.ts`。
+- 将 `PoolManagerModal` 搬到 `features/pipelines/question-pools/` 并改名
   `QuestionPoolManagerModal`。
-- Pipeline 编辑器的问题源节点提供“管理问题池”和“立即同步”入口。
-- 将问题池客户端 API 从 `api/ai-generation.ts` 拆到独立的
-  `api/question-pools.ts`。
-- 从桌面导航、移动端导航和路由配置中移除 `/ai`。
-- 旧 `/ai` 链接统一回到 `/agents`。
-- 暂时保留方案组件源码，作为发布 A 的快速代码回滚路径。
+- 管理 UI 覆盖创建、飞书重绑、重命名、手工同步、自动同步开关和 admin 删除。
+- `QuestionPoolRead` / 前端 `QuestionPool` 增加 `auto_sync_enabled`。
+- 智能体顶栏和问题源节点都提供管理/同步入口。
+- `/ai` 从导航移除，并显式重定向 `/agents`。
+- Release A 暂时保留旧方案组件源码，但路由不可达。
+- 保留 Pipeline 和迁移后 Modal 使用的 `scheme*` / `ai*` 共享样式。
 
-### 6.2 后端
+### 6.4 停止方案写入
 
-- 移出 `_pick_valid_template` 共享 helper，并更新 Pipeline 调用。
-- 将 `question_types()` 移入 `question_bank.py`。
-- 增加静态依赖测试，禁止 Pipeline import `scheme_service` 或 `scheme_executor`。
-- 保留所有问题池 API、MCP 问题池只读接口和同步 scheduler。
-- 方案创建、更新、删除和启动运行接口统一返回 `410 Gone`。
-- 方案列表、详情和历史运行查询暂时保持只读。
-- 返回 410 时明确引导调用方迁移到 Pipeline。
+以下接口统一返回 `410 Gone`，不产生审计或数据库写入：
 
-### 6.3 发布前闸门
+- POST `/schemes`
+- PUT `/schemes/{id}`
+- PATCH `/schemes/{id}`
+- DELETE `/schemes/{id}`
+- POST `/schemes/{id}/runs`
 
-- 数据库中不存在 `pending` 或 `running` 的方案运行。
-- Pipeline 已经不再依赖任何 `scheme_*` 模块。
-- 问题池管理能在“智能体管理”中完整操作。
-- 前后端门禁和目标回归测试全部通过。
+列表、详情和运行历史 GET 暂时保留只读。旧 POST `/sessions` 的 410 文案改为引导
+Pipeline，不再引导即将退役的方案流。
 
-### 6.4 观察期
+### 6.5 消灭模板表现 stub
 
-发布 A 上线后至少观察 7 个连续自然日，并同时满足：
+保留 HTTP、MCP 和 weekly-report Loop，按 4.4 的确定口径实现真实聚合。该改动属于
+Release A，因为它消除 Release B 删除代码时对外部 Loop 的误伤风险。
 
-- 方案启动接口没有真实调用。
-- `generation_scheme_runs` 没有新增记录。
-- 问题池创建、修改、同步和删除正常。
-- Pipeline 的选题、生文、配图、送审和分发正常。
-- MCP Loop 能继续读取问题池并保存文章。
-- 没有出现与方案模块解耦相关的新错误日志。
+### 6.6 Release A 门禁
 
-未满足任一条件时，不得进入发布 B。
+- 没有 `pending/running` 方案 run。
+- Pipeline 代码不再 import `scheme_*`。
+- 问题池管理所有操作可从 `/agents` 完成。
+- 模型列表 URL 在移动后仍返回相同 DTO。
+- active/all/consumed/非法 status 契约测试通过。
+- Article、技能库、MCP、Pipeline、前后端门禁通过。
 
-## 7. 发布 B：归档与删除
+## 7. Release A 观察期
 
-### 7.1 前端删除
+生产上线后观察至少 7 个连续自然日，并同时满足：
+
+- 方案写接口没有真实调用；410 数量单独统计。
+- `generation_scheme_runs`、run tasks、方案定义没有新增或修改。
+- 隐藏 `/ai` 后，方案列表和运行历史 GET 不再有非人工验收调用。
+- `/ai-engines`、`/format-engines`、问题池和 Pipeline 流量正常。
+- 问题池创建、重绑、同步、自动同步和删除正常。
+- Pipeline 选题、生文、配图、送审、分发正常。
+- MCP 能读取问题池、保存文章、生成 weekly report。
+- 官方 `goal` skill 可以列表、下载、校验和安装。
+- Article feed、详情和发布链路没有标签表相关错误。
+- 没有 `scheme_*` import、旧表、Pydantic DTO 或 MCP 注册异常。
+
+任一条件不满足，Release B 保持阻断。
+
+## 8. Release B：归档与删除
+
+### 8.1 前端删除
 
 - `AiGenerationWorkspace`
 - `GenerateTab`
 - `SchemeEditorModal`
 - `RunDetailModal`
-- 方案专属 API 和 TypeScript 类型
-- 旧 `GenerationSession` API 和类型
+- 原 `features/ai-generation/PoolManagerModal`
+- 方案 API、方案类型和旧 `GenerationSession` API/类型
+- `api/ai-generation.ts` 在共享 API 拆出后的剩余内容
 - 未路由的 `ImageLibraryWorkspace`
-- 上述组件绑定且无其他消费者的样式
+- 仅由上述组件消费的样式
 
-### 7.2 后端删除
+不能删除：
+
+- `api/image-library.ts`
+- `QuestionPool`、`QuestionType`、`AiEngine`
+- Pipeline 使用的 `schemeEmpty`、`schemeLine*`、`schemeChip*`、`schemeLink`
+- 问题源 Modal 使用的 `schemePanel*`、`schemeCard*`
+
+### 8.2 后端删除
 
 - `ai_generation/scheme_router.py`
 - `ai_generation/scheme_service.py`
 - `ai_generation/scheme_executor.py`
 - 旧 `ai_generation/pipeline.py`
 - 旧 `ai_generation/service.py`
+- 旧 session POST/GET 路由和 schema
 - 旧 `modules/skills/*`
-- `question_bank.py` 中只服务旧 `/sessions` 的消费队列逻辑
-- `loop_skills/versions_service.py` 及旧 bundle 版本运行时兼容代码
-- 模板表现统计 stub、对应 HTTP 端点、MCP tool 和 catalog 项
+- `question_bank.py` 中只服务旧 session 的消费队列函数
+- `loop_skills/versions_service.py`
+- `LoopSkillBundleVersion` ORM 类
+- 旧方案、session、Skill、CategoryUsage ORM 类
+- `main.py` 中方案 import、恢复、挂载和 session factory 注入
+- 方案并发配置项与已失真的资源注释
+- Alembic、脚本和测试建库入口中的旧 Skill 注册 import
+- `Tag`、`ArticleTag`、`Article.tags` 和 feed 的标签 query option
 
-### 7.3 明确保留
+### 8.3 明确保留
 
-- `QuestionPool`、`QuestionItem`
-- 问题池 CRUD、同步、问题文本和问题类型聚合
-- 问题池自动同步 scheduler
-- `article_writer.py`、converter、模型解析和 Markdown 清洗
-- Pipeline 全部节点、版本、运行和调度能力
+- 问题池 ORM、CRUD、同步、scheduler 和共享 DTO
+- `runtime_templates.py`、`article_writer.py`、converter、模型解析
+- Pipeline 全部节点、版本、运行和 scheduler
 - `skill_library_skills`、`skill_library_versions`
-- 账号表现统计和发布 metrics 回写
-- `image-library` API、`StockCategory`、`StockImage`
-- 游戏库、小红书、视频、飞书、公众号、质量参考和自动评审
+- loop bundle 兼容只读 router
+- 三个 performance 工具及真实实现
+- image-library API、模型和客户端
+- 游戏库、小红书、视频、飞书、公众号、质量参考、自动评审
 
-## 8. 数据库清理
+## 9. 数据库清理
 
-不使用“若干空表”或“6 张空表”之类模糊范围。只允许删除本节显式列出的对象。
-
-### 8.1 方案表
-
-按外键依赖顺序删除：
+### 9.1 方案表删除顺序
 
 1. `generation_scheme_run_tasks`
 2. `generation_scheme_runs`
@@ -219,65 +376,53 @@ MCP Loop
 4. `generation_scheme_lines`
 5. `generation_schemes`
 
-### 8.2 旧直连生成链路
+### 9.2 旧直连链路
 
 1. `generation_sessions`
 2. `skills`
 3. `category_usages`
-4. `question_items.status`
-5. `question_items.article_id`
 
-`question_items.status/article_id` 虽不再参与活跃业务，当前问题池 HTTP/MCP DTO 仍暴露这两个
-字段，部分列表和 `pending_count` 也沿用旧 `status="pending"` 过滤。删除数据库列时必须
-同步改为以下确定语义，不能让 ORM 校验或 MCP 返回在迁移后崩溃：
+`generation_sessions` 必须先于 `skills`，因为 `generation_sessions.skill_id -> skills.id`。
 
-- 问题是否可用只以 `source_active` 为准；
-- `pending_count` 改为统计 `source_active=True` 的问题数；
-- 问题池内部查询从 `status` 参数改为显式的 active/all 选择；
-- HTTP 兼容查询 `status=pending`（含省略）返回 active 问题；
-- HTTP 兼容查询 `status=all` 返回全部问题；
-- HTTP 兼容查询 `status=consumed` 返回空列表；
-- 其他 `status` 值返回 400；
-- `QuestionItemRead` 暂时保留兼容字段，显式映射
-  `status="pending"`、`article_id=null`，不再从 ORM 列读取；
-- 前端内部 `QuestionItem` 类型删除这两个无业务语义的字段；
-- MCP tool 的公开参数不增加 `status`，继续只提供 pool、limit 和 category。
+### 9.3 `question_items` 遗留列
 
-这两个响应字段仅是旧 HTTP 调用方的兼容投影，不代表消费队列仍被保留。
+删除：
 
-### 8.3 其他已确认遗留
+- `ck_question_items_status`
+- `ix_question_items_status`
+- `article_id -> articles.id` 的实际 FK
+- `article_id` 的索引
+- `status`
+- `article_id`
+
+新 migration 通过 inspector 按 constrained columns 查找 FK，不依赖 MySQL 自动约束名。
+`ix_question_items_source_active` 保留。
+
+### 9.4 其他遗留
 
 1. `article_tags`
 2. `tags`
-3. `loop_skill_bundle_versions`
+3. `loop_skill_bundle_versions`（若存在）
 
-删除 `loop_skill_bundle_versions` 前还必须满足：
+只有 `loop_skill_bundle_versions` 允许 `has_table()` 分支：dev 不存在、生产存在且为空。
+其他目标表或列缺失视为 schema 漂移并阻断，不用条件删除掩盖问题。
 
-- 新技能库存在 slug 为 `goal` 的官方 skill；
-- 其当前版本可以完整下载并校验；
-- 旧表中所有有效行已经迁移或写入离线归档；
-- 旧 seed 兼容脚本不再作为生产升级路径使用。
+### 9.5 Migration 拆分
 
-### 8.4 Alembic 迁移拆分
+- Migration 1：方案表、旧 session、旧 skills、category usages、问题遗留列。
+- Migration 2：文章标签表和可选旧 loop bundle 表。
 
-新增两条独立向前迁移，不修改历史 migration：
+两条 migration 都只做数据库结构变更，不在 migration 内导出文件。
 
-- 迁移一：删除方案和旧直连生成链路。
-- 迁移二：删除标签、旧 bundle 版本表和遗留列。
+## 10. 离线归档
 
-拆分目的是让失败定位、审查和临时库演练具有明确的领域边界。
-
-## 9. 离线归档
-
-### 9.1 归档位置
+归档位置：
 
 ```text
 ${GEO_DATA_DIR}/exports/slimming/<UTC时间戳>/
 ```
 
-归档不设置自动过期时间，只能通过后续人工明确决定删除。
-
-### 9.2 归档内容
+内容：
 
 ```text
 manifest.json
@@ -296,111 +441,96 @@ loop_skill_bundle_versions.jsonl
 README.md
 ```
 
-JSONL 用 UTF-8 编码，保留 JSON、Text、时间和可空字段的原始值，不把嵌套 JSON
-二次字符串化。
+若表不存在，仍创建 0 行 JSONL，并在 manifest 记录 `source_state="absent"`；存在空表则记录
+`source_state="present"` 和 `row_count=0`。
 
-### 9.3 Manifest
+Manifest 必须包含：
 
-`manifest.json` 必须记录：
+- 数据库名称、Alembic revision、部署 commit 和镜像版本；
+- 导出时间和归档脚本版本；
+- 每张表的存在状态、精确行数、最早/最晚时间；
+- 文件字节数和 SHA-256；
+- FK 闭合结果；
+- 5 个 pending task 的父 run 已 failed 这一已知历史状态。
 
-- 数据库名称；
-- 当前 Alembic revision；
-- 当前部署 commit SHA；
-- 归档命令版本和执行时间；
-- 每张表的精确行数；
-- 可用时记录最早和最晚时间；
-- 每个归档文件的字节数和 SHA-256。
+验收：
 
-### 9.4 归档验收
+- JSONL 行数等于 `COUNT(*)`；
+- 所有 SHA-256 复算一致；
+- JSON/Text 字段不二次字符串化；
+- 在一次性 MySQL 库完成恢复；
+- 恢复后行数、JSON 引用和 FK 闭合一致。
 
-- 每个 JSONL 文件行数必须等于对应表的 `COUNT(*)`。
-- 所有文件 SHA-256 必须复算一致。
-- 归档中涉及的外键引用必须闭合，或在 manifest 中明确标记为指向保留表。
-- 在一次性 MySQL 库中完成一次恢复演练并核对行数。
-- 任一校验失败时，禁止执行删表迁移。
+任一失败均阻断 Release B。
 
-归档是发布 B 的运维门禁，不在 Alembic migration 内执行外部文件写入。
+## 11. 不影响其他模块的验证矩阵
 
-## 10. 错误处理与阻断规则
+| 模块 | 必须验证 |
+|---|---|
+| 应用启动 | `server.app.main` 可 import，所有保留 router 可挂载 |
+| Pipeline | 节点注册完整；question source 到 distribute 全链路 |
+| 问题池 | CRUD、飞书同步、auto sync、active 语义 |
+| MCP | 工具数仍为 39；问题池、保存文章、performance、skill 安装 |
+| Articles | feed、详情、MCP get/save、AI 配图、分组、发布不查旧标签表 |
+| Skills | goal 列表、版本、ZIP、install payload、兼容 bundle 路径 |
+| Performance | template/account 聚合和 metrics 写回 |
+| Image library | Pipeline 类别选择、编辑器存图、游戏素材上传 |
+| 游戏/小红书/视频 | 现有 API、scheduler、MCP tools 不变 |
+| Worker | 发布任务、账号登录和保活不 import 删除模块 |
+| Alembic/脚本 | env、seed、encrypt、repair 可 import 和运行 |
+| 前端 | route、导航、Pipeline 编辑器、内容、MCP、游戏页面 build |
 
-以下任一情况必须停止发布 B：
+静态门禁扫描 `server/app`、`server/mcp`、`server/scripts`、`server/worker`、
+`server/alembic/env.py`、`server/tests/utils.py`，排除历史 migration，禁止 import：
 
-- 存在活跃方案运行；
-- 归档行数或 SHA-256 不一致；
-- 新技能库没有可安装的官方 `goal` 当前版本；
-- Pipeline 或 MCP 仍 import 已计划删除的模块；
-- 观察期内仍有方案写接口调用；
-- 生产 Alembic revision 与归档 manifest 不一致；
-- Alembic 出现多 head；
-- 临时库迁移或恢复演练失败。
+- `ai_generation.scheme_router`
+- `ai_generation.scheme_service`
+- `ai_generation.scheme_executor`
+- `ai_generation.pipeline`
+- `ai_generation.service`
+- `modules.skills`
+- `loop_skills.versions_service`
 
-发布 A 中的方案写请求返回 410，不创建新数据，也不部分执行。问题池 API 的路径和响应
-结构保持不变。
+ORM 门禁断言 `Base.metadata.tables` 不含目标旧表，`question_items` 不含遗留列，
+`Article` mapper 不含 `tags`；同时断言所有保留表仍存在。
 
-发布 B 后删除方案和旧 session 路由，不保留空壳 service、schema 或 ORM；旧调用得到 404。
+## 12. 迁移演练策略
 
-## 11. 回滚
+dev 不能直接 upgrade 或 stamp。本次使用三类环境：
 
-### 11.1 发布 A
+1. **全新 MySQL 测试库**：从仓库 migration 0 升到当前 head，再升到新 head；
+2. **目标数据夹具库**：按 dev 关系和行状态构造方案/session/question/skill/tag 数据；
+3. **生产 schema 临时克隆**：只复制 schema 和目标表脱敏数据，在非生产实例完成
+   upgrade、downgrade 和归档恢复。
 
-发布 A 没有破坏性数据库变更。回滚方式是恢复 `/ai` 路由和导航，并恢复方案写接口。
+生产库只在正式 Release B 执行已经演练通过的 migration。任何测试不得把
+`GEO_ALLOW_NON_TEST_DATABASE_FOR_TESTS=1` 指向生产。
 
-### 11.2 发布 B
+dev 全库修复另开运维任务：备份、比对差异、按缺失 migration 补结构，验证后才修正
+`alembic_version`，本次不盲目 stamp。
 
-Alembic downgrade 只能重建空表结构，不能恢复已删除数据。真实数据恢复必须使用离线归档。
-因此发布 B 属于不可自动回滚的数据变更。
+## 13. 回滚
 
-发布 B 前必须在临时库验证：
+### 13.1 Release A
 
-1. upgrade 能完成；
-2. downgrade 能重建结构；
-3. 归档恢复能重新写入历史数据；
-4. 恢复后行数和关键外键一致。
+Release A 无破坏性数据库变更。代码回滚可以恢复 `/ai` 路由和方案写接口。active 问题语义
+属于目标语义，不随 UI 回滚自动恢复旧消费队列。
 
-## 12. 测试设计
+### 13.2 Release B
 
-### 12.1 后端单元与集成测试
+Alembic downgrade 只能重建空结构，不能恢复数据。真实回滚依赖离线归档。
 
-- 问题类型聚合迁移后，分类、未分类和空池行为不变。
-- 共享模板选择 helper 保持用户权限、scope、启用状态和候选选择行为。
-- `question_source -> ai_compose` 的逐类型模板和文章数继续生效。
-- 静态依赖测试证明 Pipeline 不再 import `scheme_*`。
-- 问题池 CRUD、同步和自动同步回归。
-- 删除 `QuestionItem.status/article_id` 后，问题池 active/all/consumed 兼容查询和
-  `pending_count` 语义回归。
-- MCP `list_question_pools`、`list_question_items` 回归。
-- 新技能库安装、版本切换和下载回归。
-- Article feed 删除标签关系后不再访问对应表。
-- 账号表现统计和 metrics 回写继续工作。
-- 发布 A 的方案写接口统一返回 410。
+Release B 前必须验证：
 
-### 12.2 数据库测试
+1. upgrade 完成；
+2. downgrade 重建结构；
+3. 归档可恢复；
+4. 恢复后行数、FK 和 JSON 引用一致；
+5. 保留模块回归测试在 upgrade 与 downgrade 后均可运行。
 
-- 在一次性 MySQL 库执行当前 head 到新 head。
-- 验证目标表和遗留列已删除。
-- 验证问题池、Pipeline、文章和新技能库数据不变。
-- 执行 downgrade 并确认只能恢复结构。
-- 从归档恢复到临时库并核对行数和外键。
-- 验证 Alembic 只有一个 head。
+## 14. 门禁与上线验收
 
-### 12.3 前端门禁
-
-```bash
-pnpm --filter @geo/web typecheck
-pnpm --filter @geo/web lint
-pnpm --filter @geo/web format:check
-pnpm --filter @geo/web build
-```
-
-手工或浏览器验收：
-
-- `/ai` 不再出现在桌面侧栏、移动端底栏和“更多”页面；
-- `/ai` 旧链接回到 `/agents`；
-- 智能体页面可以完成问题池全套管理；
-- Pipeline 能选择新建或刚同步的问题池；
-- 旧图片库页面不再生成独立构建 chunk。
-
-### 12.4 后端门禁
+后端：
 
 ```bash
 ruff check server/
@@ -408,49 +538,43 @@ ruff format --check server/
 mypy server/app
 ```
 
-问题池、Pipeline、MCP、文章 feed、技能库和迁移相关测试必须通过。若全量测试仍有仓库既有
-无关失败，必须单列基线失败并证明本次没有新增失败。
+前端：
 
-## 13. 上线验收
+```bash
+pnpm --filter @geo/web lint
+pnpm --filter @geo/web typecheck
+pnpm --filter @geo/web format:check
+pnpm --filter @geo/web build
+```
 
-### 13.1 发布 A
+数据库测试必须使用 MySQL。若全量 pytest 有既有失败，必须记录基线并证明本次没有新增失败。
 
-1. 在智能体页面打开问题源管理。
-2. 读取现有问题池并完成一次同步。
-3. 建立或复制测试 Pipeline。
-4. 验证选题、生文、配图和送审。
-5. 验证 MCP 能继续读取问题池并保存文章。
-6. 确认 `/ai` 不再可见，方案写接口返回 410。
-7. 连续观察至少 7 天。
+Release B 后生产验收：
 
-### 13.2 发布 B 前
+1. `alembic current` 等于新 head；
+2. 目标表/列不存在，保留表精确行数符合预期；
+3. MCP 工具数仍为 39；
+4. 完成一次真实 Pipeline 测试运行；
+5. 问题池同步和 MCP 选题正常；
+6. goal skill 下载、SHA 和 install payload 正常；
+7. Article feed、详情、发布和配图正常；
+8. weekly report 能返回真实模板和账号指标；
+9. app、worker、scheduler 健康；
+10. 日志没有旧表、旧模块、DTO 或路由异常。
 
-1. 确认没有活跃方案运行。
-2. 生成并验证离线归档。
-3. 记录生产 commit、镜像版本和 Alembic revision。
-4. 在临时库完整演练 upgrade、downgrade 和归档恢复。
-5. 通过正式发版流程部署，不从 feature 分支或游离 commit 直接打 tag。
-
-### 13.3 发布 B 后
-
-1. `alembic current` 等于新 head。
-2. 目标表不存在，保留表行数符合预期。
-3. Pipeline、MCP、发布 worker 和 scheduler 健康。
-4. 完成一次真实 Pipeline 运行。
-5. 错误日志中没有旧表、旧模块或旧路由异常。
-6. 保留归档和 manifest，不自动清理。
-
-## 14. 完成标准
+## 15. 完成标准
 
 只有同时满足以下条件才算完成：
 
-- 产品只剩 Pipeline 和 MCP 两套正式生成入口；
-- 问题池成为 Pipeline 的独立数据源能力；
-- `/ai` 方案生文 UI、API 和表全部删除；
-- 旧 `/sessions`、旧 Skill 和旧消费队列全部删除；
-- 旧图片库页面和模板 performance stub 删除；
-- 本设计列出的遗留表和字段完成迁移；
-- 当前代码不存在对已删除模块或表的引用；
-- `CLAUDE.md`、架构文档和运维说明与新事实一致；
-- 前后端门禁、迁移演练和生产验收全部通过；
-- 历史数据存在经过校验且完成恢复演练的离线归档。
+- 站内只剩 Pipeline，外部保留 MCP；
+- 问题池成为 Pipeline 的独立问题源能力；
+- `/ai` 方案 UI、方案 API、方案代码和方案表删除；
+- 旧 sessions、旧 Skill、旧消费队列删除；
+- 旧图片库页面删除，图片库能力保留；
+- 模板表现不再是 stub，weekly-report Loop 不受损；
+- 旧 loop bundle 存储删除，兼容下载和安装不受损；
+- Article 不再注册或访问旧标签表；
+- 受保护契约和验证矩阵全部通过；
+- 生产观察期、归档、迁移演练和上线验收全部通过；
+- 当前代码不存在对已删除模块、ORM 对象或表的引用；
+- `CLAUDE.md` 和现行架构文档与新事实一致。
