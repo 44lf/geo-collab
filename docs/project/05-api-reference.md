@@ -260,8 +260,10 @@ MCP 保留 39 个 tools（含问题读取、`save_article`、模板表现和 Loo
 | 资源 | `/api/assets` + `/api/chunked-assets` | 1 + 4 | cookie |
 | 任务 | `/api/tasks` | 9 | cookie |
 | 发布记录 | `/api/publish-records` | 3 | cookie |
-| AI 生文 | `/api/generation` | 6 | cookie |
-| 技能 | `/api/skills` | 5 | cookie |
+| 智能体工作流 | `/api/pipelines` | 见 Swagger | cookie；站内唯一生文入口 |
+| 生文兼容接口 | `/api/generation` | 见第 6 节 | cookie；问题池/引擎/方案历史只读，旧 sessions 与 scheme 写均 410 |
+| MCP / Loop skill | `/api/mcp` + `/mcp` | 39 tools | user JWT 或 MCP token，站外生文入口 |
+| 旧 Skill | `/api/skills` | 0（未挂载） | 模块/表保留为历史兼容；所有 HTTP 路径不可用 |
 | 模板 | `/api/prompt-templates` | 5 | cookie |
 | 图片库 | `/api/image-library` | 7 | cookie |
 | 图片文件 | `/api/stock-images` | 1 | 公开 |

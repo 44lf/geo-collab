@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Geo 协作平台** — 多平台内容自动化发布平台。后端 FastAPI + SQLAlchemy/Alembic（MySQL only），前端 React 19 + Vite + TypeScript + Tiptap，浏览器自动化 Playwright + Xvfb/x11vnc/websockify/noVNC（远程人工接管），AI 生文走 LiteLLM + LangGraph，生产部署用 Docker Compose。
+**Geo 协作平台** — 多平台内容自动化发布平台。后端 FastAPI + SQLAlchemy/Alembic（MySQL only），前端 React 19 + Vite + TypeScript + Tiptap，浏览器自动化 Playwright + Xvfb/x11vnc/websockify/noVNC（远程人工接管），AI 生文由 Pipeline（站内）与 MCP（站外）承载，站内模型调用走 LiteLLM，生产部署用 Docker Compose。
 
 **设计文档 / 在途计划**：模块级 rationale 见各专题文档（`docs/AI_GENERATION.md`、`docs/DEPLOYMENT.md`）；feature 级计划 / 设计稿按日期命名落在 `docs/plans/YYYY-MM-DD-*.md` 与 `docs/specs/*-design.md`（superpowers 流程产出在 `docs/superpowers/`）。改某块前先 grep `docs/` 找有没有现成计划，避免与在途方案打架。`openspec/` 是新引入的变更提案工作流（`changes/` + `specs/`），目前主要走 archive。
 
@@ -172,7 +172,7 @@ generation-loop 的写作环节由 **Claude Code 主对话**直接产出 markdow
 
 因此：
 - **MCP loop 不需要 `GEO_AI_API_KEY`**——同事接入只要能跑 Claude Code 即可，零配置生文。
-- `GEO_AI_API_KEY` / `GEO_AI_MODEL` 仅 web UI 的「方案运行」、`ai_format`（自动排版/标题/配图选词）等路径使用；这些路径仍走 LiteLLM。
+- `GEO_AI_API_KEY` / `GEO_AI_MODEL` 仅 Pipeline 的 `ai_generate` / `ai_compose` 与 `ai_format`（自动排版/标题/配图选词）等站内模型路径使用；这些路径仍走 LiteLLM。
 - `score_recent_articles` tool（LiteLLM 评分）保留可调，但新 generation-loop 配方默认改成主对话自评 + 直接调 `submit_review_decision`，不再依赖该 tool——同样为了零配置。
 - 历史的 `compose_article` MCP tool + `POST /api/generation/compose-once` 端点已下线（被 `save_article` 完全替代）。
 
@@ -286,20 +286,19 @@ freepublish），封面自动压 JPG≤64KB、正文图压 ≤1MB 转传换微�
 
 ## AI 生文模块
 
-设计 rationale、路线图、LangGraph 图见 `docs/AI_GENERATION.md`。改这块代码的运营规则：
+当前入口、兼容边界与观察门禁见 `docs/AI_GENERATION.md`。旧 LangGraph / GenerationSession 资料仅作历史参考，不能据此恢复运行路径。改这块代码的运营规则：
 
 - **所有模型调用走 LiteLLM**。不要 import `anthropic` / `openai` SDK。
 - 两套模型配置（都走 LiteLLM）。**模型候选现以 DB 注册表 `ai_models/`（前端「AI 模型管理」）为主**：解析器优先用本 scope 的 enabled 行（前端传的 `selected` 非空按 model 匹配、空则取 `is_default` 行），无任何 DB 行才回落下面的 env 配置；密钥永不入库（行只存 `api_key_env`）。
   - `GEO_AI_MODEL` / `GEO_AI_API_KEY` — 主写作模型（默认 `claude-3-5-sonnet-20241022`）。
     - 写作模型可在前端下拉切换：候选来自 `GEO_AI_ENGINES`（JSON 数组，每项 `label/model/api_key/base_url`，`api_key` 空则回落 `GEO_AI_API_KEY`）。下拉存 model 串，运行时 `config.resolve_engine()` 回查该引擎的 key/base_url 显式传给 LiteLLM。`AiEngineRead` 只暴露 `label/model`，绝不下发 key。
   - `GEO_AI_FORMAT_MODEL` / `GEO_AI_FORMAT_API_KEY` — 格式调整 / 标题识别 / 配图（默认 `deepseek/deepseek-v4-flash`）。超时由 `GEO_AI_FORMAT_TIMEOUT_SECONDS` 控制（默认 120）。
-- 生文跑在 API server 的后台线程，**没有独立 worker**。`create_app()` 把 `bg_session_factory = SessionLocal` 注入 `ai_generation.router` 和 `scheme_router`，并启动问题池定时同步线程（`start_auto_sync`）；如 `GEO_GAME_INGEST_SCHEDULER_ENABLED=true`，还会启动游戏库托管抓取线程（`game_library.scheduler.start_game_ingest`，config-driven：DB `game_ingest_config.enabled` + 每日窗 + companion-only），与 pipeline 调度同属 web 进程内后台线程；`bg_session_factory` 亦注入 `game_library.router_web` 供手动 `/ingest/run`。方案运行路由 spawn `Thread`，线程里 `scheme_executor` 用 `ThreadPoolExecutor(max_workers=4)` 并发跑 task，每个 worker 自建 session（session 非线程安全）。生产 `server/worker/executor.py` 不参与生文。
-- Plan agent 顺序执行，是**唯一**允许读写 skill 共享文件（`article-plan.md`、`companion-pool.md`）的阶段。写作 agent 并发跑（`max_workers=4`），不要碰共享文件。
-- 生成的文章直接通过 `create_article()` 落到现有 `articles` 表。`client_request_id` 做并发重试幂等。批次元数据放在独立的 `generation_sessions` 表（`article_ids` 用 JSON 数组存）。
-- Markdown → Tiptap / HTML 转换在 `server/app/modules/ai_generation/converter.py`（`markdown_to_tiptap`、`markdown_to_html`）；LangGraph 的 `save_article` tool 在调 `create_article()` 前会调这两个函数。
+- **Pipeline 是站内唯一生文入口**，在 API server 的后台线程执行冻结快照，**没有独立生文 worker**；Pipeline scheduler 也属于 web 进程。`create_app()` 注入 Pipeline 所需的 `bg_session_factory`，同时启动问题池定时同步线程（`start_auto_sync`）；游戏库托管抓取和手动 `/ingest/run` 的会话注入规则不变。生产 `server/worker/executor.py` 不参与生文。
+- **MCP 是站外生文入口**：主对话生成 Markdown，再由 `save_article` 入库。它与 Pipeline 并列，保留 Loop skill / ZIP / SHA / install 兼容，不会触发后端 LiteLLM 写作调用。
+- Markdown → Tiptap / HTML 转换在 `server/app/modules/ai_generation/converter.py`（`markdown_to_tiptap`、`markdown_to_html`）；Pipeline 和 MCP 保存路径复用转换并写入现有 `articles` 表。`client_request_id` 仍用于并发重试幂等。
 - **Skill 已下线**：`/api/skills` 不再挂载、模块休眠（旧 LangGraph agent 的能力入口）。新方案流不用 Skill，只用提示词模板（`/api/prompt-templates`，覆盖 `generation` + `ai_format` 两种 scope）。
 - 问题库（question pools）走 `/api/generation/question-pools/*`，支持从飞书多维表同步：依赖 `GEO_FEISHU_APP_ID` / `GEO_FEISHU_APP_SECRET`（与发飞书通知的 `GEO_FEISHU_WEBHOOK_URL` 是不同凭据）。
-- 方案池 / 方案运行（scheme pool / scheme run）：方案以 `question_type`（`QuestionItem.category`）为粒度，每行选问题 + 文章数 + 允许的提示词模板；`POST /api/generation/schemes/{id}/runs` 异步展开 task 并发生文，`GET /api/generation/scheme-runs/{run_id}` 查状态（`done` / `partial_failed` / `failed`）。运行只读方案保存时的问题快照，飞书后续改动不影响已存方案。
+- `generation_sessions`、旧 LangGraph 源码、scheme executor 与 scheme 表均为历史休眠兼容资产：sessions HTTP 已 410；scheme 只保留 list/detail/history GET，五个 scheme HTTP 写入口全为 410，不能启动 executor 或新写入。历史数据不删除、不重写。
 
 ## Gotchas
 

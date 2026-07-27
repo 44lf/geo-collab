@@ -8,6 +8,61 @@ import pytest
 from server.tests.utils import build_test_app
 
 
+def _assert_release_a_protected_route_methods(methods_by_path: dict[str, set[str]]) -> None:
+    shared_get_paths = {
+        "/api/generation/question-pools",
+        "/api/generation/ai-engines",
+        "/api/generation/format-engines",
+        "/api/mcp/loop-skill-bundle/info",
+        "/api/prompt-templates/{template_id}/performance",
+    }
+    scheme_read_paths = {
+        "/api/generation/schemes",
+        "/api/generation/schemes/{scheme_id}",
+        "/api/generation/schemes/{scheme_id}/runs",
+        "/api/generation/scheme-runs/{run_id}",
+    }
+    retired_scheme_writes = {
+        ("POST", "/api/generation/schemes"),
+        ("PUT", "/api/generation/schemes/{scheme_id}"),
+        ("PATCH", "/api/generation/schemes/{scheme_id}"),
+        ("DELETE", "/api/generation/schemes/{scheme_id}"),
+        ("POST", "/api/generation/schemes/{scheme_id}/runs"),
+    }
+
+    assert shared_get_paths | scheme_read_paths <= methods_by_path.keys()
+    for path in shared_get_paths | scheme_read_paths:
+        assert "GET" in methods_by_path[path]
+    for method, path in retired_scheme_writes:
+        assert method in methods_by_path[path]
+
+
+def test_release_a_protected_route_method_gate_rejects_mutations():
+    """Prove the method gate fails if a protected GET or retired write disappears."""
+    valid = {
+        "/api/generation/question-pools": {"GET", "POST"},
+        "/api/generation/ai-engines": {"GET"},
+        "/api/generation/format-engines": {"GET"},
+        "/api/mcp/loop-skill-bundle/info": {"GET"},
+        "/api/prompt-templates/{template_id}/performance": {"GET"},
+        "/api/generation/schemes": {"GET", "POST"},
+        "/api/generation/schemes/{scheme_id}": {"GET", "PUT", "PATCH", "DELETE"},
+        "/api/generation/schemes/{scheme_id}/runs": {"GET", "POST"},
+        "/api/generation/scheme-runs/{run_id}": {"GET"},
+    }
+    _assert_release_a_protected_route_methods(valid)
+
+    missing_engine_get = dict(valid)
+    missing_engine_get["/api/generation/ai-engines"] = set()
+    with pytest.raises(AssertionError):
+        _assert_release_a_protected_route_methods(missing_engine_get)
+
+    missing_retired_write = dict(valid)
+    missing_retired_write["/api/generation/schemes/{scheme_id}/runs"] = {"GET"}
+    with pytest.raises(AssertionError):
+        _assert_release_a_protected_route_methods(missing_retired_write)
+
+
 def test_release_a_protected_routes_stay_mounted(monkeypatch):
     """Release A preserves shared HTTP contracts while retiring scheme writes."""
     app = build_test_app(monkeypatch)
@@ -20,27 +75,7 @@ def test_release_a_protected_routes_stay_mounted(monkeypatch):
                     getattr(route, "methods", set()) or set()
                 )
 
-        assert {
-            "/api/generation/question-pools",
-            "/api/generation/ai-engines",
-            "/api/generation/format-engines",
-            "/api/mcp/loop-skill-bundle/info",
-            "/api/prompt-templates/{template_id}/performance",
-        } <= methods_by_path.keys()
-        assert "GET" in methods_by_path["/api/generation/question-pools"]
-        assert "GET" in methods_by_path["/api/prompt-templates/{template_id}/performance"]
-        assert "GET" in methods_by_path["/api/generation/schemes"]
-        assert "GET" in methods_by_path["/api/generation/schemes/{scheme_id}"]
-        assert "GET" in methods_by_path["/api/generation/schemes/{scheme_id}/runs"]
-        assert "GET" in methods_by_path["/api/generation/scheme-runs/{run_id}"]
-        for method, path in [
-            ("POST", "/api/generation/schemes"),
-            ("PUT", "/api/generation/schemes/{scheme_id}"),
-            ("PATCH", "/api/generation/schemes/{scheme_id}"),
-            ("DELETE", "/api/generation/schemes/{scheme_id}"),
-            ("POST", "/api/generation/schemes/{scheme_id}/runs"),
-        ]:
-            assert method in methods_by_path[path]
+        _assert_release_a_protected_route_methods(methods_by_path)
     finally:
         app.cleanup()
 

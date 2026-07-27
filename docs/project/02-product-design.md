@@ -16,11 +16,15 @@ Geo 协作平台
 │   ├── 文章：富文本编辑(Tiptap)、封面、AI 排版、状态(草稿/就绪/归档)
 │   ├── 文章分组：用于批量轮询发布
 │   └── 资源：图片上传（小文件 / 分块）
-├── AI 生文（AI Generation）
-│   ├── 生成会话：选 Skill + Prompt 模板 + 选题 → 批量出稿入库
-│   ├── 问题库（选题池）：飞书多维表同步、按分类自动轮取
-│   ├── Skill 管理
-│   └── Prompt 模板管理（generation / ai_format 两种 scope）
+├── 智能体管理（Pipeline）
+│   ├── 站内唯一生文入口：问题源 → AI 节点 → 送审 / 分发
+│   ├── 问题库（选题池）：飞书多维表镜像，供 Pipeline 源节点使用
+│   └── Pipeline 草稿、发布版本与运行日志
+├── MCP 接入
+│   ├── 站外 Loop：读问题 → 主对话写 Markdown → save_article
+│   └── Loop skill 包、ZIP/SHA 与安装兼容
+├── 提示词模板
+│   └── generation / ai_format 两种 scope，供当前模型路径选择
 ├── 图片库（Image Library）
 │   ├── 图片分类（StockCategory，对应 MinIO bucket）
 │   ├── 图片素材 CRUD
@@ -50,7 +54,8 @@ Geo 协作平台
 | 导航 | 工作区组件 | 对应后端 | 角色可见 |
 |------|-----------|----------|----------|
 | 内容 | `content/ContentWorkspace` | `/api/articles`、`/api/article-groups`、`/api/assets` | operator/admin |
-| AI 生文 | `ai-generation/AiGenerationWorkspace`（GenerateTab + SkillsPromptsTab） | `/api/generation/*`、`/api/skills`、`/api/prompt-templates` | operator/admin |
+| 智能体管理 | `pipelines/AgentManagementWorkspace` | `/api/pipelines/*` | operator/admin |
+| MCP 接入 | `mcp/McpConnectWorkspace` | `/api/mcp/*` | operator/admin |
 | 图片库 | `image-library/ImageLibraryWorkspace` | `/api/image-library/*` | operator/admin |
 | 账号 | `accounts/AccountsWorkspace` | `/api/accounts/*` | operator/admin（导出/删除需 admin） |
 | 任务 | `tasks/TasksWorkspace` | `/api/tasks/*`、`/api/publish-records/*` | operator/admin |
@@ -61,6 +66,7 @@ Geo 协作平台
 | 登录 / 改密 | `auth/LoginPage`、`ChangePasswordPage` | `/api/auth/*` | 全员 |
 
 > SPA 由 FastAPI 同时托管：非 `/api/` 路径返回 `web/dist/index.html`（`main.py`）。开发期前端跑 Vite（5173 端口，CORS 仅放行 5173）。
+> `/ai` 是兼容路由，固定重定向至 `/agents`；旧 `ai-generation/` 组件与 scheme 客户端代码不构成当前导航或生文入口。
 
 ---
 
@@ -75,7 +81,8 @@ Geo 协作平台
 | 文章分组 ArticleGroup | 一批文章，用于轮询发布 | 有序 items |
 | 发布任务 PublishTask | "把文章发到账号"的编排单元 | 关联文章/分组 + 多账号 |
 | 发布记录 PublishRecord | 一次"(文章,账号)"发布的执行实例 | 属于任务，有状态机 |
-| 生成会话 GenerationSession | 一次 AI 批量生文 | 产出 article_ids |
+| Pipeline / PipelineRun | 站内工作流及其冻结运行快照 | 节点产出文章、送审或分发 |
+| GenerationSession | 旧 LangGraph 会话历史记录 | 表和源码休眠；HTTP 为 410，不产生新运行 |
 | 审计日志 AuditLog | 一条操作留痕 | 关联用户/目标对象 |
 
 > 数据层 ER 见 [04 数据库设计](./04-database-design.md)。
@@ -191,12 +198,9 @@ pending/queued ─────────────────────�
 ```
 - 终态：`finished | cancelled | failed`；`previous_status` 用于取消时回滚。
 
-### 5.5 生成会话状态 GenerationSession.status
+### 5.5 旧生成会话 GenerationSession.status
 
-```
-pending → running → done
-                 └─→ failed（error_message）
-```
+该状态机只解释历史表记录；Release A 不会创建或推进这些状态。`/api/generation/sessions` 已 410，当前生文运行状态请查看 Pipeline run。
 
 ---
 
@@ -208,7 +212,7 @@ pending → running → done
 |------|:--------:|:-----:|------|
 | 登录 / 改密 / 看自己 | ✅ | ✅ | `/api/auth/*` |
 | 文章 / 分组 / 资源 CRUD | ✅(自己) | ✅ | user_id 隔离；删除文章/分组需 admin |
-| AI 生文 / Skill / 模板 | ✅ | ✅ | 系统级模板 `is_system` 仅 admin 可建 |
+| Pipeline / MCP 接入 / 模板 | ✅ | ✅ | Pipeline 是站内入口；MCP 是站外入口；系统级模板 `is_system` 仅 admin 可建 |
 | 图片库 CRUD | ✅ | ✅ | 公开文件服务 `/api/stock-images/*` 无需鉴权（有意） |
 | 账号 CRUD / 登录会话 / 续登 | ✅(自己) | ✅ | 导出/删除账号需 admin |
 | 任务创建 / 执行 / 重试 | ✅(自己) | ✅ | user_id 隔离 |
@@ -222,7 +226,7 @@ pending → running → done
 
 ## 7. 关键交互规则（产品约束）
 
-- **幂等**：文章、任务、AI 会话支持 `client_request_id`，重复提交不重复创建（并发重试安全）。
+- **幂等**：文章、任务与 Pipeline 相关写入遵循各自的 `client_request_id` / 运行锁约束，重复提交不重复创建（并发重试安全）。旧 AI 会话不再可创建。
 - **封面必填（头条）**：头条驱动在文章无封面时直接报错；产品上需在发布前提示。
 - **正文三份同步**：编辑器存 `content_json`(Tiptap)、`content_html`、`plain_text` 三份，任一改动需同步——产品上由后端转换保证，前端只编辑 Tiptap。
 - **分块上传阈值**：图片 ≥ 3MB 自动走分块上传（前端并发 4），单图上限 20MB。
