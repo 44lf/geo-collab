@@ -5,6 +5,7 @@
 """
 
 import json
+import sys
 
 from server.app.core.config import get_settings
 from server.tests.utils import build_test_app
@@ -88,6 +89,23 @@ def test_question_types_endpoint_groups_active_only(monkeypatch):
         assert by_type["A"]["count"] == 2
         assert {q["record_id"] for q in by_type["A"]["questions"]} == {"a1", "a2"}
         assert by_type["B"]["count"] == 1
+    finally:
+        app.cleanup()
+
+
+def test_question_types_are_served_without_scheme_service(monkeypatch):
+    """The shared question-pool endpoint must not load scheme-only services."""
+    import server.app.modules.ai_generation as generation_module
+
+    app = build_test_app(monkeypatch)
+    try:
+        pool_id, _, _ = _seed_pool_with_types(app)
+        monkeypatch.delattr(generation_module, "scheme_service", raising=False)
+        monkeypatch.setitem(sys.modules, "server.app.modules.ai_generation.scheme_service", None)
+
+        response = app.client.get(f"/api/generation/question-pools/{pool_id}/question-types")
+
+        assert response.status_code == 200, response.text
     finally:
         app.cleanup()
 

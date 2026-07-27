@@ -13,6 +13,7 @@ from server.app.core.security import get_current_user, require_admin
 from server.app.db.session import get_db
 from server.app.modules.ai_generation import question_bank as qb
 from server.app.modules.ai_generation.schemas import (
+    AiEngineRead,
     GenerationSessionRead,
     QuestionBrief,
     QuestionItemRead,
@@ -219,8 +220,6 @@ def list_question_types(
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """按问题类型（category）聚合该池所有 source_active 问题，供方案录入页使用。"""
-    from server.app.modules.ai_generation import scheme_service as svc
-
     pool = _get_pool_or_404(db, pool_id)
     return [
         QuestionTypeRead(
@@ -228,8 +227,46 @@ def list_question_types(
             count=len(items),
             questions=[QuestionBrief.model_validate(it) for it in items],
         )
-        for qtype, items in svc.question_types(db, pool.id)
+        for qtype, items in qb.question_types(db, pool.id)
     ]
+
+
+@router.get("/ai-engines", response_model=list[AiEngineRead])
+def list_ai_engines(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """写作模型下拉（方案编辑器 / Pipeline 用）。
+
+    DB 注册表行优先；同时把 GEO_AI_ENGINES 中尚未被 DB 行接管的 env-only 模型并入下拉。
+    这点很关键：带内联 api_key 的旧 env 模型不会播种进 DB，否则会丢失 per-engine key，
+    但它们仍可由 resolve_writing_engine -> config.resolve_engine 在运行时正确解析。
+    密钥 / base_url 永不下发。
+    """
+    from server.app.core.config import get_settings
+    from server.app.modules.ai_models.service import list_models
+
+    all_db_rows = list_models(db, scope="generation", enabled_only=False)
+    taken_models = {r.model for r in all_db_rows}
+    out = [AiEngineRead(label=r.label, model=r.model) for r in all_db_rows if r.is_enabled]
+    for engine in get_settings().ai_engines:
+        if engine.model in taken_models:
+            continue
+        out.append(AiEngineRead(label=engine.label, model=engine.model))
+        taken_models.add(engine.model)
+    return out
+
+
+@router.get("/format-engines", response_model=list[AiEngineRead])
+def list_format_engines(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """格式·配图模型下拉：DB 注册表 scope=ai_format 的启用行（密钥不下发）。"""
+    from server.app.modules.ai_models.service import list_models
+
+    rows = list_models(db, scope="ai_format", enabled_only=True)
+    return [AiEngineRead(label=r.label, model=r.model) for r in rows]
 
 
 # 历史：曾有一个 MCP-facing POST /compose-once 端点（让 GEO 后端调 LiteLLM 帮 Loop 生文）。

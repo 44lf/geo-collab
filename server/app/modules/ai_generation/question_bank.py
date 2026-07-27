@@ -201,6 +201,25 @@ def list_items(db: Session, pool_id: int, *, status: str | None = "pending") -> 
     return q.order_by(QuestionItem.id.asc()).all()
 
 
+def question_types(
+    db: Session, pool_id: int
+) -> list[tuple[str | None, list[QuestionItem]]]:
+    """Group active source questions by category in stable item order."""
+    items = (
+        db.query(QuestionItem)
+        .filter(
+            QuestionItem.pool_id == pool_id,
+            QuestionItem.source_active.is_(True),
+        )
+        .order_by(QuestionItem.id)
+        .all()
+    )
+    grouped: dict[str | None, list[QuestionItem]] = {}
+    for item in items:
+        grouped.setdefault(item.category, []).append(item)
+    return list(grouped.items())
+
+
 def get_items(db: Session, item_ids: list[int]) -> list[QuestionItem]:
     if not item_ids:
         return []
