@@ -7,6 +7,7 @@ import { useToast } from "../../components/Toast";
 import type { Pipeline } from "../../types";
 import { PipelineEditor } from "./PipelineEditor";
 import { AgentLogsView } from "./AgentLogsView";
+import { QuestionPoolManagerModal } from "./question-pools/QuestionPoolManagerModal";
 
 const TYPES = [
   { v: "general", label: "通用" },
@@ -49,6 +50,7 @@ export function AgentManagementWorkspace() {
   const [form, setForm] = useState<FormState | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [logsId, setLogsId] = useState<number | null>(null);
+  const [showQuestionPools, setShowQuestionPools] = useState(false);
 
   const reload = useCallback(async () => {
     try { setItems(await listPipelines()); }
@@ -126,7 +128,12 @@ export function AgentManagementWorkspace() {
     <div className="agentsWorkspace">
       <div className="topbar">
         <div><p className="eyebrow">智能体</p><h1>智能体管理</h1></div>
-        <button className="agentNewBtn" onClick={openCreate}>+ 新建智能体</button>
+        <div className="topbarActions">
+          <button className="secondaryButton" onClick={() => setShowQuestionPools(true)}>
+            问题源管理
+          </button>
+          <button className="agentNewBtn" onClick={openCreate}>+ 新建智能体</button>
+        </div>
       </div>
 
       <div className="agentGrid">
@@ -285,6 +292,11 @@ export function AgentManagementWorkspace() {
           </div>
         </div>
       )}
+      <QuestionPoolManagerModal
+        open={showQuestionPools}
+        onClose={() => setShowQuestionPools(false)}
+        onChanged={() => undefined}
+      />
     </div>
   );
 }

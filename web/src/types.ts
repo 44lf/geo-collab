@@ -9,13 +9,11 @@ import {
   Plug,
   RadioTower,
   Send,
-  Sparkles,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type NavKey =
   | "agents"
-  | "ai"
   | "content"
   | "prompts"
   | "quality-reference"
@@ -783,7 +781,6 @@ export const navItems: {
   children?: NavChild[];
 }[] = [
   { key: "agents", label: "智能体管理", icon: Bot },
-  { key: "ai", label: "AI 生文", icon: Sparkles },
   {
     key: "content",
     label: "内容管理",

@@ -2713,6 +2713,29 @@ option, optgroup {
   padding: 14px 24px; border-top: 1px solid var(--hair); background: var(--cream); flex-shrink: 0;
 }
 
+.questionPoolPanel { width: min(760px, calc(100vw - 48px)); }
+.questionPoolCard { align-items: flex-start; }
+.questionPoolMeta, .questionPoolBinding { font-size: 12px; color: var(--fg-3); }
+.questionPoolBinding {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 430px;
+}
+.questionPoolCardActions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap;
+}
+.questionPoolAutoSync {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--fg-2); white-space: nowrap;
+}
+.questionPoolEdit, .questionPoolCreate {
+  width: 100%; display: flex; flex-direction: column; gap: 12px;
+}
+.questionPoolBindingFields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.questionPoolEditActions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap;
+}
+.questionPoolEditActions .agentToggle { margin-right: auto; }
+.questionSourceActions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 .schemeFormRow { display: flex; gap: 16px; align-items: flex-end; }
 .schemeField { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .schemeFieldLabel { font-size: 11px; color: var(--fg-3); }
@@ -3627,6 +3650,11 @@ option, optgroup {
     width: calc(100vw - 24px) !important;
     max-width: calc(100vw - 24px) !important;
   }
+  .questionPoolCard { flex-direction: column; }
+  .questionPoolCardActions { width: 100%; justify-content: flex-start; }
+  .questionPoolBinding { max-width: 100%; }
+  .questionPoolBindingFields { grid-template-columns: 1fr; }
+  .questionPoolEditActions .agentToggle { width: 100%; margin-right: 0; }
 
   /* 输入框 16px 防 iOS 聚焦缩放 */
   input, select, textarea, .input { font-size: 16px; }

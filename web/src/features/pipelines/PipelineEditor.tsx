@@ -3,7 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brain, Globe, Trash2 } from "lucide-react";
 import { listAccounts } from "../../api/accounts";
 import { listAiEngines, listFormatEngines } from "../../api/generation-engines";
-import { listQuestionPools, listQuestionTypes } from "../../api/question-pools";
+import {
+  listQuestionPools,
+  listQuestionTypes,
+  syncQuestionPool,
+} from "../../api/question-pools";
 import { listArticleGroups } from "../../api/articles";
 import { listCategories } from "../../api/image-library";
 import {
@@ -16,6 +20,7 @@ import type {
   PromptTemplate, QuestionPool, QuestionType, StockCategory,
 } from "../../types";
 import { AccountSelector } from "./AccountSelector";
+import { QuestionPoolManagerModal } from "./question-pools/QuestionPoolManagerModal";
 import { VersionHistory } from "./VersionHistory";
 
 // 问题源「类型卡 + 问题 chip」选择器（交互对齐 AI 生文的方案编辑）。
@@ -120,7 +125,7 @@ function QuestionTypePicker({ poolId, types, config, templates, onChange }: {
   if (!poolId) return <div className="schemeEmpty">请先在上方选择问题池</div>;
   if (types === undefined) return <div className="schemeEmpty">加载问题类型中…</div>;
   if (types.length === 0) {
-    return <div className="schemeEmpty">该问题池暂无问题，请先到「AI 生文 · 问题池」同步飞书</div>;
+    return <div className="schemeEmpty">该问题源暂无问题，请先点击上方「管理问题源」同步飞书</div>;
   }
 
   const unitMap = deriveUnitMap(types, config);
@@ -172,7 +177,7 @@ function QuestionTypePicker({ poolId, types, config, templates, onChange }: {
   return (
     <>
       <div className="schemeFieldLabel">
-        问题类型 · 共 {types.length} 类（勾选问题=启用该类型；可各自配模板/数量，留空则用 AI 生文兜底）
+        问题类型 · 共 {types.length} 类（勾选问题=启用该类型；可各自配模板/数量，留空则用下游生成节点兜底）
       </div>
       <div className="schemeLineScroll">
         {types.map((t) => {
@@ -191,10 +196,10 @@ function QuestionTypePicker({ poolId, types, config, templates, onChange }: {
                     unitHasTemplate(u) && unitHasCount(u)
                       ? <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4,
                           background: "var(--green-soft)", color: "var(--green)" }}
-                          title="该类型已自带模板+文章数，AI 生文将直接用它">已接管</span>
+                          title="该类型已自带模板+文章数，下游生成节点将直接用它">已接管</span>
                       : <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4,
                           background: "var(--bg-2, #f1f1f4)", color: "var(--fg-3)" }}
-                          title="该类型未配模板或文章数，缺的部分将回退到 AI 生文节点的兜底">将用兜底</span>
+                          title="该类型未配模板或文章数，缺的部分将回退到下游生成节点的兜底">将用兜底</span>
                   )}
                 </div>
                 <div className="schemeLineActions">
@@ -282,7 +287,14 @@ export function PipelineEditor({ pipelineId, onChanged }:
   const [mainCategories, setMainCategories] = useState<StockCategory[]>([]);
   // 每个池缓存完整问题类型(含各类问题)，供"类型多选"与"具体问题多选"联动。
   const [typesByPool, setTypesByPool] = useState<Record<number, QuestionType[]>>({});
+  const [showQuestionPools, setShowQuestionPools] = useState(false);
+  const [syncingPoolId, setSyncingPoolId] = useState<number | null>(null);
   const pollRef = useRef<number | null>(null);
+
+  const refreshQuestionPools = useCallback(async () => {
+    setPools(await listQuestionPools());
+    setTypesByPool({});
+  }, []);
 
   const load = useCallback(async () => {
     const p: Pipeline = await getPipeline(pipelineId);
@@ -296,7 +308,7 @@ export function PipelineEditor({ pipelineId, onChanged }:
   useEffect(() => {
     listArticleGroups().then(setGroups).catch(() => {});
     listAccounts().then(setAccounts).catch(() => {});
-    listQuestionPools().then(setPools).catch(() => {});
+    refreshQuestionPools().catch(() => {});
     listAiEngines().then(setEngines).catch(() => {});
     listFormatEngines().then(setFormatEngines).catch(() => {});
     listPromptTemplates("generation")
@@ -306,7 +318,7 @@ export function PipelineEditor({ pipelineId, onChanged }:
       .then((ts) => setFormatTemplates(ts.filter((t) => t.scope === "ai_format" && t.is_enabled)))
       .catch(() => {});
     listCategories("main").then(setMainCategories).catch(() => {});
-  }, []);
+  }, [refreshQuestionPools]);
 
   // Lazily load a pool's question types (cascade for question_types/question_records fields).
   const ensureTypes = useCallback((poolId: number) => {
@@ -410,6 +422,24 @@ export function PipelineEditor({ pipelineId, onChanged }:
     }
   };
 
+  const onSyncQuestionPool = async (poolId: number) => {
+    setSyncingPoolId(poolId);
+    try {
+      const result = await syncQuestionPool(poolId);
+      await refreshQuestionPools();
+      const types = await listQuestionTypes(poolId);
+      setTypesByPool((current) => ({ ...current, [poolId]: types }));
+      toast(
+        `同步完成：新增 ${result.added}、更新 ${result.updated}、恢复 ${result.reactivated}、失效 ${result.deactivated}`,
+        "success",
+      );
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "同步问题源失败", "error");
+    } finally {
+      setSyncingPoolId(null);
+    }
+  };
+
   const sel = selected != null ? nodes[selected] : null;
   const selDef = sel ? nodeTypes.find((t) => t.type === sel.node_type) : null;
 
@@ -492,6 +522,28 @@ export function PipelineEditor({ pipelineId, onChanged }:
           {sel && selDef ? (
             <div className="peCard">
               <div className="peCardTitle">{sel.name}<span className="peNodeType">{sel.node_type}</span></div>
+              {sel.node_type === "question_source" && (
+                <div className="questionSourceActions">
+                  <button
+                    className="secondaryButton"
+                    type="button"
+                    onClick={() => setShowQuestionPools(true)}
+                  >
+                    管理问题源
+                  </button>
+                  <button
+                    className="secondaryButton"
+                    type="button"
+                    disabled={
+                      !Number(sel.config["pool_id"]) ||
+                      syncingPoolId === Number(sel.config["pool_id"])
+                    }
+                    onClick={() => void onSyncQuestionPool(Number(sel.config["pool_id"]))}
+                  >
+                    {syncingPoolId === Number(sel.config["pool_id"]) ? "同步中…" : "立即同步"}
+                  </button>
+                </div>
+              )}
               <label className="agentField">
                 <span className="agentFieldLabel">节点名称</span>
                 <input type="text" value={sel.name}
@@ -793,6 +845,11 @@ export function PipelineEditor({ pipelineId, onChanged }:
           )}
         </div>
       </div>
+      <QuestionPoolManagerModal
+        open={showQuestionPools}
+        onClose={() => setShowQuestionPools(false)}
+        onChanged={refreshQuestionPools}
+      />
     </div>
   );
 }

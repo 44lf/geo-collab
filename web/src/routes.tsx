@@ -12,9 +12,6 @@ import type { PromptScope, ReviewStatus } from "./types";
 const AgentManagementWorkspace = lazy(() =>
   import("./features/pipelines/AgentManagementWorkspace").then((m) => ({ default: m.AgentManagementWorkspace })),
 );
-const AiGenerationWorkspace = lazy(() =>
-  import("./features/ai-generation/AiGenerationWorkspace").then((m) => ({ default: m.AiGenerationWorkspace })),
-);
 const GameLibraryWorkspace = lazy(() =>
   import("./features/game-library/GameLibraryWorkspace").then((m) => ({ default: m.GameLibraryWorkspace })),
 );
@@ -124,12 +121,6 @@ function AuditLogsRoute() {
   );
 }
 
-// AI 生文里「打开文章」跳转到内容管理。
-function AiRoute() {
-  const navigate = useNavigate();
-  return <AiGenerationWorkspace onNavigateToContent={() => navigate("/content")} />;
-}
-
 export const router = createBrowserRouter([
   {
     path: "/",
@@ -137,7 +128,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/agents" replace /> },
       { path: "agents", element: <AgentManagementWorkspace /> },
-      { path: "ai", element: <AiRoute /> },
+      { path: "ai", element: <Navigate to="/agents" replace /> },
       { path: "content", element: <ContentRoute /> },
       { path: "content/:status", element: <ContentRoute /> },
       { path: "article/:articleId", element: <ContentRoute /> },
