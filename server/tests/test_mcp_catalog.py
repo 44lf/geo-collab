@@ -10,6 +10,16 @@ from __future__ import annotations
 import pytest
 
 
+def test_list_question_items_tool_schema_preserves_public_signature():
+    from server.mcp.server import mcp
+
+    schema = mcp._tool_manager._tools["list_question_items"].parameters
+    properties = schema["properties"]
+
+    assert set(properties) == {"pool_id", "limit", "category"}
+    assert properties["limit"]["default"] == 20
+
+
 @pytest.mark.mysql
 def test_mcp_catalog_endpoints_require_token(monkeypatch):
     """所有 /api/mcp/* GET 端点都必须用 MCP token；user JWT cookie 不该过、空 / 错 token 401。"""
@@ -178,5 +188,70 @@ def test_mcp_catalog_articles_filter_by_review_status(monkeypatch):
         ids = {item["id"] for item in r.json()}
         assert approved_id in ids
         assert pending_id not in ids
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_mcp_question_items_use_active_semantics_and_compatibility_projection(monkeypatch):
+    from server.app.modules.ai_generation.models import QuestionItem, QuestionPool
+    from server.app.modules.articles.models import Article
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+        with test_app.session_factory() as db:
+            pool = QuestionPool(user_id=test_app.admin_id, name="compat")
+            article = Article(user_id=test_app.admin_id, title="legacy")
+            db.add_all([pool, article])
+            db.flush()
+            db.add_all(
+                [
+                    QuestionItem(
+                        pool_id=pool.id,
+                        record_id="active-pending",
+                        fields={},
+                        question_text="active pending",
+                        source_active=True,
+                        status="pending",
+                    ),
+                    QuestionItem(
+                        pool_id=pool.id,
+                        record_id="active-consumed",
+                        fields={},
+                        question_text="active consumed",
+                        source_active=True,
+                        status="consumed",
+                        article_id=article.id,
+                    ),
+                    QuestionItem(
+                        pool_id=pool.id,
+                        record_id="inactive-pending",
+                        fields={},
+                        question_text="inactive pending",
+                        source_active=False,
+                        status="pending",
+                    ),
+                ]
+            )
+            db.commit()
+            pool_id = pool.id
+
+        response = test_app.client.get(
+            f"/api/mcp/question-pools/{pool_id}/items",
+            headers={"X-MCP-Token": "secret"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert [row["record_id"] for row in response.json()] == [
+            "active-pending",
+            "active-consumed",
+        ]
+        assert all(row["status"] == "pending" for row in response.json())
+        assert all(row["article_id"] is None for row in response.json())
     finally:
         test_app.cleanup()

@@ -86,7 +86,7 @@ def list_question_pools(
     current_user: User = Depends(get_current_user),
 ) -> Any:
     pools = qb.list_pools(db)
-    return [_pool_to_read(p, len(qb.list_items(db, p.id, status="pending"))) for p in pools]
+    return [_pool_to_read(p, len(qb.list_items(db, p.id))) for p in pools]
 
 
 @router.post("/question-pools", response_model=QuestionPoolRead, status_code=201)
@@ -173,7 +173,7 @@ def update_question_pool(
         payload={"name": pool.name},
         request=request,
     )
-    return _pool_to_read(pool, len(qb.list_items(db, pool.id, status="pending")))
+    return _pool_to_read(pool, len(qb.list_items(db, pool.id)))
 
 
 @router.delete("/question-pools/{pool_id}", status_code=204)
@@ -207,7 +207,18 @@ def list_question_items(
     current_user: User = Depends(get_current_user),
 ) -> Any:
     pool = _get_pool_or_404(db, pool_id)
-    return qb.list_items(db, pool.id, status=(None if status == "all" else status))
+    if status not in {"pending", "all", "consumed"}:
+        raise HTTPException(
+            status_code=400,
+            detail="status must be pending, all, or consumed",
+        )
+    if status == "consumed":
+        return []
+    availability = "all" if status == "all" else "active"
+    return [
+        qb.question_item_to_read(item)
+        for item in qb.list_items(db, pool.id, availability=availability)
+    ]
 
 
 @router.get(

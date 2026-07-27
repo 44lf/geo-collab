@@ -157,7 +157,7 @@ def mcp_list_question_pools(db: Session = Depends(get_db)) -> list[QuestionPoolR
             feishu_table_id=p.feishu_table_id,
             last_synced_at=p.last_synced_at,
             created_at=p.created_at,
-            pending_count=len(qb.list_items(db, p.id, status="pending")),
+            pending_count=len(qb.list_items(db, p.id)),
         )
         for p in pools
     ]
@@ -171,17 +171,16 @@ def mcp_list_question_items(
     pool_id: int,
     limit: int = Query(default=20, ge=1, le=100),
     category: str | None = Query(default=None),
-    status: str = Query(default="pending"),
     db: Session = Depends(get_db),
 ) -> list[QuestionItemRead]:
-    """[MCP] 列指定问题池的问题项。`category` 留空=不过滤；`status="all"` 不过滤状态。"""
+    """[MCP] 列指定问题池的 active 问题项；`category` 留空=不过滤。"""
     pool = qb.get_pool(db, pool_id)
     if pool is None:
         raise HTTPException(status_code=404, detail="问题池不存在")
-    items = qb.list_items(db, pool.id, status=(None if status == "all" else status))
+    items = qb.list_items(db, pool.id)
     if category:
         items = [it for it in items if it.category == category]
-    return [QuestionItemRead.model_validate(it) for it in items[:limit]]
+    return [qb.question_item_to_read(item) for item in items[:limit]]
 
 
 # ── prompt templates ───────────────────────────────────────────────────────

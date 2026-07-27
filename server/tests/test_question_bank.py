@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from server.app.modules.ai_generation import question_bank as qb
 from server.tests.utils import build_test_app
 
@@ -277,6 +279,92 @@ def test_question_bank_pipeline_keeps_pending_on_failure(monkeypatch):
 
 
 # ── API ─────────────────────────────────────────────────────────────────────
+
+
+def _seed_question_read_compatibility(app) -> int:
+    from server.app.modules.ai_generation.models import QuestionItem, QuestionPool
+    from server.app.modules.articles.models import Article
+
+    with app.session_factory() as db:
+        pool = QuestionPool(user_id=app.admin_id, name="compat")
+        article = Article(user_id=app.admin_id, title="legacy")
+        db.add_all([pool, article])
+        db.flush()
+        db.add_all(
+            [
+                QuestionItem(
+                    pool_id=pool.id,
+                    record_id="active-pending",
+                    fields={"问题": "active pending"},
+                    question_text="active pending",
+                    source_active=True,
+                    status="pending",
+                ),
+                QuestionItem(
+                    pool_id=pool.id,
+                    record_id="active-consumed",
+                    fields={"问题": "active consumed"},
+                    question_text="active consumed",
+                    source_active=True,
+                    status="consumed",
+                    article_id=article.id,
+                ),
+                QuestionItem(
+                    pool_id=pool.id,
+                    record_id="inactive-consumed",
+                    fields={"问题": "inactive consumed"},
+                    question_text="inactive consumed",
+                    source_active=False,
+                    status="consumed",
+                ),
+            ]
+        )
+        db.commit()
+        return pool.id
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_ids"),
+    [(None, [1, 2]), ("pending", [1, 2]), ("all", [1, 2, 3]), ("consumed", [])],
+)
+def test_question_items_compatibility(monkeypatch, status, expected_ids):
+    app = build_test_app(monkeypatch)
+    try:
+        pool_id = _seed_question_read_compatibility(app)
+        suffix = "" if status is None else f"?status={status}"
+
+        response = app.client.get(f"/api/generation/question-pools/{pool_id}/items{suffix}")
+
+        assert response.status_code == 200
+        assert [row["id"] for row in response.json()] == expected_ids
+        assert all(row["status"] == "pending" for row in response.json())
+        assert all(row["article_id"] is None for row in response.json())
+    finally:
+        app.cleanup()
+
+
+def test_question_items_reject_unknown_status(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        pool_id = _seed_question_read_compatibility(app)
+
+        response = app.client.get(f"/api/generation/question-pools/{pool_id}/items?status=typo")
+
+        assert response.status_code == 400
+    finally:
+        app.cleanup()
+
+
+def test_pending_count_means_active_count(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        _seed_question_read_compatibility(app)
+
+        body = app.client.get("/api/generation/question-pools").json()
+
+        assert body[0]["pending_count"] == 2
+    finally:
+        app.cleanup()
 
 
 def test_pool_create_sync_list_via_api(monkeypatch):
