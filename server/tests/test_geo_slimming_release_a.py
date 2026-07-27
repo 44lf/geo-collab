@@ -8,6 +8,82 @@ import pytest
 from server.tests.utils import build_test_app
 
 
+def test_release_a_protected_routes_stay_mounted(monkeypatch):
+    """Release A preserves shared HTTP contracts while retiring scheme writes."""
+    app = build_test_app(monkeypatch)
+    try:
+        methods_by_path: dict[str, set[str]] = {}
+        for route in app.client.app.routes:
+            path = getattr(route, "path", None)
+            if path:
+                methods_by_path.setdefault(path, set()).update(
+                    getattr(route, "methods", set()) or set()
+                )
+
+        assert {
+            "/api/generation/question-pools",
+            "/api/generation/ai-engines",
+            "/api/generation/format-engines",
+            "/api/mcp/loop-skill-bundle/info",
+            "/api/prompt-templates/{template_id}/performance",
+        } <= methods_by_path.keys()
+        assert "GET" in methods_by_path["/api/generation/question-pools"]
+        assert "GET" in methods_by_path["/api/prompt-templates/{template_id}/performance"]
+        assert "GET" in methods_by_path["/api/generation/schemes"]
+        assert "GET" in methods_by_path["/api/generation/schemes/{scheme_id}"]
+        assert "GET" in methods_by_path["/api/generation/schemes/{scheme_id}/runs"]
+        assert "GET" in methods_by_path["/api/generation/scheme-runs/{run_id}"]
+        for method, path in [
+            ("POST", "/api/generation/schemes"),
+            ("PUT", "/api/generation/schemes/{scheme_id}"),
+            ("PATCH", "/api/generation/schemes/{scheme_id}"),
+            ("DELETE", "/api/generation/schemes/{scheme_id}"),
+            ("POST", "/api/generation/schemes/{scheme_id}/runs"),
+        ]:
+            assert method in methods_by_path[path]
+    finally:
+        app.cleanup()
+
+
+def test_release_a_mcp_tools_stay_registered():
+    """MCP's external entrypoint must keep its Release A tool contract."""
+    from server.app.modules.mcp_catalog.connect_router import MCP_TOOLS_COUNT
+    from server.mcp.server import mcp
+
+    names = set(mcp._tool_manager._tools)
+    assert MCP_TOOLS_COUNT == 39
+    assert len(names) == MCP_TOOLS_COUNT
+    assert {
+        "list_question_pools",
+        "list_question_items",
+        "save_article",
+        "get_template_performance",
+        "get_account_performance",
+        "record_publish_metrics",
+        "install_loop_skills",
+    } <= names
+
+
+def test_release_a_question_and_performance_contract_sources_are_present():
+    """Keep active/default question semantics and real template aggregation discoverable."""
+    generation_router = Path("server/app/modules/ai_generation/router.py").read_text(
+        encoding="utf-8"
+    )
+    question_bank = Path("server/app/modules/ai_generation/question_bank.py").read_text(
+        encoding="utf-8"
+    )
+    performance_service = Path("server/app/modules/performance/service.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'status: str = "pending"' in generation_router
+    assert 'status not in {"pending", "all", "consumed"}' in generation_router
+    assert 'availability = "all" if status == "all" else "active"' in generation_router
+    assert 'status="pending"' in question_bank
+    assert "Article.source_template_id == template_id" in performance_service
+    assert '"approval_rate": approval_rate' in performance_service
+
+
 def test_pipeline_does_not_import_scheme_modules():
     roots = [
         Path("server/app/modules/pipelines/nodes/ai_compose.py"),

@@ -130,23 +130,22 @@ Geo 协作平台
 ### 4.3 AI 生文流程（S6）
 
 ```
-建会话  POST /api/generation/sessions（选 skill + prompt + 选题/auto_count）
-      │  校验 skill/prompt 启用、批量上限 20，返回 202 + session_id
+站内：智能体管理（Pipeline）编辑并运行工作流
+      │  question_source → ai_generate / ai_compose → to_review / distribute
       ▼
-后台线程跑 LangGraph 管线：
-   planner_node（准备任务清单，task_specs 由 _build_task_specs 构建）
-      ▼
-   parallel_write_node（ThreadPoolExecutor max_workers=4）
-      · 每篇调 LiteLLM(GEO_AI_MODEL) 生成 Markdown
-      · 提取 # 标题 → markdown_to_tiptap / markdown_to_html
-      · create_article() 落库；问题库 item 标记 consumed
-      ▼
-   finalize_node：会话 status = done / failed
-      ▼
-前端轮询  GET /api/generation/sessions/{id}  观察状态与产出 article_ids
+后台执行冻结的 Pipeline 快照，逐节点产出文章并送审
+      │
+      ├── 问题池：飞书镜像；默认/pending 仅 source_active，all 查全部
+      │
+      └── 站外：MCP Loop 读问题 → 主对话写 Markdown → save_article 入库
 ```
 
-选题来源：手动选 item（按分类分组，每组一篇）或自动模式（按 `CategoryUsage` 最久未用的分类轮取、随机取样，不消耗 item）。问题库可从飞书多维表同步（`feishu_app_token` + `feishu_table_id`）。
+Pipeline 是站内唯一生文入口；MCP 是站外入口，并继续兼容 Loop skill ZIP/SHA/install。
+`/ai` 只重定向到 `/agents`，`/api/generation/sessions` 已退役为 410。
+
+问题库可从飞书多维表同步。`source_active` 是唯一可用性语义，DTO 仍提供兼容的
+`status="pending"` 与 `article_id=null`：`consumed` 返回空列表，未知 status 返回 400。
+方案历史的 list/detail/history GET 继续只读可查，五个写入口（create、replace、patch、delete、run）均为 410 且不写数据。
 
 ---
 

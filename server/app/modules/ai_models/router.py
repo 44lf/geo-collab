@@ -1,7 +1,7 @@
 """AI 模型注册表路由（仅管理员）。
 
 GET/POST/PATCH/DELETE /api/ai-models —— 全部 require_admin。写操作记审计。
-读下拉（方案/Pipeline 用）走 ai_generation.scheme_router 的 /ai-engines /format-engines，
+读下拉（Pipeline 与兼容客户端用）走 ai_generation.router 的 /ai-engines /format-engines，
 那两个只需 get_current_user，不在此处。
 """
 

@@ -1,7 +1,7 @@
-"""方案池 / 方案运行 路由（挂在 /api/generation 下）。
+"""Release A scheme-history 路由（挂在 /api/generation 下）。
 
-- 方案 CRUD：/schemes
-- 方案运行：/schemes/{id}/runs（建 run + 异步执行）、/scheme-runs/{id}（查状态）
+方案 list/detail/history GET 只读保留；所有 HTTP 写操作统一 410。历史 executor
+与 service 留给旧运行记录读取/内部兼容，不能由此路由启动新运行。
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from server.app.modules.system.models import User
 
 scheme_router = APIRouter()
 
-# 后台执行方案运行使用的会话工厂（create_app() 注入 SessionLocal；测试用 TestingSessionLocal）
+# 历史兼容占位：create_app() 仍可注入会话工厂，但 Release A HTTP 路由不使用它启动方案运行。
 bg_session_factory: Any = None
 
 
