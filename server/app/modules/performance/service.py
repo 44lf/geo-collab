@@ -7,12 +7,28 @@ POC 期：用 SQL aggregate 或纯 Python 算（数据量小）；v2 加缓存�
 from __future__ import annotations
 
 from datetime import timedelta
+from math import isfinite
+from numbers import Real
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from server.app.core.time import utcnow
 from server.app.modules.articles.models import Article
+
+TEMPLATE_PERFORMANCE_NOTE = (
+    "基于窗口内 source_template_id 匹配文章的 metrics 与 review_status 聚合。"
+)
+
+
+def _finite_metric_value(metrics: Any, key: str) -> Real | None:
+    """Return a JSON metric only when it is a finite, non-boolean real number."""
+    if not isinstance(metrics, dict):
+        return None
+    value = metrics.get(key)
+    if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(value):
+        return None
+    return value
 
 
 def get_template_performance(
@@ -30,6 +46,7 @@ def get_template_performance(
           "avg_views": float | None,
           "avg_likes": float | None,
           "approval_rate": float | None,  # 经自动审核 approved 的占比
+          "note": str,
         }
     """
     cutoff = utcnow() - timedelta(days=window_days)
@@ -42,14 +59,14 @@ def get_template_performance(
         .all()
     )
     views = [
-        article.metrics["views"]
+        value
         for article in articles
-        if article.metrics and article.metrics.get("views") is not None
+        if (value := _finite_metric_value(article.metrics, "views")) is not None
     ]
     likes = [
-        article.metrics["likes"]
+        value
         for article in articles
-        if article.metrics and article.metrics.get("likes") is not None
+        if (value := _finite_metric_value(article.metrics, "likes")) is not None
     ]
     approval_rate = (
         sum(article.review_status == "approved" for article in articles) / len(articles)
@@ -63,6 +80,7 @@ def get_template_performance(
         "avg_views": (sum(views) / len(views)) if views else None,
         "avg_likes": (sum(likes) / len(likes)) if likes else None,
         "approval_rate": approval_rate,
+        "note": TEMPLATE_PERFORMANCE_NOTE,
     }
 
 
