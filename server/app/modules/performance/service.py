@@ -32,18 +32,37 @@ def get_template_performance(
           "approval_rate": float | None,  # 经自动审核 approved 的占比
         }
     """
-    # POC: articles 没有直接 template_id 字段（生成后不存 source template id）——
-    # 暂时返回空结构，D6 决定是否补 article.source_template_id 字段
-    # 或者：用 audit_logs 查找"哪些 article 由这个 template compose 出来"
-    # 简化：先返回 stub，让 MCP tool 链路通
+    cutoff = utcnow() - timedelta(days=window_days)
+    articles = (
+        db.query(Article)
+        .filter(
+            Article.source_template_id == template_id,
+            Article.created_at >= cutoff,
+        )
+        .all()
+    )
+    views = [
+        article.metrics["views"]
+        for article in articles
+        if article.metrics and article.metrics.get("views") is not None
+    ]
+    likes = [
+        article.metrics["likes"]
+        for article in articles
+        if article.metrics and article.metrics.get("likes") is not None
+    ]
+    approval_rate = (
+        sum(article.review_status == "approved" for article in articles) / len(articles)
+        if articles
+        else None
+    )
     return {
         "template_id": template_id,
         "window_days": window_days,
-        "article_count": 0,
-        "avg_views": None,
-        "avg_likes": None,
-        "approval_rate": None,
-        "note": "POC stub — 评估聚合实现待补 (compose_once 加 source_template_id 后填)",
+        "article_count": len(articles),
+        "avg_views": (sum(views) / len(views)) if views else None,
+        "avg_likes": (sum(likes) / len(likes)) if likes else None,
+        "approval_rate": approval_rate,
     }
 
 

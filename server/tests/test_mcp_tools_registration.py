@@ -1,4 +1,4 @@
-"""MCP 工具注册守卫：list_skills 已注册 + 注册总数 ≥ MCP_TOOLS_COUNT。"""
+"""MCP 工具注册守卫：关键工具已注册 + 注册总数 ≥ MCP_TOOLS_COUNT。"""
 
 
 def test_list_skills_tool_registered():
@@ -27,6 +27,13 @@ def test_search_articles_by_title_tool_registered():
     from server.mcp.server import mcp
 
     assert "search_articles_by_title" in mcp._tool_manager._tools
+
+
+def test_template_performance_tool_registered():
+    import server.mcp.tools.meta  # noqa: F401  触发注册
+    from server.mcp.server import mcp
+
+    assert "get_template_performance" in mcp._tool_manager._tools
 
 
 def test_game_library_tools_registered():
