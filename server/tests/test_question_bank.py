@@ -355,6 +355,16 @@ def test_question_items_reject_unknown_status(monkeypatch):
         app.cleanup()
 
 
+def test_question_items_reject_unknown_status_before_missing_pool(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        response = app.client.get("/api/generation/question-pools/999999/items?status=typo")
+
+        assert response.status_code == 400
+    finally:
+        app.cleanup()
+
+
 def test_pending_count_means_active_count(monkeypatch):
     app = build_test_app(monkeypatch)
     try:

@@ -206,7 +206,6 @@ def list_question_items(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
-    pool = _get_pool_or_404(db, pool_id)
     if status not in {"pending", "all", "consumed"}:
         raise HTTPException(
             status_code=400,
@@ -215,6 +214,7 @@ def list_question_items(
     if status == "consumed":
         return []
     availability = "all" if status == "all" else "active"
+    pool = _get_pool_or_404(db, pool_id)
     return [
         qb.question_item_to_read(item)
         for item in qb.list_items(db, pool.id, availability=availability)
