@@ -7,6 +7,8 @@
 import json
 import sys
 
+import pytest
+
 from server.app.core.config import get_settings
 from server.tests.utils import build_test_app
 
@@ -114,6 +116,9 @@ def test_question_types_are_served_without_scheme_service(monkeypatch):
 
 
 def test_create_scheme_happy_path_snapshots_questions(monkeypatch):
+    from server.app.modules.ai_generation.schemas import SchemeCreate
+    from server.app.modules.ai_generation.scheme_service import create_scheme
+
     app = build_test_app(monkeypatch)
     try:
         pool_id, items, uid = _seed_pool_with_types(app)
@@ -136,9 +141,14 @@ def test_create_scheme_happy_path_snapshots_questions(monkeypatch):
                 },
             ],
         }
-        r = app.client.post("/api/generation/schemes", json=body)
-        assert r.status_code == 201, r.text
-        data = r.json()
+        with app.session_factory() as db:
+            scheme = create_scheme(
+                db, user_id=uid, pool_id=pool_id, payload=SchemeCreate.model_validate(body)
+            )
+            db.commit()
+            sid = scheme.id
+
+        data = app.client.get(f"/api/generation/schemes/{sid}").json()
         assert data["name"] == "方案1"
         assert len(data["lines"]) == 2
         la = next(ln for ln in data["lines"] if ln["question_type"] == "A")
@@ -148,7 +158,6 @@ def test_create_scheme_happy_path_snapshots_questions(monkeypatch):
         assert all(q["question_text"] for q in la["questions"])
 
         # GET 一致
-        sid = data["id"]
         r2 = app.client.get(f"/api/generation/schemes/{sid}")
         assert r2.status_code == 200
         assert len(r2.json()["lines"]) == 2
@@ -164,6 +173,10 @@ def test_create_scheme_happy_path_snapshots_questions(monkeypatch):
 
 
 def test_create_scheme_validation_failures(monkeypatch):
+    from server.app.modules.ai_generation.schemas import SchemeCreate
+    from server.app.modules.ai_generation.scheme_service import create_scheme
+    from server.app.shared.errors import ValidationError
+
     app = build_test_app(monkeypatch)
     try:
         from server.app.modules.ai_generation.models import QuestionItem, QuestionPool
@@ -252,12 +265,17 @@ def test_create_scheme_validation_failures(monkeypatch):
                 "allowed_prompt_template_ids": [],
             },
         }
-        for label, line in cases.items():
-            r = app.client.post(
-                "/api/generation/schemes",
-                json={"name": "s", "pool_id": pool_id, "lines": [line]},
-            )
-            assert r.status_code == 400, f"[{label}] 期望 400，实际 {r.status_code}: {r.text}"
+        for line in cases.values():
+            with app.session_factory() as db:
+                with pytest.raises(ValidationError):
+                    create_scheme(
+                        db,
+                        user_id=uid,
+                        pool_id=pool_id,
+                        payload=SchemeCreate.model_validate(
+                            {"name": "s", "pool_id": pool_id, "lines": [line]}
+                        ),
+                    )
     finally:
         app.cleanup()
 
@@ -266,45 +284,59 @@ def test_create_scheme_validation_failures(monkeypatch):
 
 
 def test_update_scheme_replaces_lines_and_snapshots(monkeypatch):
+    from server.app.modules.ai_generation.schemas import SchemeCreate, SchemeUpdate
+    from server.app.modules.ai_generation.scheme_service import create_scheme, update_scheme
+
     app = build_test_app(monkeypatch)
     try:
         pool_id, items, uid = _seed_pool_with_types(app)
         tpls = _seed_templates(app, uid)
         good = tpls["good"]
-        r = app.client.post(
-            "/api/generation/schemes",
-            json={
-                "name": "s",
-                "pool_id": pool_id,
-                "lines": [
+        with app.session_factory() as db:
+            scheme = create_scheme(
+                db,
+                user_id=uid,
+                pool_id=pool_id,
+                payload=SchemeCreate.model_validate(
                     {
-                        "question_type": "A",
-                        "question_item_ids": [items["a1"], items["a2"]],
-                        "article_count": 2,
-                        "allowed_prompt_template_ids": [good],
+                        "name": "s",
+                        "pool_id": pool_id,
+                        "lines": [
+                            {
+                                "question_type": "A",
+                                "question_item_ids": [items["a1"], items["a2"]],
+                                "article_count": 2,
+                                "allowed_prompt_template_ids": [good],
+                            }
+                        ],
                     }
-                ],
-            },
-        )
-        sid = r.json()["id"]
+                ),
+            )
+            db.commit()
+            sid = scheme.id
 
         # 改成只剩 B 一行
-        r2 = app.client.put(
-            f"/api/generation/schemes/{sid}",
-            json={
-                "name": "s2",
-                "lines": [
+        with app.session_factory() as db:
+            update_scheme(
+                db,
+                scheme=db.get(type(scheme), sid),
+                user_id=uid,
+                payload=SchemeUpdate.model_validate(
                     {
-                        "question_type": "B",
-                        "question_item_ids": [items["b1"]],
-                        "article_count": 5,
-                        "allowed_prompt_template_ids": [good],
+                        "name": "s2",
+                        "lines": [
+                            {
+                                "question_type": "B",
+                                "question_item_ids": [items["b1"]],
+                                "article_count": 5,
+                                "allowed_prompt_template_ids": [good],
+                            }
+                        ],
                     }
-                ],
-            },
-        )
-        assert r2.status_code == 200, r2.text
-        data = r2.json()
+                ),
+            )
+            db.commit()
+        data = app.client.get(f"/api/generation/schemes/{sid}").json()
         assert data["name"] == "s2"
         assert len(data["lines"]) == 1
         assert data["lines"][0]["question_type"] == "B"
@@ -331,30 +363,41 @@ def test_update_scheme_with_prior_run_tasks_succeeds(monkeypatch):
         GenerationSchemeRun,
         GenerationSchemeRunTask,
     )
+    from server.app.modules.ai_generation.schemas import SchemeCreate, SchemeUpdate
+    from server.app.modules.ai_generation.scheme_service import (
+        create_scheme,
+        get_lines,
+        update_scheme,
+    )
 
     app = build_test_app(monkeypatch)
     try:
         pool_id, items, uid = _seed_pool_with_types(app)
         tpls = _seed_templates(app, uid)
         good = tpls["good"]
-        r = app.client.post(
-            "/api/generation/schemes",
-            json={
-                "name": "s",
-                "pool_id": pool_id,
-                "lines": [
+        with app.session_factory() as db:
+            scheme = create_scheme(
+                db,
+                user_id=uid,
+                pool_id=pool_id,
+                payload=SchemeCreate.model_validate(
                     {
-                        "question_type": "A",
-                        "question_item_ids": [items["a1"], items["a2"]],
-                        "article_count": 2,
-                        "allowed_prompt_template_ids": [good],
+                        "name": "s",
+                        "pool_id": pool_id,
+                        "lines": [
+                            {
+                                "question_type": "A",
+                                "question_item_ids": [items["a1"], items["a2"]],
+                                "article_count": 2,
+                                "allowed_prompt_template_ids": [good],
+                            }
+                        ],
                     }
-                ],
-            },
-        )
-        assert r.status_code == 201, r.text
-        sid = r.json()["id"]
-        line_id = r.json()["lines"][0]["id"]
+                ),
+            )
+            db.commit()
+            sid = scheme.id
+            line_id = get_lines(db, sid)[0].id
 
         # 模拟该方案被运行过：插一条 run + 引用该行的 run task
         with app.session_factory() as db:
@@ -372,22 +415,30 @@ def test_update_scheme_with_prior_run_tasks_succeeds(monkeypatch):
             task_id = task.id
 
         # 编辑方案（重建行）——修复前这里 500，修复后 200
-        r2 = app.client.put(
-            f"/api/generation/schemes/{sid}",
-            json={
-                "name": "s2",
-                "lines": [
+        with app.session_factory() as db:
+            update_scheme(
+                db,
+                scheme=db.get(type(scheme), sid),
+                user_id=uid,
+                payload=SchemeUpdate.model_validate(
                     {
-                        "question_type": "B",
-                        "question_item_ids": [items["b1"]],
-                        "article_count": 5,
-                        "allowed_prompt_template_ids": [good],
+                        "name": "s2",
+                        "lines": [
+                            {
+                                "question_type": "B",
+                                "question_item_ids": [items["b1"]],
+                                "article_count": 5,
+                                "allowed_prompt_template_ids": [good],
+                            }
+                        ],
                     }
-                ],
-            },
+                ),
+            )
+            db.commit()
+        assert (
+            app.client.get(f"/api/generation/schemes/{sid}").json()["lines"][0]["question_type"]
+            == "B"
         )
-        assert r2.status_code == 200, r2.text
-        assert r2.json()["lines"][0]["question_type"] == "B"
 
         # 运行历史保留，但回指针已断开（scheme_line_id 置 NULL）
         with app.session_factory() as db:
@@ -481,6 +532,9 @@ def test_ai_engines_endpoint_returns_configured_list(monkeypatch):
 
 
 def test_create_scheme_ai_engine_round_trips_and_normalizes(monkeypatch):
+    from server.app.modules.ai_generation.schemas import SchemeCreate, SchemeUpdate
+    from server.app.modules.ai_generation.scheme_service import create_scheme, update_scheme
+
     app = build_test_app(monkeypatch)
     try:
         pool_id, items, uid = _seed_pool_with_types(app)
@@ -491,70 +545,94 @@ def test_create_scheme_ai_engine_round_trips_and_normalizes(monkeypatch):
             "article_count": 1,
             "allowed_prompt_template_ids": [tpls["good"]],
         }
-        # 显式引擎 → 原样保存
-        r = app.client.post(
-            "/api/generation/schemes",
-            json={
-                "name": "s",
-                "pool_id": pool_id,
-                "ai_engine": "deepseek/deepseek-chat",
-                "lines": [line],
-            },
-        )
-        assert r.status_code == 201, r.text
-        sid = r.json()["id"]
-        assert r.json()["ai_engine"] == "deepseek/deepseek-chat"
+        with app.session_factory() as db:
+            scheme = create_scheme(
+                db,
+                user_id=uid,
+                pool_id=pool_id,
+                payload=SchemeCreate.model_validate(
+                    {
+                        "name": "s",
+                        "pool_id": pool_id,
+                        "ai_engine": "deepseek/deepseek-chat",
+                        "lines": [line],
+                    }
+                ),
+            )
+            db.commit()
+            sid = scheme.id
         assert app.client.get(f"/api/generation/schemes/{sid}").json()["ai_engine"] == (
             "deepseek/deepseek-chat"
         )
 
-        # 空白引擎 → 归一为 None（用系统默认模型）
-        r2 = app.client.post(
-            "/api/generation/schemes",
-            json={"name": "s2", "pool_id": pool_id, "ai_engine": "  ", "lines": [line]},
-        )
-        assert r2.status_code == 201, r2.text
-        assert r2.json()["ai_engine"] is None
+        with app.session_factory() as db:
+            blank = create_scheme(
+                db,
+                user_id=uid,
+                pool_id=pool_id,
+                payload=SchemeCreate.model_validate(
+                    {"name": "s2", "pool_id": pool_id, "ai_engine": "  ", "lines": [line]}
+                ),
+            )
+            default = create_scheme(
+                db,
+                user_id=uid,
+                pool_id=pool_id,
+                payload=SchemeCreate.model_validate(
+                    {"name": "s3", "pool_id": pool_id, "lines": [line]}
+                ),
+            )
+            scheme = db.get(type(scheme), sid)
+            update_scheme(
+                db,
+                scheme=scheme,
+                user_id=uid,
+                payload=SchemeUpdate.model_validate(
+                    {"name": "s", "ai_engine": "gpt-4o", "lines": [line]}
+                ),
+            )
+            db.commit()
+            blank_id, default_id = blank.id, default.id
 
-        # 不传 ai_engine → None
-        r3 = app.client.post(
-            "/api/generation/schemes",
-            json={"name": "s3", "pool_id": pool_id, "lines": [line]},
-        )
-        assert r3.json()["ai_engine"] is None
-
-        # 更新可改引擎
-        r4 = app.client.put(
-            f"/api/generation/schemes/{sid}",
-            json={"name": "s", "ai_engine": "gpt-4o", "lines": [line]},
-        )
-        assert r4.json()["ai_engine"] == "gpt-4o"
+        assert app.client.get(f"/api/generation/schemes/{blank_id}").json()["ai_engine"] is None
+        assert app.client.get(f"/api/generation/schemes/{default_id}").json()["ai_engine"] is None
+        assert app.client.get(f"/api/generation/schemes/{sid}").json()["ai_engine"] == "gpt-4o"
     finally:
         app.cleanup()
 
 
 def test_delete_scheme_soft(monkeypatch):
+    from server.app.modules.ai_generation.schemas import SchemeCreate
+    from server.app.modules.ai_generation.scheme_service import create_scheme, delete_scheme
+
     app = build_test_app(monkeypatch)
     try:
         pool_id, items, uid = _seed_pool_with_types(app)
         tpls = _seed_templates(app, uid)
-        r = app.client.post(
-            "/api/generation/schemes",
-            json={
-                "name": "s",
-                "pool_id": pool_id,
-                "lines": [
+        with app.session_factory() as db:
+            scheme = create_scheme(
+                db,
+                user_id=uid,
+                pool_id=pool_id,
+                payload=SchemeCreate.model_validate(
                     {
-                        "question_type": "A",
-                        "question_item_ids": [items["a1"]],
-                        "article_count": 1,
-                        "allowed_prompt_template_ids": [tpls["good"]],
+                        "name": "s",
+                        "pool_id": pool_id,
+                        "lines": [
+                            {
+                                "question_type": "A",
+                                "question_item_ids": [items["a1"]],
+                                "article_count": 1,
+                                "allowed_prompt_template_ids": [tpls["good"]],
+                            }
+                        ],
                     }
-                ],
-            },
-        )
-        sid = r.json()["id"]
-        assert app.client.delete(f"/api/generation/schemes/{sid}").status_code == 204
+                ),
+            )
+            db.commit()
+            sid = scheme.id
+            delete_scheme(db, scheme)
+            db.commit()
         assert app.client.get(f"/api/generation/schemes/{sid}").status_code == 404
         assert all(s["id"] != sid for s in app.client.get("/api/generation/schemes").json())
     finally:

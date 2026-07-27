@@ -1,6 +1,6 @@
 """AI 生文模块路由（问题池 CRUD/同步 + 问题类型聚合）。
 
-注：旧 `POST /sessions` 问题池直连生成已硬切下线，改走方案流（scheme_router）。
+注：旧 `POST /sessions` 问题池直连生成已硬切下线，请使用智能体工作流。
 """
 
 import logging
@@ -33,13 +33,10 @@ router = APIRouter()
 
 @router.post("/sessions")
 def start_generation() -> None:
-    """旧问题池直连生成已硬切下线。改用方案流（scheme run）。"""
+    """旧问题池直连生成已硬切下线。"""
     raise HTTPException(
         status_code=410,
-        detail=(
-            "问题池直连生成已下线，请改用方案流：先 POST /api/generation/schemes 建方案，"
-            "再 POST /api/generation/schemes/{scheme_id}/runs 执行。"
-        ),
+        detail="问题池直连生成已停用，请使用智能体工作流（/agents）。",
     )
 
 

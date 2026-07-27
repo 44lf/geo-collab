@@ -2,7 +2,7 @@
 
 所有归属守卫遵循同一规则：非 admin 访问他人资源一律 404（不泄露其存在），admin 可越权访问：
   - pipelines        `_owned`                    (router.py:39)
-  - ai_generation    `_get_owned_scheme`         (scheme_router.py，方案仍按用户私有)
+  - ai_generation    `_get_owned_scheme`         (scheme_router.py，方案读取仍按用户私有)
   - accounts         `_verify_account_ownership` (router.py:48，注释明确「404 而非 403」)
 
 例外：**问题池（question pool）改为全员共享**，不再按属主隔离——任意登录用户都能看到 / 改名 /
@@ -84,9 +84,9 @@ def test_scheme_private_but_pool_shared(monkeypatch):
             db.commit()
             pool_id, scheme_id = pool.id, scheme.id
 
-        # 方案仍私有：operator 越权 → 404
+        # 方案读取仍私有；退休 DELETE 不再探测归属，统一返回 410。
         assert op.get(f"/api/generation/schemes/{scheme_id}").status_code == 404
-        assert op.delete(f"/api/generation/schemes/{scheme_id}").status_code == 404
+        assert op.delete(f"/api/generation/schemes/{scheme_id}").status_code == 410
 
         # 问题池共享：operator 能读 question-types（200）且在列表里看到 admin 建的池
         assert op.get(f"/api/generation/question-pools/{pool_id}/question-types").status_code == 200

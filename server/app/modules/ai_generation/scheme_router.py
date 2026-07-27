@@ -6,16 +6,13 @@
 
 from __future__ import annotations
 
-import logging
-from typing import Any
+from typing import Any, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from server.app.core.security import get_current_user
 from server.app.db.session import get_db
-from server.app.modules.ai_generation import question_bank as qb
 from server.app.modules.ai_generation import scheme_service as svc
 from server.app.modules.ai_generation.models import (
     GenerationScheme,
@@ -33,23 +30,16 @@ from server.app.modules.ai_generation.schemas import (
     SchemeRunTaskRead,
     SchemeUpdate,
 )
-from server.app.modules.audit.service import add_audit_entry
 from server.app.modules.system.models import User
 
-logger = logging.getLogger(__name__)
 scheme_router = APIRouter()
 
 # 后台执行方案运行使用的会话工厂（create_app() 注入 SessionLocal；测试用 TestingSessionLocal）
 bg_session_factory: Any = None
 
 
-def _get_pool_or_404(db: Session, pool_id: int) -> Any:
-    """问题池全员共享：任意登录用户都可在任一池上建方案，仅不存在 / 已删除时 404。
-    （方案本身仍按用户私有，见 _get_owned_scheme。）"""
-    pool = qb.get_pool(db, pool_id)
-    if pool is None:
-        raise HTTPException(status_code=404, detail="问题池不存在")
-    return pool
+def _scheme_retired() -> NoReturn:
+    raise HTTPException(status_code=410, detail="方案生文已停用，请使用智能体工作流")
 
 
 def _get_owned_scheme(db: Session, scheme_id: int, current_user: User) -> GenerationScheme:
@@ -95,27 +85,13 @@ def list_schemes(
     return [_scheme_to_read(db, s) for s in schemes]
 
 
-@scheme_router.post("/schemes", response_model=SchemeRead, status_code=201)
+@scheme_router.post("/schemes", response_model=None, status_code=410)
 def create_scheme(
     payload: SchemeCreate,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
-    pool = _get_pool_or_404(db, payload.pool_id)
-    scheme = svc.create_scheme(db, user_id=current_user.id, pool_id=pool.id, payload=payload)
-    db.commit()
-    db.refresh(scheme)
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="generation_scheme.create",
-        target_type="generation_scheme",
-        target_id=scheme.id,
-        payload={"name": scheme.name, "pool_id": pool.id, "lines": len(payload.lines)},
-        request=request,
-    )
-    return _scheme_to_read(db, scheme)
+    _scheme_retired()
 
 
 @scheme_router.get("/schemes/{scheme_id}", response_model=SchemeRead)
@@ -128,75 +104,33 @@ def get_scheme(
     return _scheme_to_read(db, scheme)
 
 
-@scheme_router.put("/schemes/{scheme_id}", response_model=SchemeRead)
+@scheme_router.put("/schemes/{scheme_id}", response_model=None, status_code=410)
 def update_scheme(
     scheme_id: int,
     payload: SchemeUpdate,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
-    scheme = _get_owned_scheme(db, scheme_id, current_user)
-    svc.update_scheme(db, scheme=scheme, user_id=current_user.id, payload=payload)
-    db.commit()
-    db.refresh(scheme)
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="generation_scheme.update",
-        target_type="generation_scheme",
-        target_id=scheme.id,
-        payload={"name": scheme.name, "lines": len(payload.lines)},
-        request=request,
-    )
-    return _scheme_to_read(db, scheme)
+    _scheme_retired()
 
 
-@scheme_router.patch("/schemes/{scheme_id}", response_model=SchemeRead)
+@scheme_router.patch("/schemes/{scheme_id}", response_model=None, status_code=410)
 def patch_scheme(
     scheme_id: int,
     payload: SchemePatch,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:
-    """轻量更新（目前仅启用状态），不重建问题行。"""
-    scheme = _get_owned_scheme(db, scheme_id, current_user)
-    if payload.is_enabled is not None:
-        scheme.is_enabled = payload.is_enabled
-    db.commit()
-    db.refresh(scheme)
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="generation_scheme.patch",
-        target_type="generation_scheme",
-        target_id=scheme.id,
-        payload={"is_enabled": scheme.is_enabled},
-        request=request,
-    )
-    return _scheme_to_read(db, scheme)
+    _scheme_retired()
 
 
-@scheme_router.delete("/schemes/{scheme_id}", status_code=204)
+@scheme_router.delete("/schemes/{scheme_id}", status_code=410, response_model=None)
 def delete_scheme(
     scheme_id: int,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    scheme = _get_owned_scheme(db, scheme_id, current_user)
-    svc.delete_scheme(db, scheme)
-    db.commit()
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="generation_scheme.delete",
-        target_type="generation_scheme",
-        target_id=scheme_id,
-        payload={},
-        request=request,
-    )
+    _scheme_retired()
 
 
 # ── 方案运行 ───────────────────────────────────────────────────────────────────
@@ -221,51 +155,13 @@ def _run_to_read(db: Session, run: GenerationSchemeRun) -> SchemeRunRead:
     )
 
 
-@scheme_router.post("/schemes/{scheme_id}/runs", status_code=202)
+@scheme_router.post("/schemes/{scheme_id}/runs", response_model=None, status_code=410)
 def create_scheme_run(
     scheme_id: int,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> JSONResponse:
-    from server.app.modules.ai_generation.scheme_executor import create_run, submit_scheme_run
-
-    scheme = _get_owned_scheme(db, scheme_id, current_user)
-    if not scheme.is_enabled:
-        raise HTTPException(status_code=400, detail="方案已停用，无法运行")
-
-    # create_run 内含活跃去重：同 scheme 已有 pending/running 运行时抛 ConflictError（→ 409）。
-    run = create_run(db, scheme=scheme, user_id=current_user.id)
-    db.commit()
-    run_id = run.id
-
-    add_audit_entry(
-        db,
-        user=current_user,
-        action="generation_scheme_run.create",
-        target_type="generation_scheme_run",
-        target_id=run_id,
-        payload={"scheme_id": scheme_id},
-        request=request,
-    )
-
-    if bg_session_factory is None:
-        # 与 pipelines/router 对齐：后台执行器未就绪时标记运行失败 + 返回 503，
-        # 不再返回虚假的 202（否则运行永远卡在 pending、调用方以为仍在执行）。
-        logger.error("bg_session_factory 未注入，方案运行无法执行（run_id=%d）", run_id)
-        from server.app.modules.ai_generation.models import GenerationSchemeRun
-
-        run_obj = db.get(GenerationSchemeRun, run_id)
-        if run_obj is not None:
-            run_obj.status = "failed"
-            run_obj.error_message = "后台执行器未就绪（bg_session_factory 未注入）"
-            db.commit()
-        return JSONResponse(status_code=503, content={"run_id": run_id, "status": "failed"})
-
-    # 有界派发线程池（封堵 #5）：不再裸 threading.Thread 无界 spawn。
-    submit_scheme_run(run_id, bg_session_factory)
-
-    return JSONResponse(content={"run_id": run_id, "status": "pending"}, status_code=202)
+) -> Any:
+    _scheme_retired()
 
 
 @scheme_router.get("/schemes/{scheme_id}/runs", response_model=list[SchemeRunSummary])

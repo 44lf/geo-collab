@@ -416,7 +416,7 @@ def test_pool_create_sync_list_via_api(monkeypatch):
 
 
 def test_start_generation_sessions_is_hard_cut(monkeypatch):
-    """旧问题池直连生成已硬切：POST /sessions 返回 410，引导改用方案运行。"""
+    """旧问题池直连生成已硬切：POST /sessions 返回 410，引导智能体工作流。"""
     app = build_test_app(monkeypatch)
     try:
         r = app.client.post(
@@ -424,7 +424,8 @@ def test_start_generation_sessions_is_hard_cut(monkeypatch):
             json={"skill_id": 1, "prompt_template_id": 1, "question_item_ids": [1]},
         )
         assert r.status_code == 410, r.text
-        assert "方案" in r.json()["detail"]
+        assert "智能体" in r.json()["detail"]
+        assert "方案" not in r.json()["detail"]
     finally:
         app.cleanup()
 
