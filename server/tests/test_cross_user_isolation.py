@@ -65,7 +65,11 @@ def test_cross_user_pipeline_is_404_admin_bypasses(monkeypatch):
 @pytest.mark.mysql
 def test_scheme_private_but_pool_shared(monkeypatch):
     """方案仍按用户私有（越权 404）；问题池改为全员共享（他人也能看到 / 读 question-types）。"""
-    from server.app.modules.ai_generation.models import GenerationScheme, QuestionPool
+    from server.app.modules.ai_generation.models import (
+        GenerationScheme,
+        GenerationSchemeRun,
+        QuestionPool,
+    )
     from server.app.modules.system.models import User
 
     app = build_test_app(monkeypatch)
@@ -81,11 +85,21 @@ def test_scheme_private_but_pool_shared(monkeypatch):
             db.flush()
             scheme = GenerationScheme(user_id=admin_id, pool_id=pool.id, name="admin方案")
             db.add(scheme)
+            db.flush()
+            run = GenerationSchemeRun(
+                scheme_id=scheme.id,
+                user_id=admin_id,
+                status="done",
+            )
+            db.add(run)
             db.commit()
-            pool_id, scheme_id = pool.id, scheme.id
+            pool_id, scheme_id, run_id = pool.id, scheme.id, run.id
 
-        # 方案读取仍私有；退休 DELETE 不再探测归属，统一返回 410。
+        # 方案及运行历史读取仍私有；退休 DELETE 不再探测归属，统一返回 410。
+        assert all(row["id"] != scheme_id for row in op.get("/api/generation/schemes").json())
         assert op.get(f"/api/generation/schemes/{scheme_id}").status_code == 404
+        assert op.get(f"/api/generation/schemes/{scheme_id}/runs").status_code == 404
+        assert op.get(f"/api/generation/scheme-runs/{run_id}").status_code == 404
         assert op.delete(f"/api/generation/schemes/{scheme_id}").status_code == 410
 
         # 问题池共享：operator 能读 question-types（200）且在列表里看到 admin 建的池
@@ -95,6 +109,8 @@ def test_scheme_private_but_pool_shared(monkeypatch):
 
         # 对照：admin 自己可见方案
         assert admin.get(f"/api/generation/schemes/{scheme_id}").status_code == 200
+        assert admin.get(f"/api/generation/schemes/{scheme_id}/runs").status_code == 200
+        assert admin.get(f"/api/generation/scheme-runs/{run_id}").status_code == 200
     finally:
         app.cleanup()
 

@@ -158,6 +158,7 @@ def mcp_list_question_pools(db: Session = Depends(get_db)) -> list[QuestionPoolR
             last_synced_at=p.last_synced_at,
             created_at=p.created_at,
             pending_count=len(qb.list_items(db, p.id)),
+            auto_sync_enabled=p.auto_sync_enabled,
         )
         for p in pools
     ]

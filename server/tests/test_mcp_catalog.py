@@ -7,17 +7,143 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import httpx
 import pytest
 
 
 def test_list_question_items_tool_schema_preserves_public_signature():
     from server.mcp.server import mcp
 
+    assert mcp._tool_manager._tools["list_question_pools"].parameters["properties"] == {}
+
     schema = mcp._tool_manager._tools["list_question_items"].parameters
     properties = schema["properties"]
 
     assert set(properties) == {"pool_id", "limit", "category"}
     assert properties["limit"]["default"] == 20
+
+
+@pytest.mark.mysql
+def test_nonempty_question_pool_serializes_for_user_and_mcp_http(monkeypatch):
+    """同一个真实非空池在 user HTTP 与 MCP-token HTTP 都返回完整 DTO。"""
+    from server.app.modules.ai_generation.models import QuestionItem, QuestionPool
+    from server.app.modules.ai_generation.schemas import QuestionPoolRead
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+        with test_app.session_factory() as db:
+            pool = QuestionPool(
+                user_id=test_app.admin_id,
+                name="nonempty-pool",
+                auto_sync_enabled=False,
+            )
+            db.add(pool)
+            db.flush()
+            db.add(
+                QuestionItem(
+                    pool_id=pool.id,
+                    record_id="nonempty-question",
+                    fields={},
+                    question_text="真实问题",
+                    source_active=True,
+                )
+            )
+            db.commit()
+            pool_id = pool.id
+
+        user_response = test_app.client.get("/api/generation/question-pools")
+        assert user_response.status_code == 200, user_response.text
+        user_row = next(row for row in user_response.json() if row["id"] == pool_id)
+        assert QuestionPoolRead.model_validate(user_row).auto_sync_enabled is False
+        assert user_row["pending_count"] == 1
+
+        mcp_response = test_app.client.get(
+            "/api/mcp/question-pools",
+            headers={"X-MCP-Token": "secret"},
+        )
+        assert mcp_response.status_code == 200, mcp_response.text
+        mcp_row = next(row for row in mcp_response.json() if row["id"] == pool_id)
+        assert QuestionPoolRead.model_validate(mcp_row).auto_sync_enabled is False
+        assert mcp_row["pending_count"] == 1
+    finally:
+        test_app.cleanup()
+
+
+@pytest.mark.mysql
+def test_fastmcp_list_question_pools_uses_real_geo_api_client_and_http(monkeypatch):
+    """FastMCP tool -> GeoApiClient -> mounted FastAPI route 的非空池回归。"""
+    from server.app.modules.ai_generation.models import QuestionItem, QuestionPool
+    from server.app.modules.ai_generation.schemas import QuestionPoolRead
+    from server.mcp.http_client import GeoApiClient
+    from server.mcp.server import mcp
+    from server.mcp.tools import catalog
+    from server.tests.utils import build_test_app
+
+    test_app = build_test_app(monkeypatch)
+    try:
+        monkeypatch.setenv("GEO_MCP_TOKEN", "secret")
+        from server.app.core import config
+
+        config.get_settings.cache_clear()
+        with test_app.session_factory() as db:
+            pool = QuestionPool(
+                user_id=test_app.admin_id,
+                name="fastmcp-nonempty",
+                auto_sync_enabled=True,
+            )
+            db.add(pool)
+            db.flush()
+            db.add(
+                QuestionItem(
+                    pool_id=pool.id,
+                    record_id="fastmcp-question",
+                    fields={},
+                    question_text="FastMCP 问题",
+                    source_active=True,
+                )
+            )
+            db.commit()
+            pool_id = pool.id
+
+        def forward_to_test_app(request: httpx.Request) -> httpx.Response:
+            response = test_app.client.request(
+                request.method,
+                request.url.path,
+                headers=dict(request.headers),
+            )
+            return httpx.Response(
+                status_code=response.status_code,
+                headers=response.headers,
+                content=response.content,
+                request=request,
+            )
+
+        transport = httpx.MockTransport(forward_to_test_app)
+        monkeypatch.setattr(
+            catalog,
+            "_client",
+            lambda: GeoApiClient(
+                base_url="http://testserver",
+                token="secret",
+                transport=transport,
+            ),
+        )
+
+        result = asyncio.run(mcp._tool_manager._tools["list_question_pools"].fn())
+
+        assert result["ok"] is True, result
+        row = next(item for item in result["data"] if item["id"] == pool_id)
+        assert QuestionPoolRead.model_validate(row).auto_sync_enabled is True
+        assert row["pending_count"] == 1
+    finally:
+        test_app.cleanup()
 
 
 @pytest.mark.mysql

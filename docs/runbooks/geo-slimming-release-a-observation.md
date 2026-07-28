@@ -37,7 +37,11 @@ Run these read-only SQL queries against the production reporting connection and 
 ```sql
 SELECT action, COUNT(*), MAX(created_at)
 FROM audit_logs
-WHERE action LIKE 'generation_scheme.%'
+WHERE (
+    action LIKE 'generation_scheme.%'
+    OR action LIKE 'generation_scheme_run.%'
+    OR action = 'generation_scheme_run.create'
+  )
   AND created_at >= UTC_TIMESTAMP() - INTERVAL 7 DAY
 GROUP BY action;
 

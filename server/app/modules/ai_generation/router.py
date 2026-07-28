@@ -4,7 +4,7 @@
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -211,7 +211,7 @@ def list_question_items(
         )
     if status == "consumed":
         return []
-    availability = "all" if status == "all" else "active"
+    availability: Literal["active", "all"] = "all" if status == "all" else "active"
     pool = _get_pool_or_404(db, pool_id)
     return [
         qb.question_item_to_read(item)

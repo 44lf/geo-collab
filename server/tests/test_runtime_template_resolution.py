@@ -141,20 +141,38 @@ def test_pick_valid_template_role_aware(monkeypatch):
 
 @pytest.mark.mysql
 def test_pick_valid_template_deduplicates_and_preserves_candidate_order(monkeypatch):
-    """重复候选不会改变基于固定随机源的模板选择。"""
+    """重复候选只解析一次，且固定随机源仍受首见顺序影响。"""
     app = build_test_app(monkeypatch)
     try:
-        from server.app.modules.ai_generation.runtime_templates import pick_valid_template
+        from server.app.modules.ai_generation import runtime_templates
 
         first = _mk_template(app, user_id=app.admin_id, name="first")
         second = _mk_template(app, user_id=app.admin_id, name="second")
+        real_get = runtime_templates.get_runtime_prompt_template
+        resolved_ids: list[int] = []
+
+        def tracking_get(db, template_id, **kwargs):
+            resolved_ids.append(template_id)
+            return real_get(db, template_id, **kwargs)
+
+        monkeypatch.setattr(runtime_templates, "get_runtime_prompt_template", tracking_get)
         with app.session_factory() as db:
-            result = pick_valid_template(
+            deduplicated = runtime_templates.pick_valid_template(
                 db, [first, first, second], user_id=app.admin_id, rng=random.Random(7)
             )
+            without_duplicate = runtime_templates.pick_valid_template(
+                db, [first, second], user_id=app.admin_id, rng=random.Random(7)
+            )
+            reversed_order = runtime_templates.pick_valid_template(
+                db, [second, first], user_id=app.admin_id, rng=random.Random(7)
+            )
 
-        assert result is not None
-        assert result.id in {first, second}
+        assert resolved_ids == [first, second, first, second, second, first]
+        assert deduplicated is not None
+        assert without_duplicate is not None
+        assert reversed_order is not None
+        assert deduplicated.id == without_duplicate.id
+        assert reversed_order.id != deduplicated.id
     finally:
         app.cleanup()
 

@@ -10,7 +10,8 @@ Pipeline 的运行快照冻结，后台执行在 API 进程内进行；它不是
 `save_article` 写入站内；这条路径不要求 GEO 再调用 LiteLLM。Loop skill / ZIP / SHA 安装兼容性必须保留。
 
 `/ai` 只做前端兼容重定向至 `/agents`，不再提供站内生文界面。旧的
-`/api/generation/sessions`（LangGraph 会话）为 410，模块和历史表保留但不再运行。
+`POST /api/generation/sessions`（LangGraph 会话创建）为 410；已存在会话仍可通过
+`GET /api/generation/sessions/{session_id}` 按原有鉴权读取历史。模块和历史表保留但不再运行。
 
 ## 保留的兼容接口
 

@@ -175,10 +175,11 @@
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST/GET | `/api/generation/sessions` 等旧会话路径 | cookie | 已退役，410；站内生文请使用 `/api/pipelines/*` |
+| POST | `/api/generation/sessions` | cookie | 已退役，410；站内生文请使用 `/api/pipelines/*` |
+| GET | `/api/generation/sessions/{session_id}` | cookie | 历史会话详情仍可读；非属主按 404 隐藏，admin 可读 |
 | GET | `/api/generation/question-pools` | cookie | 共享选题池列表 |
 | POST | `/api/generation/question-pools` | cookie | 建选题池 |
-| POST | `/api/generation/question-pools/{pool_id}/sync` | cookie | 从飞书多维表同步（返回 `{total, added, updated, skipped_consumed}`） |
+| POST | `/api/generation/question-pools/{pool_id}/sync` | cookie | 从飞书多维表同步（返回 `{total, added, updated, reactivated, deactivated}`） |
 | GET | `/api/generation/question-pools/{pool_id}/items` | cookie | 默认/`pending` 仅 `source_active`；`all` 全部；`consumed` 空；未知值 400；DTO 兼容 `pending`/`null` |
 | GET | `/api/generation/ai-engines`、`/format-engines` | cookie | Pipeline 与兼容客户端可读的模型候选 |
 | GET | `/api/generation/schemes`、`/{id}`、`/{id}/runs`、`/scheme-runs/{run_id}` | cookie | Release A 历史只读接口 |
@@ -261,7 +262,7 @@ MCP 保留 39 个 tools（含问题读取、`save_article`、模板表现和 Loo
 | 任务 | `/api/tasks` | 9 | cookie |
 | 发布记录 | `/api/publish-records` | 3 | cookie |
 | 智能体工作流 | `/api/pipelines` | 见 Swagger | cookie；站内唯一生文入口 |
-| 生文兼容接口 | `/api/generation` | 见第 6 节 | cookie；问题池/引擎/方案历史只读，旧 sessions 与 scheme 写均 410 |
+| 生文兼容接口 | `/api/generation` | 见第 6 节 | cookie；问题池/引擎/方案及 session 历史只读，session 创建与 scheme 写均 410 |
 | MCP / Loop skill | `/api/mcp` + `/mcp` | 39 tools | user JWT 或 MCP token，站外生文入口 |
 | 旧 Skill | `/api/skills` | 0（未挂载） | 模块/表保留为历史兼容；所有 HTTP 路径不可用 |
 | 模板 | `/api/prompt-templates` | 5 | cookie |

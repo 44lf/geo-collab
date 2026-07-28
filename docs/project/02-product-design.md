@@ -148,7 +148,8 @@ Geo 协作平台
 ```
 
 Pipeline 是站内唯一生文入口；MCP 是站外入口，并继续兼容 Loop skill ZIP/SHA/install。
-`/ai` 只重定向到 `/agents`，`/api/generation/sessions` 已退役为 410。
+`/ai` 只重定向到 `/agents`，`POST /api/generation/sessions` 已退役为 410；
+`GET /api/generation/sessions/{session_id}` 继续按用户私有规则读取历史会话。
 
 问题库可从飞书多维表同步。`source_active` 是唯一可用性语义，DTO 仍提供兼容的
 `status="pending"` 与 `article_id=null`：`consumed` 返回空列表，未知 status 返回 400。
@@ -200,7 +201,9 @@ pending/queued ─────────────────────�
 
 ### 5.5 旧生成会话 GenerationSession.status
 
-该状态机只解释历史表记录；Release A 不会创建或推进这些状态。`/api/generation/sessions` 已 410，当前生文运行状态请查看 Pipeline run。
+该状态机只解释历史表记录；Release A 不会创建或推进这些状态。
+`POST /api/generation/sessions` 已 410，历史 `GET /api/generation/sessions/{session_id}`
+仍可读；当前生文运行状态请查看 Pipeline run。
 
 ---
 

@@ -1,7 +1,9 @@
-"""Release A scheme-history 路由（挂在 /api/generation 下）。
+"""Release A scheme-history 与 retired mutation 路由（挂在 /api/generation 下）。
 
-方案 list/detail/history GET 只读保留；所有 HTTP 写操作统一 410。历史 executor
-与 service 留给旧运行记录读取/内部兼容，不能由此路由启动新运行。
+``scheme_router`` 只保留需要 user auth + DB 的 list/detail/history GET。
+``retired_scheme_router`` 单独承载五个无 body、无 auth、无 DB 的 410 写入口，确保请求
+在 Pydantic、鉴权、属主查询和数据库依赖之前终止。历史 executor 与 service 仅留给旧运行
+记录读取/内部兼容，不能由 HTTP 路由启动新运行。
 """
 
 from __future__ import annotations
@@ -20,19 +22,17 @@ from server.app.modules.ai_generation.models import (
     GenerationSchemeRunTask,
 )
 from server.app.modules.ai_generation.schemas import (
-    SchemeCreate,
     SchemeLineQuestionRead,
     SchemeLineRead,
-    SchemePatch,
     SchemeRead,
     SchemeRunRead,
     SchemeRunSummary,
     SchemeRunTaskRead,
-    SchemeUpdate,
 )
 from server.app.modules.system.models import User
 
 scheme_router = APIRouter()
+retired_scheme_router = APIRouter()
 
 # 历史兼容占位：create_app() 仍可注入会话工厂，但 Release A HTTP 路由不使用它启动方案运行。
 bg_session_factory: Any = None
@@ -85,12 +85,8 @@ def list_schemes(
     return [_scheme_to_read(db, s) for s in schemes]
 
 
-@scheme_router.post("/schemes", response_model=None, status_code=410)
-def create_scheme(
-    payload: SchemeCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Any:
+@retired_scheme_router.post("/schemes", response_model=None, status_code=410)
+def create_scheme() -> NoReturn:
     _scheme_retired()
 
 
@@ -104,32 +100,18 @@ def get_scheme(
     return _scheme_to_read(db, scheme)
 
 
-@scheme_router.put("/schemes/{scheme_id}", response_model=None, status_code=410)
-def update_scheme(
-    scheme_id: int,
-    payload: SchemeUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Any:
+@retired_scheme_router.put("/schemes/{scheme_id}", response_model=None, status_code=410)
+def update_scheme(scheme_id: int) -> NoReturn:
     _scheme_retired()
 
 
-@scheme_router.patch("/schemes/{scheme_id}", response_model=None, status_code=410)
-def patch_scheme(
-    scheme_id: int,
-    payload: SchemePatch,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Any:
+@retired_scheme_router.patch("/schemes/{scheme_id}", response_model=None, status_code=410)
+def patch_scheme(scheme_id: int) -> NoReturn:
     _scheme_retired()
 
 
-@scheme_router.delete("/schemes/{scheme_id}", status_code=410, response_model=None)
-def delete_scheme(
-    scheme_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> None:
+@retired_scheme_router.delete("/schemes/{scheme_id}", status_code=410, response_model=None)
+def delete_scheme(scheme_id: int) -> NoReturn:
     _scheme_retired()
 
 
@@ -155,12 +137,8 @@ def _run_to_read(db: Session, run: GenerationSchemeRun) -> SchemeRunRead:
     )
 
 
-@scheme_router.post("/schemes/{scheme_id}/runs", response_model=None, status_code=410)
-def create_scheme_run(
-    scheme_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Any:
+@retired_scheme_router.post("/schemes/{scheme_id}/runs", response_model=None, status_code=410)
+def create_scheme_run(scheme_id: int) -> NoReturn:
     _scheme_retired()
 
 
