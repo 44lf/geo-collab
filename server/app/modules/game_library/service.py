@@ -7,9 +7,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from server.app.core.time import utcnow
-from server.app.modules.articles.formatting.document import _normalize_game_name
 from server.app.modules.game_library import types
 from server.app.modules.game_library.models import Game, GameTag
+from server.app.modules.game_library.normalization import (
+    normalize_game_name as _normalize_game_name,
+)
 from server.app.modules.image_library.models import StockCategory
 from server.app.modules.image_library.service import (
     get_or_create_companion_category,
