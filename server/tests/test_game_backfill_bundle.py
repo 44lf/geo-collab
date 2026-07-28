@@ -4,9 +4,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.orm import sessionmaker
 
 from server.app.modules.game_library import backfill_bundle
+from server.app.modules.game_library.models import Game as GameRow
+from server.app.modules.image_library import service as image_service
+from server.app.modules.image_library import store as minio_store
+from server.app.modules.image_library.models import StockCategory, StockImage
 from server.scripts import remote_game_bundle_import
+from server.tests.utils import build_test_engine, reset_test_database
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
 JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 24
@@ -419,3 +425,64 @@ def test_import_rejects_category_drift_without_upsert(tmp_path):
     assert result["failed"] == 1
     assert "category changed" in result["targets"][0]["error"]
     assert session.rollbacks == 1
+
+
+@pytest.mark.mysql
+def test_import_is_idempotent_against_mysql_and_image_store_contract(tmp_path, monkeypatch):
+    root = _valid_bundle(tmp_path)
+    _rewrite_game_payload(root, lambda payload: payload.update(category_id=None))
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["targets"][0]["category_id"] = None
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    engine = build_test_engine()
+    session_factory = sessionmaker(bind=engine)
+    uploads = []
+    monkeypatch.setattr(image_service, "slugify_bucket", lambda name: f"test-{len(name)}")
+    monkeypatch.setattr(minio_store, "ensure_bucket", lambda _bucket: None)
+    monkeypatch.setattr(
+        minio_store,
+        "upload_image",
+        lambda bucket, key, data, content_type: uploads.append(
+            (bucket, key, len(data), content_type)
+        ),
+    )
+
+    try:
+        with session_factory() as db:
+            db.add(
+                GameRow(
+                    id=42,
+                    name="原神",
+                    name_normalized="原神",
+                    sources=[],
+                    platforms=[],
+                    screenshot_urls=[],
+                )
+            )
+            db.commit()
+
+        first = remote_game_bundle_import.run_import(
+            root,
+            dry_run=False,
+            session_factory=session_factory,
+        )
+        second = remote_game_bundle_import.run_import(
+            root,
+            dry_run=False,
+            session_factory=session_factory,
+        )
+
+        assert first["imported"] == 1 and first["failed"] == 0, first["targets"][0]
+        assert second["imported"] == 1 and second["failed"] == 0, second["targets"][0]
+        with session_factory() as db:
+            game = db.get(GameRow, 42)
+            assert game is not None
+            assert game.sources == [{"source": "taptap", "source_game_id": "168332"}]
+            assert game.icon_url.startswith("/api/stock-images/")
+            assert db.query(StockCategory).count() == 2
+            assert db.query(StockImage).count() == 2
+        assert len(uploads) == 2
+    finally:
+        reset_test_database(engine)
+        engine.dispose()

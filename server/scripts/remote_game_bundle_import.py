@@ -119,7 +119,7 @@ def run_import(
             game_row = db.get(GameRow, target.target_game_id)
             if game_row is None:
                 raise RuntimeError(f"production game {target.target_game_id} not found")
-            if game_row.stock_category_id != target.category_id:
+            if target.category_id is not None and game_row.stock_category_id != target.category_id:
                 raise RuntimeError(
                     f"production game {target.target_game_id} category changed: "
                     f"bundle={target.category_id} current={game_row.stock_category_id}"
