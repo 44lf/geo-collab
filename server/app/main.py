@@ -50,7 +50,7 @@ from server.app.core.security import get_current_user
 from server.app.modules.accounts.router import router as accounts_router
 from server.app.modules.ai_generation.router import mcp_router as generation_mcp_router
 from server.app.modules.ai_generation.router import router as generation_router
-from server.app.modules.ai_generation.scheme_router import scheme_router
+from server.app.modules.ai_generation.scheme_router import retired_scheme_router, scheme_router
 from server.app.modules.ai_models.router import router as ai_models_router
 from server.app.modules.articles.router import (
     article_groups_router,
@@ -421,6 +421,12 @@ def create_app() -> FastAPI:
         prefix="/api/generation",
         tags=["generation-schemes"],
         dependencies=[Depends(get_current_user)],
+    )
+    app.include_router(
+        retired_scheme_router,
+        prefix="/api/generation",
+        tags=["generation-schemes-retired"],
+        # 退役写入口必须在 body/auth/DB 依赖前直接 410；只读 scheme_router 仍保持 user auth。
     )
     app.include_router(
         pipelines_router,

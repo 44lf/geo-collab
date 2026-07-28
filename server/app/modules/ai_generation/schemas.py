@@ -46,6 +46,7 @@ class QuestionPoolRead(BaseModel):
     last_synced_at: datetime | None
     created_at: datetime
     pending_count: int = 0
+    auto_sync_enabled: bool
 
     model_config = ConfigDict(from_attributes=True)
 

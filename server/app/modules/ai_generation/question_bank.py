@@ -12,12 +12,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
 from server.app.core.time import utcnow
 from server.app.modules.ai_generation.models import CategoryUsage, QuestionItem, QuestionPool
+from server.app.modules.ai_generation.schemas import QuestionItemRead
 from server.app.shared.errors import ClientError, ValidationError
 
 # 飞书表里的字段名（同步时按这些名抽进专用列；如表头变了改这里即可）
@@ -194,11 +195,47 @@ def sync_pool(db: Session, pool: QuestionPool) -> dict[str, int]:
 # ── 队列读取 / 出队 ──────────────────────────────────────────────────────────
 
 
-def list_items(db: Session, pool_id: int, *, status: str | None = "pending") -> list[QuestionItem]:
-    q = db.query(QuestionItem).filter(QuestionItem.pool_id == pool_id)
-    if status is not None:
-        q = q.filter(QuestionItem.status == status)
-    return q.order_by(QuestionItem.id.asc()).all()
+def list_items(
+    db: Session,
+    pool_id: int,
+    *,
+    availability: Literal["active", "all"] = "active",
+) -> list[QuestionItem]:
+    query = db.query(QuestionItem).filter(QuestionItem.pool_id == pool_id)
+    if availability == "active":
+        query = query.filter(QuestionItem.source_active.is_(True))
+    return query.order_by(QuestionItem.id).all()
+
+
+def question_item_to_read(item: QuestionItem) -> QuestionItemRead:
+    """Project mirror rows onto the legacy queue-shaped response DTO."""
+    return QuestionItemRead(
+        id=item.id,
+        record_id=item.record_id,
+        fields=item.fields,
+        question_text=question_text_of(item),
+        category=item.category,
+        source_active=item.source_active,
+        status="pending",
+        article_id=None,
+    )
+
+
+def question_types(db: Session, pool_id: int) -> list[tuple[str | None, list[QuestionItem]]]:
+    """Group active source questions by category in stable item order."""
+    items = (
+        db.query(QuestionItem)
+        .filter(
+            QuestionItem.pool_id == pool_id,
+            QuestionItem.source_active.is_(True),
+        )
+        .order_by(QuestionItem.id)
+        .all()
+    )
+    grouped: dict[str | None, list[QuestionItem]] = {}
+    for item in items:
+        grouped.setdefault(item.category, []).append(item)
+    return list(grouped.items())
 
 
 def get_items(db: Session, item_ids: list[int]) -> list[QuestionItem]:

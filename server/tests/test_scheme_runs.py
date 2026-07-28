@@ -3,8 +3,9 @@
 LiteLLM mock，不真实出网。
 """
 
-import time
 from types import SimpleNamespace
+
+import pytest
 
 from server.tests.utils import build_test_app
 
@@ -380,9 +381,17 @@ def test_run_scheme_uses_snapshot_and_does_not_touch_pool(monkeypatch):
         app.cleanup()
 
 
-def test_post_run_endpoint_executes_async(monkeypatch):
+def test_post_run_endpoint_is_retired_without_dispatch_or_writes(monkeypatch):
     app = build_test_app(monkeypatch)
     try:
+        from server.app.modules.ai_generation import scheme_executor
+        from server.app.modules.ai_generation.models import (
+            GenerationSchemeRun,
+            GenerationSchemeRunTask,
+        )
+        from server.app.modules.articles.models import Article
+        from server.app.modules.audit.models import AuditLog
+
         pool_id, ids, uid, tpl = _seed(app)
         scheme_id = _create_scheme(
             app,
@@ -397,31 +406,38 @@ def test_post_run_endpoint_executes_async(monkeypatch):
             ],
             uid,
         )
-        monkeypatch.setattr("litellm.completion", lambda **kw: _fake_completion("# T\n\nx"))
+        monkeypatch.setattr(
+            scheme_executor,
+            "submit_scheme_run",
+            lambda *args, **kwargs: pytest.fail("retired route must not dispatch an executor"),
+        )
+        with app.session_factory() as db:
+            before = {
+                "runs": db.query(GenerationSchemeRun).count(),
+                "tasks": db.query(GenerationSchemeRunTask).count(),
+                "articles": db.query(Article).count(),
+                "audits": db.query(AuditLog).count(),
+            }
 
         r = app.client.post(f"/api/generation/schemes/{scheme_id}/runs")
-        assert r.status_code == 202, r.text
-        run_id = r.json()["run_id"]
-
-        data = None
-        for _ in range(50):
-            data = app.client.get(f"/api/generation/scheme-runs/{run_id}").json()
-            if data["status"] in ("done", "partial_failed", "failed"):
-                break
-            time.sleep(0.1)
-        assert data is not None and data["status"] == "done", data
-        assert len(data["tasks"]) == 1
-        assert data["tasks"][0]["actual_prompt_template_id"] == tpl
+        assert r.status_code == 410, r.text
+        assert r.json()["detail"] == "方案生文已停用，请使用智能体工作流"
+        with app.session_factory() as db:
+            after = {
+                "runs": db.query(GenerationSchemeRun).count(),
+                "tasks": db.query(GenerationSchemeRunTask).count(),
+                "articles": db.query(Article).count(),
+                "audits": db.query(AuditLog).count(),
+            }
+        assert after == before
     finally:
         app.cleanup()
 
 
-def test_post_run_returns_503_when_bg_not_injected(monkeypatch):
-    """Task 21: bg_session_factory 未注入时标 run failed + 返回 503，不再撒谎 202。"""
+def test_post_run_is_retired_even_without_bg_executor(monkeypatch):
     app = build_test_app(monkeypatch)
     try:
         from server.app.modules.ai_generation import scheme_router
-        from server.app.modules.ai_generation.models import GenerationSchemeRun
 
         pool_id, ids, uid, tpl = _seed(app)
         scheme_id = _create_scheme(
@@ -440,13 +456,7 @@ def test_post_run_returns_503_when_bg_not_injected(monkeypatch):
         monkeypatch.setattr(scheme_router, "bg_session_factory", None)
 
         r = app.client.post(f"/api/generation/schemes/{scheme_id}/runs")
-        assert r.status_code == 503, r.text
-        body = r.json()
-        assert body["status"] == "failed"
-        with app.session_factory() as db:
-            run = db.get(GenerationSchemeRun, body["run_id"])
-            assert run is not None and run.status == "failed"
-            assert run.error_message
+        assert r.status_code == 410, r.text
     finally:
         app.cleanup()
 

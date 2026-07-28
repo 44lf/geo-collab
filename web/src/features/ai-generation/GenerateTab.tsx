@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight, Database, Layers, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import {
   deleteScheme,
-  listAiEngines,
-  listQuestionPools,
   listSchemeRuns,
   listSchemes,
   patchScheme,
   startSchemeRun,
 } from "../../api/ai-generation";
+import { listAiEngines } from "../../api/generation-engines";
+import { listQuestionPools } from "../../api/question-pools";
 import { useToast } from "../../components/Toast";
 import type { AiEngine, QuestionPool, Scheme, SchemeRunStatus, SchemeRunSummary } from "../../types";
 import { PoolManagerModal } from "./PoolManagerModal";
