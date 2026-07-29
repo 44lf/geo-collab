@@ -10,6 +10,7 @@ import pytest
 from server.app.modules.collector.consumer_cli import (
     ConsumerStartupError,
     build_consumer_command,
+    build_default_runtime,
     build_shutdown_handler,
     load_consumer_settings,
     main,
@@ -317,6 +318,30 @@ def test_environment_and_container_command_are_pure_and_validated():
             hostname="geo-consumer",
             pid=42,
         )
+
+
+def test_standalone_runtime_registers_complete_orm_metadata():
+    from sqlalchemy.orm import configure_mappers
+
+    from server.app.db.base import Base
+
+    runtime = build_default_runtime(
+        ConsumerConfig(
+            worker_id="consumer-registry-test",
+            batch_size=1,
+            poll_interval=timedelta(seconds=1),
+            lease_duration=timedelta(seconds=30),
+        ),
+        lambda _event: None,
+    )
+
+    configure_mappers()
+    assert runtime is not None
+    assert "articles" in Base.metadata.tables
+    assert "stock_categories" in Base.metadata.tables
+    for table in Base.metadata.tables.values():
+        for foreign_key in table.foreign_keys:
+            assert foreign_key.column.table.key in Base.metadata.tables
 
 
 def test_signal_handler_is_pure_until_called_and_idempotently_requests_shutdown():

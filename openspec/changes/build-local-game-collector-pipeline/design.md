@@ -120,8 +120,11 @@ stateless apart from MySQL/MinIO and provides:
 
 Large Bundle bytes do not flow through the Gateway application process. The Collector uploads
 directly to the Inbox with a pre-signed URL, then calls `complete`. The Gateway HEAD-checks object
-identity and declared size/metadata before atomically moving the transfer row to `READY`.
-Reissuing an expired upload URL or repeating `complete` for the same immutable transfer is safe.
+identity and declared size before atomically moving the transfer row to `READY`. When the object
+store's standard pre-signed PUT cannot sign checksum metadata headers, the Gateway streams the
+private Inbox object once to recompute SHA-256 at completion; the Consumer independently verifies
+the archive again before extraction. Reissuing an expired upload URL or repeating `complete` for
+the same immutable transfer is safe.
 
 Phase 1 authentication uses TLS plus a revocable per-collector credential stored through the local
 OS secret store and hashed server-side. IP restrictions are additive, not the identity mechanism,

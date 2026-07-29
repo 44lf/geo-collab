@@ -201,10 +201,11 @@ def record_heartbeat(
     )
     if node is None or node.status != "enabled" or node.destination != destination:
         raise TelemetryValidationError("resource is outside collector scope")
+    if not set(heartbeat.enabled_sources).issubset(set(node.enabled_sources or [])):
+        raise TelemetryValidationError("enabled_sources are outside collector scope")
     now = received_at or utcnow()
     node.platform = heartbeat.platform
     node.agent_version = heartbeat.agent_version
-    node.enabled_sources = list(heartbeat.enabled_sources)
     node.current_run_id = heartbeat.current_run_id
     node.current_stage = heartbeat.current_stage
     node.spool_pending_count = heartbeat.spool_pending_count

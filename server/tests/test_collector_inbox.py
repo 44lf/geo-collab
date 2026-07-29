@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
@@ -68,6 +69,27 @@ class _DownloadResponse(BytesIO):
 
     def release_conn(self):
         self.released = True
+
+
+def test_stat_object_streams_sha256_when_presigned_put_has_no_metadata():
+    payload = b"bundle-without-signed-metadata"
+    response = _DownloadResponse(payload)
+    client = _FakeMinio()
+    client.stat_object = lambda bucket, key: SimpleNamespace(
+        size=len(payload),
+        metadata={},
+    )
+    client.get_object = lambda bucket, key: response
+    inbox = MinioCollectorInbox(client=client, bucket="collector-inbox")
+
+    metadata = inbox.stat_object(
+        object_key="incoming/collector/transport.tar.zst",
+    )
+
+    assert metadata.size_bytes == len(payload)
+    assert metadata.sha256 == hashlib.sha256(payload).hexdigest()
+    assert response.closed is True
+    assert response.released is True
 
 
 def test_download_streams_fixed_key_and_closes_connection(tmp_path: Path):

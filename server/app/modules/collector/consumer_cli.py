@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TextIO, cast
 
+from server.app.db.model_registry import register_orm_models
 from server.app.modules.collector.consumer_runtime import (
     ConsumerConfig,
     ConsumerProcessor,
@@ -146,6 +147,7 @@ def build_shutdown_handler(
 def build_default_runtime(config: ConsumerConfig, event_sink: EventSink) -> ConsumerRuntime:
     """Late-bind DB and processing modules so pure CLI helpers stay import-safe."""
 
+    register_orm_models()
     try:
         processing_module = importlib.import_module(
             "server.app.modules.collector.consumer_processing"

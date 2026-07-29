@@ -62,7 +62,9 @@ immutable archive identity, job, and destination.
 
 ### Requirement: Upload completion boundary
 The Gateway SHALL move a transfer to `READY` only after validating that the expected Inbox object
-exists and matches the declared object key, size, and integrity metadata.
+exists and matches the declared object key, size, and SHA-256, using signed integrity metadata
+when available or an independent server-side digest when the object store cannot sign metadata
+headers in a standard pre-signed PUT.
 
 #### Scenario: Upload completion succeeds
 - **WHEN** the Collector completes an uploaded object that matches the transfer declaration

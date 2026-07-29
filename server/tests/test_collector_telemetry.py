@@ -51,8 +51,8 @@ def _event(identity: str = "event-1", **changes) -> CollectorEventInput:
     return CollectorEventInput(**values)
 
 
-def test_heartbeat_updates_only_authenticated_node_and_server_receive_time():
-    node = _node()
+def test_heartbeat_updates_runtime_state_without_overwriting_server_source_scope():
+    node = _node(enabled_sources=["baidu", "taptap"])
     db = MagicMock()
     db.scalar.return_value = node
 
@@ -78,6 +78,32 @@ def test_heartbeat_updates_only_authenticated_node_and_server_receive_time():
     assert node.spool_pending_count == 3
     assert node.enabled_sources == ["baidu", "taptap"]
     db.flush.assert_called_once()
+
+
+def test_heartbeat_cannot_expand_server_source_scope():
+    node = _node(enabled_sources=["baidu"])
+    db = MagicMock()
+    db.scalar.return_value = node
+
+    with pytest.raises(TelemetryValidationError, match="enabled_sources"):
+        record_heartbeat(
+            db,
+            collector_id="collector-local-1",
+            destination="geo-production",
+            heartbeat=HeartbeatInput(
+                platform="Windows",
+                agent_version="0.1.0",
+                enabled_sources=("baidu", "taptap"),
+                current_run_id="run-1",
+                current_stage="collect",
+                spool_pending_count=0,
+            ),
+            received_at=NOW,
+        )
+
+    assert node.enabled_sources == ["baidu"]
+    assert node.last_heartbeat_at is None
+    db.flush.assert_not_called()
 
 
 def test_cross_destination_heartbeat_is_rejected_without_mutation():

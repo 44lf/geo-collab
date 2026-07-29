@@ -213,7 +213,11 @@ def _upload_response(
         required_sha256=authorization.required_sha256,
         required_size=authorization.required_size,
         expires_at=authorization.expires_at,
-        required_headers={"x-amz-meta-sha256": authorization.required_sha256},
+        # minio-py presigned PUT URLs sign only the host header. Sending an
+        # additional unsigned x-amz-meta-* header is rejected by MinIO. The
+        # completion boundary independently streams and hashes the private
+        # Inbox object when signed checksum metadata is unavailable.
+        required_headers={},
     )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -41,6 +42,16 @@ class MinioCollectorInbox:
             or metadata.get("sha256")
             or ""
         )
+        if not sha256:
+            response = self._client.get_object(self._bucket, object_key)
+            digest = hashlib.sha256()
+            try:
+                for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                sha256 = digest.hexdigest()
+            finally:
+                response.close()
+                response.release_conn()
         return InboxObjectMetadata(
             object_key=object_key,
             size_bytes=int(stat.size),

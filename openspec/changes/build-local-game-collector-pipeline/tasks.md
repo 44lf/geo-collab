@@ -147,6 +147,10 @@
 - [ ] 10.2 Deploy the new Gateway, Inbox policy, Consumer, and management view to DEV only, then
   run one bounded local four-source schedule through Bundle upload, geo_dev/business-MinIO import,
   processed receipt, local cleanup eligibility, and Web timeline.
+  - Isolated DEV checkpoint passed on 2026-07-29, including processed receipt, independent
+    archive/business-object hash verification, Web timeline, and restart/resume evidence. See
+    `dev-test-2026-07-29.md`. This remains unchecked because shared `geo_dev` has an unreconciled
+    Alembic revision and was not modified.
 - [ ] 10.3 Inject local Agent restart, network interruption, expired upload authorization,
   duplicate complete, Gateway restart, Consumer crash after partial item commits, and DEV outage,
   proving no Bundle loss or duplicate logical data.

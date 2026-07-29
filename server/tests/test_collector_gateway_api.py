@@ -108,6 +108,7 @@ def test_transfer_create_api_returns_ephemeral_upload_without_persisting_url(mon
     assert body["state"] == "created"
     assert body["upload"]["object_key"] == transfer.object_key
     assert body["upload"]["required_sha256"] == SHA256
+    assert body["upload"]["required_headers"] == {}
     assert body["upload"]["upload_url"].startswith("https://inbox.invalid/")
     assert "upload_url" not in set(CollectorTransfer.__table__.columns.keys())
 
@@ -167,7 +168,7 @@ def test_heartbeat_and_event_endpoints_use_authenticated_collector_scope(monkeyp
         display_name="Local collector",
         destination="geo-production",
         status="enabled",
-        enabled_sources=["baidu"],
+        enabled_sources=["baidu", "taptap"],
     )
     db.scalar.return_value = node
     db.scalars.return_value.all.return_value = []
@@ -207,6 +208,7 @@ def test_heartbeat_and_event_endpoints_use_authenticated_collector_scope(monkeyp
     )
 
     assert heartbeat.status_code == 200
+    assert node.enabled_sources == ["baidu", "taptap"]
     assert heartbeat.json()["collector_id"] == "collector-local-1"
     assert node.destination == "geo-production"
     assert event.status_code == 200
