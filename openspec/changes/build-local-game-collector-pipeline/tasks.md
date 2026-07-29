@@ -160,8 +160,12 @@
     interruption, real authorization expiry, duplicate complete, Gateway restart, dependency
     outage, partial item commit plus Consumer process death, lease reclaim, and replay without
     duplicate logical data. See `fault-injection-2026-07-29.md`.
-- [ ] 10.4 Enable external scheduler mode in DEV, verify the legacy in-process schedulers are not
+- [x] 10.4 Enable external scheduler mode in DEV, verify the legacy in-process schedulers are not
   running, and observe repeated low-frequency scheduled cycles with backlog and log correlation.
+  - Passed on 2026-07-29 with one bounded scheduled Baidu job followed by repeated idle scheduler
+    cycles. The external-mode startup disabled both legacy schedulers; persisted next-due state,
+    heartbeats, JSONL/Gateway/Consumer correlation, one processed receipt, zero backlog, and no
+    duplicate scheduled Job were verified. See `scheduler-observation-2026-07-29.md`.
 - [ ] 10.5 Produce a Phase 1 acceptance and production-readiness report listing passed evidence,
   unresolved risks/open questions, rollback steps, and the separate approvals/infrastructure still
   required; do not deploy, tag, or enable production as part of this change.

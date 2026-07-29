@@ -146,10 +146,10 @@ prove redaction and show placeholder commands; they were excluded from the liter
 ## Acceptance evidence status
 
 Tasks 10.2 and 10.3 now provide the real bounded DEV E2E and fault-injection evidence in
-`dev-test-2026-07-29.md` and `fault-injection-2026-07-29.md`.
+`dev-test-2026-07-29.md` and `fault-injection-2026-07-29.md`. Task 10.4's external scheduler
+cutover and bounded repeated-cycle evidence is in `scheduler-observation-2026-07-29.md`.
 
 The following are still deliberately not claimed:
 
-- external scheduler cutover and repeated observation cycles;
 - a new Docker image build in this checkpoint;
 - any production tag, deployment, credential, database write or scheduler change.
