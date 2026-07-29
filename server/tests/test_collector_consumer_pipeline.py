@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from urllib3.exceptions import MaxRetryError
+
 from server.app.modules.collector.bundle_validation import (
     BundleValidationError,
     BundleValidationLimits,
@@ -210,6 +212,30 @@ def test_temporary_inbox_failure_returns_retry_without_terminal_mutation():
     session = _Session(transfer=transfer, scalars=[job])
     inbox = MagicMock()
     inbox.download_to.side_effect = OSError("MinIO unavailable")
+    processor = ClaimedTransferProcessor(
+        session_factory=lambda: session,
+        inbox=inbox,
+        limits=_limits(),
+        import_service=MagicMock(),
+    )
+
+    result = processor(_claim(), MagicMock())
+
+    assert result.outcome == "retry"
+    assert result.classification == "consumer_dependency_unavailable"
+    assert transfer.status == "processing"
+
+
+def test_minio_connection_retry_exhaustion_is_a_dependency_outage():
+    transfer = _transfer()
+    job = SimpleNamespace(manifest={"targets": []})
+    session = _Session(transfer=transfer, scalars=[job])
+    inbox = MagicMock()
+    inbox.download_to.side_effect = MaxRetryError(
+        pool=None,
+        url="/geo-collector-inbox/object",
+        reason=ConnectionRefusedError(),
+    )
     processor = ClaimedTransferProcessor(
         session_factory=lambda: session,
         inbox=inbox,

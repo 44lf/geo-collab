@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import DisconnectionError, OperationalError, TimeoutError
+from urllib3.exceptions import HTTPError as Urllib3HTTPError
 
 from server.app.core.config import get_settings
 from server.app.core.time import utcnow
@@ -91,7 +92,13 @@ class ClaimedTransferProcessor:
                 classification=exc.classification,
                 error_summary=f"{type(exc).__name__}: {exc}",
             )
-        except (OperationalError, DisconnectionError, TimeoutError, OSError) as exc:
+        except (
+            OperationalError,
+            DisconnectionError,
+            TimeoutError,
+            Urllib3HTTPError,
+            OSError,
+        ) as exc:
             if claim.attempt_count >= self._retry_policy.max_transfer_attempts:
                 return self._terminalize(
                     claim,
