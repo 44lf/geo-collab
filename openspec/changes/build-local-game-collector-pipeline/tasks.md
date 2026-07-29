@@ -166,6 +166,10 @@
     cycles. The external-mode startup disabled both legacy schedulers; persisted next-due state,
     heartbeats, JSONL/Gateway/Consumer correlation, one processed receipt, zero backlog, and no
     duplicate scheduled Job were verified. See `scheduler-observation-2026-07-29.md`.
-- [ ] 10.5 Produce a Phase 1 acceptance and production-readiness report listing passed evidence,
+- [x] 10.5 Produce a Phase 1 acceptance and production-readiness report listing passed evidence,
   unresolved risks/open questions, rollback steps, and the separate approvals/infrastructure still
   required; do not deploy, tag, or enable production as part of this change.
+  - Completed on 2026-07-29. Controlled DEV is GO; production remains NO-GO until a separate
+    explicitly approved rollout satisfies the security, DBA, operations, TLS, credential,
+    supervision, retention, alerting, source-authorization, and canary gates in
+    `phase1-readiness.md`.

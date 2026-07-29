@@ -153,3 +153,6 @@ The following are still deliberately not claimed:
 
 - a new Docker image build in this checkpoint;
 - any production tag, deployment, credential, database write or scheduler change.
+
+The final controlled-DEV acceptance and production NO-GO decision is recorded in
+`phase1-readiness.md`.
