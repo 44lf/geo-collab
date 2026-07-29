@@ -152,9 +152,14 @@
     shared `geo_dev` backup/reconciliation and bounded four-source E2E then passed with independent
     Inbox/Bundle/business-object verification, idempotent claim replay, zero backlog, restored
     test configuration, and authenticated Web timeline evidence. See `dev-test-2026-07-29.md`.
-- [ ] 10.3 Inject local Agent restart, network interruption, expired upload authorization,
+- [x] 10.3 Inject local Agent restart, network interruption, expired upload authorization,
   duplicate complete, Gateway restart, Consumer crash after partial item commits, and DEV outage,
   proving no Bundle loss or duplicate logical data.
+  - Passed on 2026-07-29 using Windows-native processes, isolated
+    `geo_collector_dev_test`, and DEV MinIO. The same immutable Bundle survived Gateway/network
+    interruption, real authorization expiry, duplicate complete, Gateway restart, dependency
+    outage, partial item commit plus Consumer process death, lease reclaim, and replay without
+    duplicate logical data. See `fault-injection-2026-07-29.md`.
 - [ ] 10.4 Enable external scheduler mode in DEV, verify the legacy in-process schedulers are not
   running, and observe repeated low-frequency scheduled cycles with backlog and log correlation.
 - [ ] 10.5 Produce a Phase 1 acceptance and production-readiness report listing passed evidence,

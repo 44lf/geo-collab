@@ -143,13 +143,13 @@ Result: `SECRET_SCAN_NO_MATCHES`.
 Test fixtures and operator documentation intentionally contain obvious words such as `secret` to
 prove redaction and show placeholder commands; they were excluded from the literal-secret gate.
 
-## Remaining acceptance evidence
+## Acceptance evidence status
 
-The following are deliberately not claimed:
+Tasks 10.2 and 10.3 now provide the real bounded DEV E2E and fault-injection evidence in
+`dev-test-2026-07-29.md` and `fault-injection-2026-07-29.md`.
 
-- DEV deployment and a real four-source Bundle through Gateway, Inbox, Consumer, business MinIO,
-  MySQL receipt and Web timeline;
-- live network interruption/auth-expiry/Gateway restart/Consumer crash fault injection in DEV;
+The following are still deliberately not claimed:
+
 - external scheduler cutover and repeated observation cycles;
-- Docker image build, because the local Docker daemon was unavailable;
+- a new Docker image build in this checkpoint;
 - any production tag, deployment, credential, database write or scheduler change.
