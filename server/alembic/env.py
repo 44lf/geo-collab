@@ -3,6 +3,7 @@ from logging.config import fileConfig
 import server.app.modules.accounts.models  # noqa: F401
 import server.app.modules.ai_generation.models  # noqa: F401
 import server.app.modules.articles.models  # noqa: F401
+import server.app.modules.collector.models  # noqa: F401
 import server.app.modules.image_library.models  # noqa: F401
 import server.app.modules.loop_skills.models  # noqa: F401
 import server.app.modules.pipelines.models  # noqa: F401

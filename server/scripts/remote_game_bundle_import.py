@@ -4,33 +4,29 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from server.app.modules.game_library import backfill_bundle, types
-from server.app.modules.game_library.models import Game as GameRow
+from server.app.modules.collector.import_service import (
+    CollectorImportService,
+    SessionFactory,
+    UpsertFunc,
+    canonical_game_from_payload,
+    validated_asset_bytes,
+)
+from server.app.modules.game_library import backfill_bundle
 
-SessionFactory = Callable[[], Any]
-UpsertFunc = Callable[..., Any]
+
+def _to_game(payload: dict[str, Any]):
+    """Backward-compatible private alias for existing diagnostic callers."""
+
+    return canonical_game_from_payload(payload)
 
 
-def _to_game(payload: dict[str, Any]) -> types.Game:
-    raw = payload["game"]
-    return types.Game(
-        source=raw["source"],
-        game_id=raw["game_id"],
-        name=raw["name"],
-        score=raw.get("score"),
-        tags=list(raw.get("tags") or []),
-        platforms=list(raw.get("platforms") or []),
-        comment_count=raw.get("comment_count"),
-        icon_url=raw.get("icon_url"),
-        screenshot_urls=list(raw.get("screenshot_urls") or []),
-        android_package=raw.get("android_package"),
-        description=raw.get("description"),
-        raw=dict(raw.get("raw") or {}),
-    )
+def _asset_bytes(target: backfill_bundle.ValidatedTarget):
+    """Backward-compatible private alias for existing diagnostic callers."""
+
+    return validated_asset_bytes(target)
 
 
 def _plan_target(target: backfill_bundle.ValidatedTarget) -> dict[str, Any]:
@@ -61,23 +57,6 @@ def plan_bundle(bundle_root: str | Path) -> tuple[backfill_bundle.ValidatedBundl
     return bundle, plan
 
 
-def _asset_bytes(
-    target: backfill_bundle.ValidatedTarget,
-) -> tuple[
-    tuple[str, bytes, str] | None,
-    list[tuple[str, bytes, str]],
-]:
-    icon = None
-    screenshots = []
-    for asset in target.assets:
-        item = (asset.source_url or "", asset.path.read_bytes(), asset.media_type)
-        if asset.role == "icon" and icon is None:
-            icon = item
-        elif asset.role == "screenshot":
-            screenshots.append(item)
-    return icon, screenshots
-
-
 def run_import(
     bundle_root: str | Path,
     *,
@@ -91,59 +70,21 @@ def run_import(
         result["dry_run"] = True
         return result
 
-    if session_factory is None:
-        from server.app.db.session import SessionLocal
-
-        session_factory = SessionLocal
-    if upsert_func is None:
-        from server.app.modules.game_library.service import upsert_game
-
-        upsert_func = upsert_game
-
     result["dry_run"] = False
     result["planned"] = sum(target.status == "success" for target in bundle.targets)
+    service = CollectorImportService(
+        session_factory=session_factory,
+        upsert_func=upsert_func,
+    )
     for target, target_result in zip(bundle.targets, result["targets"], strict=True):
-        if target.status != "success":
-            target_result["import_status"] = "skipped"
-            continue
-        if target.game_data is None:
-            # This is guaranteed by validation, but keep the write path defensive.
-            target_result["import_status"] = "failed"
-            target_result["error"] = "validated success target has no game data"
-            result["failed"] += 1
-            continue
-
-        db = session_factory()
-        try:
-            game = _to_game(target.game_data)
-            game_row = db.get(GameRow, target.target_game_id)
-            if game_row is None:
-                raise RuntimeError(f"production game {target.target_game_id} not found")
-            if target.category_id is not None and game_row.stock_category_id != target.category_id:
-                raise RuntimeError(
-                    f"production game {target.target_game_id} category changed: "
-                    f"bundle={target.category_id} current={game_row.stock_category_id}"
-                )
-            icon, screenshots = _asset_bytes(target)
-            upsert_func(
-                db,
-                game,
-                max_screenshots=len(screenshots),
-                pre_downloaded=screenshots,
-                category_id=game_row.stock_category_id,
-                game_row=game_row,
-                pre_downloaded_icon=icon,
-            )
-            db.commit()
-            target_result["import_status"] = "imported"
+        outcome = service.import_refresh_target(target)
+        target_result["import_status"] = outcome.status
+        if outcome.status == "imported":
             result["imported"] += 1
-        except Exception as exc:
-            db.rollback()
-            target_result["import_status"] = "failed"
-            target_result["error"] = f"{type(exc).__name__}: {exc}"
+        elif outcome.status == "failed":
+            if outcome.error:
+                target_result["error"] = outcome.error
             result["failed"] += 1
-        finally:
-            db.close()
     return result
 
 

@@ -25,7 +25,8 @@ export type NavKey =
   | "mcp-connect"
   | "admin"
   | "audit-logs"
-  | "ai-models";
+  | "ai-models"
+  | "collector-management";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 

@@ -48,6 +48,11 @@ const AuditLogsWorkspace = lazy(() =>
 const AiModelsWorkspace = lazy(() =>
   import("./features/system/AiModelsWorkspace").then((m) => ({ default: m.AiModelsWorkspace })),
 );
+const CollectorManagementWorkspace = lazy(() =>
+  import("./features/collector/CollectorManagementWorkspace").then((m) => ({
+    default: m.CollectorManagementWorkspace,
+  })),
+);
 const VideosWorkspace = lazy(() =>
   import("./features/videos/VideosWorkspace").then((m) => ({ default: m.VideosWorkspace })),
 );
@@ -181,6 +186,14 @@ export const router = createBrowserRouter([
         element: (
           <RequireAdmin>
             <AiModelsWorkspace />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: "collector-management",
+        element: (
+          <RequireAdmin>
+            <CollectorManagementWorkspace />
           </RequireAdmin>
         ),
       },

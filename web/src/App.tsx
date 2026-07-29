@@ -8,7 +8,7 @@ import { GlobalErrorListener } from "./components/GlobalErrorListener";
 import { useAuth } from "./features/auth/AuthContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { ChangePasswordPage } from "./features/auth/ChangePasswordPage";
-import { ChevronDown, ChevronLeft, Cpu, LogOut, ScrollText, Users } from "lucide-react";
+import { ChevronDown, ChevronLeft, Cpu, LogOut, ScrollText, ServerCog, Users } from "lucide-react";
 import { MobileNav } from "./components/MobileNav";
 import { MobileMorePage } from "./components/MobileMorePage";
 import { useIsMobile } from "./hooks/useIsMobile";
@@ -29,6 +29,7 @@ const KNOWN_NAV: NavKey[] = [
   "admin",
   "audit-logs",
   "ai-models",
+  "collector-management",
 ];
 
 // 每个 tab 的标题，用于 ErrorBoundary。
@@ -46,6 +47,7 @@ const TAB_TITLES: Record<NavKey, string> = {
   admin: "用户管理",
   "audit-logs": "日志中心",
   "ai-models": "AI 模型管理",
+  "collector-management": "Collector 管理",
 };
 
 // 移动端底栏 4 个高频入口；其余归「更多」分区。
@@ -245,6 +247,17 @@ export function RootLayout() {
                 </button>
               );
             })}
+            {user.role === "admin" && (
+              <button
+                className={`navItem ${activeNav === "collector-management" ? "active" : ""}`}
+                type="button"
+                onClick={() => go("collector-management")}
+              >
+                <ServerCog size={17} />
+                <span>Collector 管理</span>
+                <span className="navDot" />
+              </button>
+            )}
             {user.role === "admin" && (
               <button
                 className={`navItem ${activeNav === "admin" ? "active" : ""}`}

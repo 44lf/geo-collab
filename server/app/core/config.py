@@ -20,7 +20,7 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     # env 总闸：是否起后台线程；起了之后每 tick 再读 DB game_ingest_config.enabled + 时间窗判断
     # 要不要真的干活（按名刷新迁移集，软 LRU）。
     game_ingest_scheduler_enabled: bool = False  # GEO_GAME_INGEST_SCHEDULER_ENABLED
+    # 调度执行所有权：in_process 保持现状；external 仅允许外部 Collector/Gateway 发任务，
+    # GEO web 不再启动补全与扩库线程。两种模式互斥，避免重复爬取。
+    game_ingest_execution_mode: Literal["in_process", "external"] = (
+        "in_process"  # GEO_GAME_INGEST_EXECUTION_MODE
+    )
     # 已废弃：旧「按体裁定时发现」loop 的轮询间隔，新 config-driven loop 不读它。
     # 保留字段防止已设置该 env var 的部署报未知配置；`run_ingest_once` 手动 CLI 路径不用它。
     game_ingest_interval_seconds: int = 21600  # GEO_GAME_INGEST_INTERVAL_SECONDS（6 小时，已废弃）
@@ -188,6 +193,18 @@ class Settings(BaseSettings):
     minio_access_key: str = ""  # GEO_MINIO_ACCESS_KEY
     minio_secret_key: str = ""  # GEO_MINIO_SECRET_KEY
     minio_secure: bool = False  # GEO_MINIO_SECURE
+    collector_inbox_bucket: str = "geo-collector-inbox"  # GEO_COLLECTOR_INBOX_BUCKET
+    collector_max_archive_bytes: int = 512 * 1024 * 1024  # GEO_COLLECTOR_MAX_ARCHIVE_BYTES
+    collector_max_bundle_files: int = 500  # GEO_COLLECTOR_MAX_BUNDLE_FILES
+    collector_max_bundle_file_bytes: int = 20 * 1024 * 1024
+    collector_max_bundle_total_bytes: int = 512 * 1024 * 1024
+    collector_max_manifest_bytes: int = 2 * 1024 * 1024
+    collector_upload_authorization_seconds: int = 600  # GEO_COLLECTOR_UPLOAD_AUTHORIZATION_SECONDS
+    collector_event_batch_size: int = 100  # GEO_COLLECTOR_EVENT_BATCH_SIZE
+    collector_event_payload_bytes: int = 16 * 1024  # GEO_COLLECTOR_EVENT_PAYLOAD_BYTES
+    collector_config_max_staleness_seconds: int = (
+        24 * 60 * 60
+    )  # GEO_COLLECTOR_CONFIG_MAX_STALENESS_SECONDS
 
     # AI配图「联网兜底」：陪衬游戏库里无图时，用百度千帆 AI 搜索拉真实横版图补充
     # Key 启动时不校验，缺失时走兜底的请求里才报错（与 AI Key 一致）
