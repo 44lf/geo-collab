@@ -10,19 +10,22 @@ import type { PromptScope, ReviewStatus } from "./types";
 // 各工作区仍走代码分割懒加载（动态 import → 独立 chunk）；
 // RootLayout 的 <Outlet/> 外层有统一 <Suspense> 兜住加载态。
 const AgentManagementWorkspace = lazy(() =>
-  import("./features/pipelines/AgentManagementWorkspace").then((m) => ({ default: m.AgentManagementWorkspace })),
-);
-const AiGenerationWorkspace = lazy(() =>
-  import("./features/ai-generation/AiGenerationWorkspace").then((m) => ({ default: m.AiGenerationWorkspace })),
+  import("./features/pipelines/AgentManagementWorkspace").then((m) => ({
+    default: m.AgentManagementWorkspace,
+  })),
 );
 const GameLibraryWorkspace = lazy(() =>
-  import("./features/game-library/GameLibraryWorkspace").then((m) => ({ default: m.GameLibraryWorkspace })),
+  import("./features/game-library/GameLibraryWorkspace").then((m) => ({
+    default: m.GameLibraryWorkspace,
+  })),
 );
 const ContentWorkspace = lazy(() =>
   import("./features/content/ContentWorkspace").then((m) => ({ default: m.ContentWorkspace })),
 );
 const PromptsWorkspace = lazy(() =>
-  import("./features/prompt-templates/PromptsWorkspace").then((m) => ({ default: m.PromptsWorkspace })),
+  import("./features/prompt-templates/PromptsWorkspace").then((m) => ({
+    default: m.PromptsWorkspace,
+  })),
 );
 const AccountsWorkspace = lazy(() =>
   import("./features/accounts/AccountsWorkspace").then((m) => ({ default: m.AccountsWorkspace })),
@@ -45,6 +48,11 @@ const AuditLogsWorkspace = lazy(() =>
 const AiModelsWorkspace = lazy(() =>
   import("./features/system/AiModelsWorkspace").then((m) => ({ default: m.AiModelsWorkspace })),
 );
+const CollectorManagementWorkspace = lazy(() =>
+  import("./features/collector/CollectorManagementWorkspace").then((m) => ({
+    default: m.CollectorManagementWorkspace,
+  })),
+);
 const VideosWorkspace = lazy(() =>
   import("./features/videos/VideosWorkspace").then((m) => ({ default: m.VideosWorkspace })),
 );
@@ -54,7 +62,9 @@ const QualityReferenceWorkspace = lazy(() =>
   })),
 );
 const XhsStyleGallery = lazy(() =>
-  import("./features/prompt-templates/XhsStyleGallery").then((m) => ({ default: m.XhsStyleGallery })),
+  import("./features/prompt-templates/XhsStyleGallery").then((m) => ({
+    default: m.XhsStyleGallery,
+  })),
 );
 
 // admin 专属页守卫：非 admin 直接重定向回默认页（RootLayout 已保证此处必有登录用户）。
@@ -75,7 +85,10 @@ function ContentRoute() {
   // 永久链接非法（非数字 / 0 / 负 / 非整数）→ 回落内容管理，避免静默空白。
   // 合法但不存在的 id 交给 ContentWorkspace 内 getArticle 走 404 toast。
   const parsedId = articleId !== undefined ? Number(articleId) : undefined;
-  if (articleId !== undefined && (parsedId === undefined || !Number.isInteger(parsedId) || parsedId <= 0)) {
+  if (
+    articleId !== undefined &&
+    (parsedId === undefined || !Number.isInteger(parsedId) || parsedId <= 0)
+  ) {
     return <Navigate to="/content" replace />;
   }
   return (
@@ -124,12 +137,6 @@ function AuditLogsRoute() {
   );
 }
 
-// AI 生文里「打开文章」跳转到内容管理。
-function AiRoute() {
-  const navigate = useNavigate();
-  return <AiGenerationWorkspace onNavigateToContent={() => navigate("/content")} />;
-}
-
 export const router = createBrowserRouter([
   {
     path: "/",
@@ -137,7 +144,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/agents" replace /> },
       { path: "agents", element: <AgentManagementWorkspace /> },
-      { path: "ai", element: <AiRoute /> },
+      { path: "ai", element: <Navigate to="/agents" replace /> },
       { path: "content", element: <ContentRoute /> },
       { path: "content/:status", element: <ContentRoute /> },
       { path: "article/:articleId", element: <ContentRoute /> },
@@ -179,6 +186,14 @@ export const router = createBrowserRouter([
         element: (
           <RequireAdmin>
             <AiModelsWorkspace />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: "collector-management",
+        element: (
+          <RequireAdmin>
+            <CollectorManagementWorkspace />
           </RequireAdmin>
         ),
       },

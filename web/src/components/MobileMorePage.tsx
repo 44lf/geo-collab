@@ -1,6 +1,17 @@
 import {
-  ChevronRight, Film, Gamepad2, Gem, LogOut, MessagesSquare, MonitorCog,
-  Plug, RadioTower, ScrollText, User, Users,
+  ChevronRight,
+  Film,
+  Gamepad2,
+  Gem,
+  LogOut,
+  MessagesSquare,
+  MonitorCog,
+  Plug,
+  RadioTower,
+  ScrollText,
+  ServerCog,
+  User,
+  Users,
 } from "lucide-react";
 import type { NavKey } from "../types";
 
@@ -48,6 +59,7 @@ export function MobileMorePage({
           {
             title: "管理",
             rows: [
+              { key: "collector-management" as NavKey, label: "Collector 管理", icon: ServerCog },
               { key: "admin" as NavKey, label: "用户管理", icon: Users },
               { key: "audit-logs" as NavKey, label: "日志中心", icon: ScrollText },
             ],

@@ -7,12 +7,28 @@ POC 期：用 SQL aggregate 或纯 Python 算（数据量小）；v2 加缓存�
 from __future__ import annotations
 
 from datetime import timedelta
+from math import isfinite
+from numbers import Real
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from server.app.core.time import utcnow
 from server.app.modules.articles.models import Article
+
+TEMPLATE_PERFORMANCE_NOTE = (
+    "基于窗口内 source_template_id 匹配文章的 metrics 与 review_status 聚合。"
+)
+
+
+def _finite_metric_value(metrics: Any, key: str) -> Real | None:
+    """Return a JSON metric only when it is a finite, non-boolean real number."""
+    if not isinstance(metrics, dict):
+        return None
+    value = metrics.get(key)
+    if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(value):
+        return None
+    return value
 
 
 def get_template_performance(
@@ -30,20 +46,41 @@ def get_template_performance(
           "avg_views": float | None,
           "avg_likes": float | None,
           "approval_rate": float | None,  # 经自动审核 approved 的占比
+          "note": str,
         }
     """
-    # POC: articles 没有直接 template_id 字段（生成后不存 source template id）——
-    # 暂时返回空结构，D6 决定是否补 article.source_template_id 字段
-    # 或者：用 audit_logs 查找"哪些 article 由这个 template compose 出来"
-    # 简化：先返回 stub，让 MCP tool 链路通
+    cutoff = utcnow() - timedelta(days=window_days)
+    articles = (
+        db.query(Article)
+        .filter(
+            Article.source_template_id == template_id,
+            Article.created_at >= cutoff,
+        )
+        .all()
+    )
+    views = [
+        value
+        for article in articles
+        if (value := _finite_metric_value(article.metrics, "views")) is not None
+    ]
+    likes = [
+        value
+        for article in articles
+        if (value := _finite_metric_value(article.metrics, "likes")) is not None
+    ]
+    approval_rate = (
+        sum(article.review_status == "approved" for article in articles) / len(articles)
+        if articles
+        else None
+    )
     return {
         "template_id": template_id,
         "window_days": window_days,
-        "article_count": 0,
-        "avg_views": None,
-        "avg_likes": None,
-        "approval_rate": None,
-        "note": "POC stub — 评估聚合实现待补 (compose_once 加 source_template_id 后填)",
+        "article_count": len(articles),
+        "avg_views": (sum(views) / len(views)) if views else None,
+        "avg_likes": (sum(likes) / len(likes)) if likes else None,
+        "approval_rate": approval_rate,
+        "note": TEMPLATE_PERFORMANCE_NOTE,
     }
 
 

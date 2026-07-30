@@ -29,6 +29,7 @@ def test_start_configured_ingest_locks_against_reentry(monkeypatch):
         max_gap_seconds = 0
         cull_after_misses = 3
         cull_enabled = True
+        patrol_include_main = False
         last_run_started_at = None
         last_run_finished_at = None
         last_run_trigger = None
@@ -47,7 +48,7 @@ def test_start_configured_ingest_locks_against_reentry(monkeypatch):
     def fake_get_or_create_ingest_config(db):
         return FakeCfg()
 
-    def fake_select_due_games(db, *, limit):
+    def fake_select_due_games(db, *, limit, include_main=False):
         return [1]
 
     def fake_refresh_one_game(session_factory, game_id, *, source_order, max_shots, **kwargs):
@@ -86,12 +87,13 @@ def test_start_configured_ingest_locks_against_reentry(monkeypatch):
 class _QuotaCfg:
     """手动批次用的假配置。gap=0 让测试不真 sleep。"""
 
-    source_order = "taptap"
+    source_order = "baidu"
     max_shots = 6
     min_gap_seconds = 0
     max_gap_seconds = 0
     cull_after_misses = 3
     cull_enabled = True
+    patrol_include_main = False
     last_run_started_at = None
     last_run_finished_at = None
     last_run_trigger = None
@@ -121,7 +123,7 @@ def _run_batch_with_outcomes(monkeypatch, *, batch_size, due_ids, outcomes):
     monkeypatch.setattr(
         scheduler.ingest_service,
         "select_due_games",
-        lambda db, *, limit: list(due_ids)[:limit],
+        lambda db, *, limit, include_main=False: list(due_ids)[:limit],
     )
 
     def fake_refresh(session_factory, game_id, **kwargs):
@@ -177,7 +179,7 @@ def test_manual_batch_writes_report_event(monkeypatch):
         monkeypatch.setattr(
             scheduler.ingest_service,
             "select_due_games",
-            lambda db, *, limit: [101, 102, 103][:limit],
+            lambda db, *, limit, include_main=False: [101, 102, 103][:limit],
         )
         outcomes = {
             101: ("refreshed", "甲游戏"),

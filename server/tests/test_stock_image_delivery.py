@@ -50,7 +50,7 @@ def _create_image(app, monkeypatch, orig_bytes: bytes) -> dict:
         f"/api/image-library/images?category_id={cat.json()['id']}",
         files={"file": ("shot.png", orig_bytes, "image/png")},
     )
-    assert up.status_code == 200, up.text
+    assert up.status_code == 201, up.text
     monkeypatch.setattr(
         "server.app.modules.image_library.router.minio_store.get_object_bytes",
         lambda *a, **k: orig_bytes,

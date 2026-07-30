@@ -25,13 +25,13 @@ from server.app.modules.ai_generation.models import (
     GenerationSchemeRun,
     GenerationSchemeRunTask,
 )
+from server.app.modules.ai_generation.runtime_templates import pick_valid_template
 from server.app.modules.ai_generation.scheme_service import get_line_questions, get_lines
 from server.app.modules.articles.ai_format import (
     all_category_contexts,
     run_ai_format,
     run_ai_format_from_game_list,
 )
-from server.app.modules.prompt_templates.service import get_runtime_prompt_template
 from server.app.shared.concurrency import ObservableGate, register_gate
 from server.app.shared.errors import ConflictError
 
@@ -122,19 +122,7 @@ def create_run(db: Any, *, scheme: GenerationScheme, user_id: int) -> Generation
     return run
 
 
-def _pick_valid_template(
-    db: Any, allowed_ids: list[int], user_id: int, *, rng: random.Random | None = None
-) -> Any:
-    """从允许列表里筛出运行时有效的模板（可见/未删/启用/scope=generation），随机返回一个；全无效返回 None。"""
-    valid = []
-    for tid in dict.fromkeys(allowed_ids or []):
-        tpl = get_runtime_prompt_template(db, tid, user_id=user_id, scope="generation")
-        if tpl is not None and tpl.is_enabled:
-            valid.append(tpl)
-    if not valid:
-        return None
-    rng = rng or random.Random()
-    return rng.choice(valid)
+_pick_valid_template = pick_valid_template
 
 
 def _fail_task(db: Any, task_id: int, message: str) -> None:

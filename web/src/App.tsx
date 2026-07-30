@@ -8,7 +8,7 @@ import { GlobalErrorListener } from "./components/GlobalErrorListener";
 import { useAuth } from "./features/auth/AuthContext";
 import { LoginPage } from "./features/auth/LoginPage";
 import { ChangePasswordPage } from "./features/auth/ChangePasswordPage";
-import { ChevronDown, ChevronLeft, Cpu, LogOut, ScrollText, Users } from "lucide-react";
+import { ChevronDown, ChevronLeft, Cpu, LogOut, ScrollText, ServerCog, Users } from "lucide-react";
 import { MobileNav } from "./components/MobileNav";
 import { MobileMorePage } from "./components/MobileMorePage";
 import { useIsMobile } from "./hooks/useIsMobile";
@@ -16,21 +16,42 @@ import "./styles.css";
 
 // 所有合法的顶级导航 key（= URL 首段）。
 const KNOWN_NAV: NavKey[] = [
-  "agents", "ai", "content", "prompts", "quality-reference", "game-library", "videos", "media", "tasks",
-  "system", "mcp-connect", "admin", "audit-logs", "ai-models",
+  "agents",
+  "content",
+  "prompts",
+  "quality-reference",
+  "game-library",
+  "videos",
+  "media",
+  "tasks",
+  "system",
+  "mcp-connect",
+  "admin",
+  "audit-logs",
+  "ai-models",
+  "collector-management",
 ];
 
 // 每个 tab 的标题，用于 ErrorBoundary。
 const TAB_TITLES: Record<NavKey, string> = {
-  agents: "智能体管理", ai: "AI 生文", content: "内容管理", prompts: "提示词管理",
+  agents: "智能体管理",
+  content: "内容管理",
+  prompts: "提示词管理",
   "quality-reference": "高质量库",
-  "game-library": "游戏库", videos: "视频库", media: "媒体矩阵", tasks: "分发引擎", system: "系统状态",
-  "mcp-connect": "MCP 接入", admin: "用户管理", "audit-logs": "日志中心",
+  "game-library": "游戏库",
+  videos: "视频库",
+  media: "媒体矩阵",
+  tasks: "分发引擎",
+  system: "系统状态",
+  "mcp-connect": "MCP 接入",
+  admin: "用户管理",
+  "audit-logs": "日志中心",
   "ai-models": "AI 模型管理",
+  "collector-management": "Collector 管理",
 };
 
 // 移动端底栏 4 个高频入口；其余归「更多」分区。
-const BOTTOM_KEYS: NavKey[] = ["agents", "ai", "content", "tasks"];
+const BOTTOM_KEYS: NavKey[] = ["agents", "content", "tasks"];
 
 function pathToNavKey(pathname: string): NavKey {
   const seg = pathname.split("/").filter(Boolean)[0];
@@ -51,8 +72,16 @@ function TabFallback() {
 }
 
 function NavGroup({
-  navKey, label, icon: Icon, children, activeNav, isOpen, childValue,
-  onParentClick, onToggle, onSelectChild,
+  navKey,
+  label,
+  icon: Icon,
+  children,
+  activeNav,
+  isOpen,
+  childValue,
+  onParentClick,
+  onToggle,
+  onSelectChild,
 }: {
   navKey: NavKey;
   label: string;
@@ -196,7 +225,10 @@ export function RootLayout() {
                     activeNav={activeNav}
                     isOpen={openGroup === item.key}
                     childValue={childValueFor(item.key)}
-                    onParentClick={() => { go(item.key); setOpenGroup(item.key); }}
+                    onParentClick={() => {
+                      go(item.key);
+                      setOpenGroup(item.key);
+                    }}
                     onToggle={() => toggleGroup(item.key)}
                     onSelectChild={(value) => selectChild(item.key, value)}
                   />
@@ -217,6 +249,17 @@ export function RootLayout() {
             })}
             {user.role === "admin" && (
               <button
+                className={`navItem ${activeNav === "collector-management" ? "active" : ""}`}
+                type="button"
+                onClick={() => go("collector-management")}
+              >
+                <ServerCog size={17} />
+                <span>Collector 管理</span>
+                <span className="navDot" />
+              </button>
+            )}
+            {user.role === "admin" && (
+              <button
                 className={`navItem ${activeNav === "admin" ? "active" : ""}`}
                 type="button"
                 onClick={() => go("admin")}
@@ -235,7 +278,10 @@ export function RootLayout() {
                 activeNav={activeNav}
                 isOpen={openGroup === "audit-logs"}
                 childValue={childValueFor("audit-logs")}
-                onParentClick={() => { go("audit-logs"); setOpenGroup("audit-logs"); }}
+                onParentClick={() => {
+                  go("audit-logs");
+                  setOpenGroup("audit-logs");
+                }}
                 onToggle={() => toggleGroup("audit-logs")}
                 onSelectChild={(value) => selectChild("audit-logs", value)}
               />
@@ -278,7 +324,9 @@ export function RootLayout() {
             role={user.role}
             isAdmin={user.role === "admin"}
             onNavigate={(key) => go(key)}
-            onLogout={() => { if (window.confirm("确定退出登录？")) logout(); }}
+            onLogout={() => {
+              if (window.confirm("确定退出登录？")) logout();
+            }}
           />
         )}
         {isMobile && (

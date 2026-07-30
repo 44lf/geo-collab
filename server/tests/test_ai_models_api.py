@@ -143,3 +143,14 @@ def test_engine_dropdowns_reflect_db(monkeypatch):
         assert all(set(e.keys()) <= {"label", "model"} for e in we)
     finally:
         app.cleanup()
+
+
+def test_shared_engine_urls_keep_public_shape(monkeypatch):
+    app = build_test_app(monkeypatch)
+    try:
+        for path in ("/api/generation/ai-engines", "/api/generation/format-engines"):
+            response = app.client.get(path)
+            assert response.status_code == 200, response.text
+            assert all(set(item) == {"label", "model"} for item in response.json())
+    finally:
+        app.cleanup()

@@ -175,26 +175,27 @@
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST | `/api/generation/sessions` | cookie | 建会话即启动（**202** `{session_id, status}`）；校验 skill/prompt 启用；手动选题 `question_item_ids` 或自动 `auto_count`（互斥）；批量上限 20 |
-| GET | `/api/generation/sessions/{id}` | cookie | 会话状态与产出 `article_ids` |
-| GET | `/api/generation/question-pools` | cookie | 选题池列表（含 pending 计数） |
+| POST | `/api/generation/sessions` | cookie | 已退役，410；站内生文请使用 `/api/pipelines/*` |
+| GET | `/api/generation/sessions/{session_id}` | cookie | 历史会话详情仍可读；非属主按 404 隐藏，admin 可读 |
+| GET | `/api/generation/question-pools` | cookie | 共享选题池列表 |
 | POST | `/api/generation/question-pools` | cookie | 建选题池 |
-| POST | `/api/generation/question-pools/{pool_id}/sync` | cookie | 从飞书多维表同步（返回 `{total, added, updated, skipped_consumed}`） |
-| GET | `/api/generation/question-pools/{pool_id}/items` | cookie | 选题项列表（可筛 status） |
+| POST | `/api/generation/question-pools/{pool_id}/sync` | cookie | 从飞书多维表同步（返回 `{total, added, updated, reactivated, deactivated}`） |
+| GET | `/api/generation/question-pools/{pool_id}/items` | cookie | 默认/`pending` 仅 `source_active`；`all` 全部；`consumed` 空；未知值 400；DTO 兼容 `pending`/`null` |
+| GET | `/api/generation/ai-engines`、`/format-engines` | cookie | Pipeline 与兼容客户端可读的模型候选 |
+| GET | `/api/generation/schemes`、`/{id}`、`/{id}/runs`、`/scheme-runs/{run_id}` | cookie | Release A 历史只读接口 |
+| POST/PUT/PATCH/DELETE | `/api/generation/schemes...`（含 `/runs`） | cookie | 五个方案写入口全部 410，零副作用；站内生文改用 Pipeline |
+
+> Pipeline（`/api/pipelines/*`）是站内唯一生文入口；MCP 是站外生文入口。前端 `/ai` 只重定向至 `/agents`。
 
 ---
 
-## 7. 技能 / 提示词模板
+## 7. MCP / 提示词模板
 
-### 7.1 Skill（`/api/skills`）
+### 7.1 MCP / Loop skill
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/skills` | 列出启用的 skill |
-| POST | `/api/skills` | 创建 |
-| PUT | `/api/skills/{id}` | 全量更新（name/content/description） |
-| PATCH | `/api/skills/{id}` | 切换 is_enabled |
-| DELETE | `/api/skills/{id}` | 软删除 |
+MCP 保留 39 个 tools（含问题读取、`save_article`、模板表现和 Loop skill 安装）。
+`/api/mcp/loop-skill-bundle/info` 与下载端点继续为用户 JWT 路径；MCP token 的安装载荷继续由
+`install_loop_skills` 使用。它们是站外 Loop 兼容契约，不是 `/api/skills` 的恢复。
 
 ### 7.2 Prompt 模板（`/api/prompt-templates`）
 
@@ -207,6 +208,10 @@
 | DELETE | `/api/prompt-templates/{id}` | 软删除 |
 
 > `scope ∈ {generation, ai_format}`：generation 用于写作，ai_format 用于标题/配图识别。
+
+模板表现：`GET /api/prompt-templates/{template_id}/performance?window_days=1..90` 为 MCP token 保护接口。
+它按 `source_template_id` 和时间窗口真实聚合；没有有效 views/likes 时均值为 `null`，有文章但 approved 为零时
+`approval_rate` 为 `0.0`，窗口没有文章时为 `null`。
 
 ---
 
@@ -256,8 +261,10 @@
 | 资源 | `/api/assets` + `/api/chunked-assets` | 1 + 4 | cookie |
 | 任务 | `/api/tasks` | 9 | cookie |
 | 发布记录 | `/api/publish-records` | 3 | cookie |
-| AI 生文 | `/api/generation` | 6 | cookie |
-| 技能 | `/api/skills` | 5 | cookie |
+| 智能体工作流 | `/api/pipelines` | 见 Swagger | cookie；站内唯一生文入口 |
+| 生文兼容接口 | `/api/generation` | 见第 6 节 | cookie；问题池/引擎/方案及 session 历史只读，session 创建与 scheme 写均 410 |
+| MCP / Loop skill | `/api/mcp` + `/mcp` | 39 tools | user JWT 或 MCP token，站外生文入口 |
+| 旧 Skill | `/api/skills` | 0（未挂载） | 模块/表保留为历史兼容；所有 HTTP 路径不可用 |
 | 模板 | `/api/prompt-templates` | 5 | cookie |
 | 图片库 | `/api/image-library` | 7 | cookie |
 | 图片文件 | `/api/stock-images` | 1 | 公开 |

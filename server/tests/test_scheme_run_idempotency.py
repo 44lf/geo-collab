@@ -44,21 +44,31 @@ def _make_scheme(app) -> int:
         db.commit()
         pool_id, item_id, tpl_id = pool.id, item.id, tpl.id
 
-    body = {
-        "name": "方案-dedup",
-        "pool_id": pool_id,
-        "lines": [
-            {
-                "question_type": "A",
-                "question_item_ids": [item_id],
-                "article_count": 1,
-                "allowed_prompt_template_ids": [tpl_id],
-            }
-        ],
-    }
-    r = app.client.post("/api/generation/schemes", json=body)
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
+    from server.app.modules.ai_generation.schemas import SchemeCreate
+    from server.app.modules.ai_generation.scheme_service import create_scheme
+
+    with app.session_factory() as db:
+        scheme = create_scheme(
+            db,
+            user_id=uid,
+            pool_id=pool_id,
+            payload=SchemeCreate.model_validate(
+                {
+                    "name": "方案-dedup",
+                    "pool_id": pool_id,
+                    "lines": [
+                        {
+                            "question_type": "A",
+                            "question_item_ids": [item_id],
+                            "article_count": 1,
+                            "allowed_prompt_template_ids": [tpl_id],
+                        }
+                    ],
+                }
+            ),
+        )
+        db.commit()
+        return scheme.id
 
 
 # ── 活跃去重 ───────────────────────────────────────────────────────────────────
@@ -109,25 +119,25 @@ def test_create_run_allowed_after_previous_finished(monkeypatch):
 
 
 @pytest.mark.mysql
-def test_post_run_twice_second_returns_409(monkeypatch):
-    """端到端：连点同一 scheme 运行，第二次 409；DB 里只留一条 run。"""
+def test_post_run_twice_returns_410_without_creating_runs(monkeypatch):
+    """退休 HTTP 路由不再创建运行，也不再暴露旧 202/409 幂等契约。"""
     app = build_test_app(monkeypatch)
     try:
-        from server.app.modules.ai_generation import scheme_executor as se
         from server.app.modules.ai_generation.models import GenerationSchemeRun
 
-        # run_scheme 置 no-op：第一条 run 保持 pending（不真生文），稳定复现"已有活跃 run"
-        monkeypatch.setattr(se, "run_scheme", lambda *a, **k: None)
-
         sid = _make_scheme(app)
+        with app.session_factory() as db:
+            before = (
+                db.query(GenerationSchemeRun).filter(GenerationSchemeRun.scheme_id == sid).count()
+            )
         r1 = app.client.post(f"/api/generation/schemes/{sid}/runs")
-        assert r1.status_code == 202, r1.text
+        assert r1.status_code == 410, r1.text
         r2 = app.client.post(f"/api/generation/schemes/{sid}/runs")
-        assert r2.status_code == 409, r2.text
+        assert r2.status_code == 410, r2.text
 
         with app.session_factory() as db:
             cnt = db.query(GenerationSchemeRun).filter(GenerationSchemeRun.scheme_id == sid).count()
-        assert cnt == 1, f"应只创建 1 条 run，实际 {cnt}"
+        assert cnt == before, f"退休路由不应创建 run，实际 {cnt}"
     finally:
         app.cleanup()
 

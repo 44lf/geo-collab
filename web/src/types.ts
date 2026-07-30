@@ -9,13 +9,11 @@ import {
   Plug,
   RadioTower,
   Send,
-  Sparkles,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type NavKey =
   | "agents"
-  | "ai"
   | "content"
   | "prompts"
   | "quality-reference"
@@ -27,7 +25,8 @@ export type NavKey =
   | "mcp-connect"
   | "admin"
   | "audit-logs"
-  | "ai-models";
+  | "ai-models"
+  | "collector-management";
 
 export type PromptScope = "generation" | "ai_format" | "image_search" | "image_companion";
 
@@ -62,6 +61,7 @@ export type QuestionPool = {
   last_synced_at: string | null;
   created_at: string;
   pending_count: number;
+  auto_sync_enabled: boolean;
 };
 
 export type QuestionItem = {
@@ -782,7 +782,6 @@ export const navItems: {
   children?: NavChild[];
 }[] = [
   { key: "agents", label: "智能体管理", icon: Bot },
-  { key: "ai", label: "AI 生文", icon: Sparkles },
   {
     key: "content",
     label: "内容管理",

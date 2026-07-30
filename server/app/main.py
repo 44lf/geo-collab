@@ -50,7 +50,7 @@ from server.app.core.security import get_current_user
 from server.app.modules.accounts.router import router as accounts_router
 from server.app.modules.ai_generation.router import mcp_router as generation_mcp_router
 from server.app.modules.ai_generation.router import router as generation_router
-from server.app.modules.ai_generation.scheme_router import scheme_router
+from server.app.modules.ai_generation.scheme_router import retired_scheme_router, scheme_router
 from server.app.modules.ai_models.router import router as ai_models_router
 from server.app.modules.articles.router import (
     article_groups_router,
@@ -61,6 +61,8 @@ from server.app.modules.articles.router import (
 )
 from server.app.modules.audit.router import router as audit_router
 from server.app.modules.auto_review.router import router as auto_review_router
+from server.app.modules.collector.management import collector_management_router
+from server.app.modules.collector.router import collector_gateway_router
 from server.app.modules.feishu.router import h5_auth_router, h5_public_router
 from server.app.modules.image_library.mcp_router import image_mcp_router
 from server.app.modules.image_library.router import files_router as stock_files_router
@@ -230,6 +232,16 @@ def create_app() -> FastAPI:
     # 注册认证路由（不加鉴权依赖）
     app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
     app.include_router(users_router, prefix="/api/users", tags=["users"])
+    app.include_router(
+        collector_gateway_router,
+        prefix="/api/collector",
+        tags=["collector-gateway"],
+    )
+    app.include_router(
+        collector_management_router,
+        prefix="/api/collector-management",
+        tags=["collector-management"],
+    )
 
     # MCP 服务对服务路由（MCP token 鉴权，不走 user JWT cookie）
     # mcp_catalog：跨模块的只读 list / get 端点，路径在 /api/mcp/ 下避免与 user-JWT 路由冲突
@@ -423,6 +435,12 @@ def create_app() -> FastAPI:
         dependencies=[Depends(get_current_user)],
     )
     app.include_router(
+        retired_scheme_router,
+        prefix="/api/generation",
+        tags=["generation-schemes-retired"],
+        # 退役写入口必须在 body/auth/DB 依赖前直接 410；只读 scheme_router 仍保持 user auth。
+    )
+    app.include_router(
         pipelines_router,
         prefix="/api/pipelines",
         tags=["pipelines"],
@@ -538,24 +556,16 @@ def create_app() -> FastAPI:
 
         _logging.getLogger(__name__).exception("start_pipeline_scheduler failed")
 
+    # 游戏采集执行所有权互斥：默认保持 GEO 进程内调度；只有显式 external 时才让位给
+    # Collector/Gateway。刷新与 Plan B 扩库必须一起切换，避免两套调度重复爬取。
     try:
-        from server.app.modules.game_library.scheduler import start_game_ingest
+        from server.app.modules.game_library.execution_mode import start_game_ingest_schedulers
 
-        start_game_ingest(SessionLocal)
+        start_game_ingest_schedulers(SessionLocal)
     except Exception:
         import logging as _logging
 
-        _logging.getLogger(__name__).exception("start_game_ingest failed")
-
-    # Plan B 扩库（应用宝榜单发现）定时线程，与补全巡检同 env 总闸、独立进程内锁。
-    try:
-        from server.app.modules.game_library.planb.discovery_scheduler import start_game_discovery
-
-        start_game_discovery(SessionLocal)
-    except Exception:
-        import logging as _logging
-
-        _logging.getLogger(__name__).exception("start_game_discovery failed")
+        _logging.getLogger(__name__).exception("start_game_ingest_schedulers failed")
 
     # TapTap cookie 体检：GEO_TAPTAP_COOKIE_CHECK_ENABLED=true 时启动后台线程，纯 HTTP 探
     # account-profile/v1/me，失效则置 expired + 飞书喊人重登（不自动登录）。失败只记日志、不致命。

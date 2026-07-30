@@ -11,9 +11,11 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from server.app.modules.articles.formatting.document import _normalize_game_name
 from server.app.modules.game_library import ingest_service, landscape, service
 from server.app.modules.game_library.models import Game
+from server.app.modules.game_library.normalization import (
+    normalize_game_name as _normalize_game_name,
+)
 from server.app.modules.image_library.service import source_url_sha256
 from server.app.shared import image_download
 

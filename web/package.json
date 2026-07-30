@@ -10,7 +10,8 @@
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src",
-    "format:check": "prettier --check src"
+    "format:check": "prettier --check src",
+    "test:collector": "node --experimental-strip-types --test tests/collector-management-view-model.test.ts"
   },
   "dependencies": {
     "@tiptap/extension-color": "^3.22.5",

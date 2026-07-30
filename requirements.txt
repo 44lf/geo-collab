@@ -24,6 +24,7 @@ openai==2.38.0
 langgraph
 markdown
 PyYAML>=6.0
+zstandard==0.24.0
 python-frontmatter
 minio
 pypinyin

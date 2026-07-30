@@ -11,9 +11,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from server.app.core.logging import submit_in_context
 from server.app.modules.ai_generation.article_writer import generate_article_from_prompt
+from server.app.modules.ai_generation.runtime_templates import pick_valid_template
 from server.app.modules.pipelines.nodes.base import NodeResult, NodeRunContext, register
 from server.app.modules.pipelines.nodes.daily_group_stream import make_group_streamer
-from server.app.modules.prompt_templates.service import get_runtime_prompt_template
 from server.app.shared.errors import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -58,8 +58,6 @@ def _resolve_units(units, fallback_template_id, fallback_count) -> list[tuple]:
 
 
 def _run_units(ctx: NodeRunContext, cfg: dict, units, model, max_count) -> NodeResult:
-    from server.app.modules.ai_generation.scheme_executor import _pick_valid_template
-
     fallback_template_id = cfg.get("prompt_template_id")
     fallback_count = int(cfg.get("count") or 0)
     resolved = _resolve_units(units, fallback_template_id, fallback_count)
@@ -79,7 +77,7 @@ def _run_units(ctx: NodeRunContext, cfg: dict, units, model, max_count) -> NodeR
     def _one(qtext: str, tpl_ids: list[int]) -> int:
         db = ctx.session_factory()
         try:
-            tpl = _pick_valid_template(db, tpl_ids, ctx.user_id) if tpl_ids else None
+            tpl = pick_valid_template(db, tpl_ids, ctx.user_id) if tpl_ids else None
             if tpl is None:
                 raise ValidationError("该单元允许模板在运行时全部无效或未配置")
             template_content = tpl.content
@@ -159,8 +157,8 @@ def run_ai_generate(ctx: NodeRunContext) -> NodeResult:
 
     db = ctx.session_factory()
     try:
-        tpl = get_runtime_prompt_template(db, template_id, user_id=ctx.user_id, scope="generation")
-        if tpl is None or not tpl.is_enabled:
+        tpl = pick_valid_template(db, [template_id], ctx.user_id)
+        if tpl is None:
             raise ValidationError("提示词模板无效（不存在/无权访问/停用/删除/非 generation）")
         template_content = tpl.content
         template_name = tpl.name

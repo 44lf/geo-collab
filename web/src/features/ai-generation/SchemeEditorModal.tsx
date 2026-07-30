@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import {
   createScheme,
-  listAiEngines,
   listPromptTemplates,
-  listQuestionTypes,
   updateScheme,
 } from "../../api/ai-generation";
+import { listAiEngines } from "../../api/generation-engines";
+import { listQuestionTypes } from "../../api/question-pools";
 import { useToast } from "../../components/Toast";
 import type {
   AiEngine,
